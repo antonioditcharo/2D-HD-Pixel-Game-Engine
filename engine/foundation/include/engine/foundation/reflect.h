@@ -496,6 +496,44 @@ template <auto Fn>
 } // namespace detail
 
 // ---------------------------------------------------------------------------------------
+// Type-erased object references
+// ---------------------------------------------------------------------------------------
+
+/// A non-owning reference to an object of any registered type, without templates. The
+/// logic runtime and the editor use it to hold objects whose C++ type they do not know.
+/// The object must outlive the reference.
+class ObjectRef {
+public:
+    ObjectRef() = default;
+
+    /// Refers to `object`. Const objects cannot be referenced, because properties and
+    /// actions can change them.
+    template <typename T>
+    [[nodiscard]] static ObjectRef of(T& object) noexcept {
+        static_assert(!std::is_const_v<T>, "ObjectRef needs a non-const object.");
+        return ObjectRef(static_cast<void*>(&object), detail::type_key<T>());
+    }
+
+    [[nodiscard]] void* object() const noexcept { return object_; }
+    /// Identifies the object's C++ type. Compare with PropertyInfo::owner_key and
+    /// FunctionInfo::owner_key, or look up the type with Registry::find_type(ObjectRef).
+    [[nodiscard]] const void* key() const noexcept { return key_; }
+    [[nodiscard]] bool is_null() const noexcept { return object_ == nullptr; }
+
+    /// The object as a T, or null if it is not a T.
+    template <typename T>
+    [[nodiscard]] T* as() const noexcept {
+        return key_ == detail::type_key<T>() ? static_cast<T*>(object_) : nullptr;
+    }
+
+private:
+    ObjectRef(void* object, const void* key) noexcept : object_(object), key_(key) {}
+
+    void* object_{nullptr};
+    const void* key_{nullptr};
+};
+
+// ---------------------------------------------------------------------------------------
 // The registry and its builders
 // ---------------------------------------------------------------------------------------
 
@@ -696,6 +734,10 @@ public:
     [[nodiscard]] const TypeInfo* find_type() const noexcept {
         return find_type_by_key(detail::type_key<T>());
     }
+    /// The type of the object `ref` refers to, or null if that type is not registered.
+    [[nodiscard]] const TypeInfo* find_type(ObjectRef ref) const noexcept {
+        return find_type_by_key(ref.key());
+    }
 
     [[nodiscard]] const ChoiceInfo* find_choice_list(std::string_view name) const noexcept;
     template <typename E>
@@ -747,6 +789,7 @@ private:
 
 /// Reads `property` from `object`. Returns nothing if the property belongs to another type.
 template <typename T>
+    requires(!std::is_same_v<std::remove_cvref_t<T>, ObjectRef>)
 [[nodiscard]] std::optional<Value> get_property(const T& object, const PropertyInfo& property) {
     if (property.owner_key != detail::type_key<T>() || property.get == nullptr) {
         return std::nullopt;
@@ -754,19 +797,25 @@ template <typename T>
     return property.get(&object);
 }
 
-/// Checks `value` against the property's kind, flags, range and choice entries, then
-/// writes it into `object`. Leaves the object unchanged unless the result is Ok.
+/// As above, for an object whose C++ type is not known here. Also returns nothing for a
+/// null reference.
+[[nodiscard]] std::optional<Value> get_property(ObjectRef object, const PropertyInfo& property);
+
+/// Checks `value` against the property's flags, kind, range and choice entries, without
+/// writing anything. Returns Ok, ReadOnly, WrongKind, OutOfRange or UnknownChoice.
 [[nodiscard]] SetResult check_value(const PropertyInfo& property, const Value& value) noexcept;
 
+/// Checks `value` with check_value(), then writes it into `object`. Leaves the object
+/// unchanged unless the result is Ok. A null reference, or an object of another type than
+/// the property's, gives WrongType.
+[[nodiscard]] SetResult set_property(ObjectRef object, const PropertyInfo& property,
+                                     const Value& value);
+
+/// As above, for an object whose C++ type is known.
 template <typename T>
+    requires(!std::is_same_v<std::remove_cvref_t<T>, ObjectRef>)
 [[nodiscard]] SetResult set_property(T& object, const PropertyInfo& property, const Value& value) {
-    if (property.owner_key != detail::type_key<T>() || property.set == nullptr) {
-        return SetResult::WrongType;
-    }
-    if (const SetResult checked = check_value(property, value); checked != SetResult::Ok) {
-        return checked;
-    }
-    return property.set(&object, value) ? SetResult::Ok : SetResult::NotRepresentable;
+    return set_property(ObjectRef::of(object), property, value);
 }
 
 /// Checks one argument against its parameter's kind, range and choice entries.
@@ -779,17 +828,17 @@ template <typename T>
 
 /// Calls `function` on `object` with `arguments`, after checking the object's type, the
 /// argument count and every argument. Never throws for bad input; the result says what was
-/// wrong. Conditions and getters return their result in CallResult::value.
+/// wrong. Conditions and getters return their result in CallResult::value. A null
+/// reference gives WrongType.
+[[nodiscard]] CallResult call(ObjectRef object, const FunctionInfo& function,
+                              std::span<const Value> arguments);
+
+/// As above, for an object whose C++ type is known.
 template <typename T>
+    requires(!std::is_same_v<std::remove_cvref_t<T>, ObjectRef>)
 [[nodiscard]] CallResult call(T& object, const FunctionInfo& function,
                               std::span<const Value> arguments) {
-    if (function.owner_key != detail::type_key<T>() || function.invoke == nullptr) {
-        return CallResult{CallError::WrongType, 0, std::nullopt};
-    }
-    if (CallResult checked = check_arguments(function, arguments); !checked.ok()) {
-        return checked;
-    }
-    return function.invoke(&object, arguments);
+    return call(ObjectRef::of(object), function, arguments);
 }
 
 // ---------------------------------------------------------------------------------------

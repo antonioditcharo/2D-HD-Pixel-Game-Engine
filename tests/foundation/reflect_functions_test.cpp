@@ -322,3 +322,62 @@ TEST_CASE("function and event registration problems are collected") {
         CHECK(has_error(second, reflect::ErrorCode::UnknownChoiceList));
     }
 }
+
+TEST_CASE("objects can be used through a type-erased reference") {
+    reflect::Registry registry;
+    register_npc(registry);
+    REQUIRE(registry.errors().empty());
+    const reflect::TypeInfo* npc_type = registry.find_type<TestNpc>();
+    REQUIRE(npc_type != nullptr);
+
+    TestNpc npc;
+    OtherNpc other;
+    const reflect::ObjectRef ref = reflect::ObjectRef::of(npc);
+    const reflect::ObjectRef other_ref = reflect::ObjectRef::of(other);
+    const reflect::ObjectRef null_ref;
+
+    SUBCASE("the reference knows its object and type") {
+        CHECK(ref.object() == &npc);
+        CHECK_FALSE(ref.is_null());
+        CHECK(null_ref.is_null());
+        CHECK(ref.as<TestNpc>() == &npc);
+        CHECK(ref.as<OtherNpc>() == nullptr);
+        CHECK(null_ref.as<TestNpc>() == nullptr);
+        CHECK(registry.find_type(ref) == npc_type);
+        CHECK(registry.find_type(other_ref) == registry.find_type<OtherNpc>());
+        CHECK(registry.find_type(null_ref) == nullptr);
+    }
+
+    SUBCASE("properties") {
+        const reflect::PropertyInfo* hp = npc_type->find_property("current_hp");
+        REQUIRE(hp != nullptr);
+        CHECK(reflect::set_property(ref, *hp, reflect::Value{std::int64_t{80}}) ==
+              reflect::SetResult::Ok);
+        CHECK(npc.hp_ == 80);
+        CHECK(reflect::get_property(ref, *hp) == std::optional<reflect::Value>(std::int64_t{80}));
+        CHECK(reflect::set_property(ref, *hp, reflect::Value{std::int64_t{101}}) ==
+              reflect::SetResult::OutOfRange);
+        CHECK(reflect::set_property(other_ref, *hp, reflect::Value{std::int64_t{1}}) ==
+              reflect::SetResult::WrongType);
+        CHECK(reflect::set_property(null_ref, *hp, reflect::Value{std::int64_t{1}}) ==
+              reflect::SetResult::WrongType);
+        CHECK_FALSE(reflect::get_property(other_ref, *hp).has_value());
+        CHECK_FALSE(reflect::get_property(null_ref, *hp).has_value());
+        CHECK(npc.hp_ == 80);
+    }
+
+    SUBCASE("functions") {
+        const reflect::FunctionInfo* heal = npc_type->find_function("heal");
+        REQUIRE(heal != nullptr);
+        const std::array<reflect::Value, 1> amount{reflect::Value{std::int64_t{10}}};
+        CHECK(reflect::call(ref, *heal, amount).ok());
+        CHECK(npc.hp_ == 60);
+        CHECK(reflect::call(other_ref, *heal, amount).error == reflect::CallError::WrongType);
+        CHECK(reflect::call(null_ref, *heal, amount).error == reflect::CallError::WrongType);
+        CHECK(npc.hp_ == 60);
+
+        const reflect::FunctionInfo* hp = npc_type->find_function("hp");
+        REQUIRE(hp != nullptr);
+        CHECK(reflect::call(ref, *hp, {}).value == std::optional<reflect::Value>(std::int64_t{60}));
+    }
+}

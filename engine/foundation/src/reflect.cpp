@@ -194,6 +194,33 @@ SetResult check_argument(const ParameterInfo& parameter, const Value& value) noe
     return check_spec(parameter.kind, parameter.limits, parameter.choice, value);
 }
 
+std::optional<Value> get_property(ObjectRef object, const PropertyInfo& property) {
+    if (object.is_null() || property.owner_key != object.key() || property.get == nullptr) {
+        return std::nullopt;
+    }
+    return property.get(object.object());
+}
+
+SetResult set_property(ObjectRef object, const PropertyInfo& property, const Value& value) {
+    if (object.is_null() || property.owner_key != object.key() || property.set == nullptr) {
+        return SetResult::WrongType;
+    }
+    if (const SetResult checked = check_value(property, value); checked != SetResult::Ok) {
+        return checked;
+    }
+    return property.set(object.object(), value) ? SetResult::Ok : SetResult::NotRepresentable;
+}
+
+CallResult call(ObjectRef object, const FunctionInfo& function, std::span<const Value> arguments) {
+    if (object.is_null() || function.owner_key != object.key() || function.invoke == nullptr) {
+        return CallResult{CallError::WrongType, 0, std::nullopt};
+    }
+    if (CallResult checked = check_arguments(function, arguments); !checked.ok()) {
+        return checked;
+    }
+    return function.invoke(object.object(), arguments);
+}
+
 CallResult check_arguments(const FunctionInfo& function,
                            std::span<const Value> arguments) noexcept {
     if (arguments.size() != function.parameters.size()) {

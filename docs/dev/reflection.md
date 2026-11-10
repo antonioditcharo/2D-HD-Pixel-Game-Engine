@@ -1,8 +1,9 @@
 # The Reflection Registry
 
 > **Status: v0.2.** Types, properties, choice lists, and the no-code blocks' building
-> parts (actions, conditions, value getters and events) are in place and tested. See §7
-> for what comes next.
+> parts (actions, conditions, value getters and events) are in place and tested, along
+> with type-erased object references for the logic runtime (§3). See §7 for what comes
+> next.
 >
 > Code: [`engine/foundation/include/engine/foundation/reflect.h`](../../engine/foundation/include/engine/foundation/reflect.h)
 > and [`src/reflect.cpp`](../../engine/foundation/src/reflect.cpp). Tests:
@@ -100,6 +101,23 @@ otherwise:
 Values travel as `Value`, a `std::variant` of `bool`, `std::int64_t` (whole numbers and
 choices), `double` (numbers) and `std::string` (text).
 
+### Objects whose type is not known: `ObjectRef`
+
+Code that holds objects of many types, such as the logic runtime
+([logic-runtime.md](logic-runtime.md)) and later the editor, uses `ObjectRef`: a
+non-owning pointer plus the type's key, with no templates and no RTTI.
+
+```cpp
+ObjectRef ref = ObjectRef::of(light);             // the object must outlive ref
+const TypeInfo* type = registry.find_type(ref);   // the PointLight description
+SetResult result = set_property(ref, *radius, Value{12.5});
+PointLight* back = ref.as<PointLight>();          // null if it is not a PointLight
+```
+
+`get_property`, `set_property` and `call` accept an `ObjectRef` and run the same checks as
+the typed versions. A null reference, or an object of another type, gives `WrongType`. The
+typed versions now forward to these.
+
 ## 4. Actions, conditions, getters and events
 
 These are the "Do", "If" and "When" parts of the no-code blocks (`plan/05` §2). A type
@@ -178,6 +196,7 @@ only for now; firing them belongs to the message bus in the logic runtime (`plan
 |---|---|---|
 | Inspector (editor) | One widget per property: checkbox, spin box or slider with unit, text field, dropdown. Advanced and hidden flags decide visibility | `plan/06` §1, §3 |
 | No-code blocks | "Set [property] of [object] to [value]" and "[property] of [object]" blocks for every property, plus one block per action, condition, getter and event, reading as its block text | `plan/05` §2, §8 |
+| Logic runtime | Scripts reach objects only through the registry: `sx.call`, `sx.get` and `sx.set` ([logic-runtime.md](logic-runtime.md)). In use | `plan/03` §6 |
 | Save system | Properties flagged `saved` are written to save files automatically | `plan/03` §10; feature M1 |
 | Project files | Ids and type ids are the keys used in the JSON project format | `plan/03` §4 |
 | ECS (flecs) | Registered types become components; flecs reflection is fed from this registry, not the other way round | ADR-006 |
