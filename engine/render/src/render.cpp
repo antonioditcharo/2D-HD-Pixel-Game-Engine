@@ -19,6 +19,7 @@ namespace engine::render {
 
 struct Device::Native {
     SDL_GPUDevice* device{nullptr};
+    bool headless = false;
 };
 
 struct Texture::Native {
@@ -178,6 +179,7 @@ std::unique_ptr<Device> Device::create(const DeviceOptions& options, std::string
     }
     auto native = std::make_unique<Native>();
     native->device = device;
+    native->headless = options.headless;
     return std::unique_ptr<Device>(new Device(std::move(native)));
 }
 
@@ -384,6 +386,13 @@ std::unique_ptr<Window> Device::create_window(std::string_view title, std::uint3
                                               std::uint32_t height) {
     if (width == 0 || height == 0) {
         last_error_ = "A window needs a size above zero.";
+        return nullptr;
+    }
+    // SDL's offscreen video driver, used by headless devices, offers Vulkan surfaces only:
+    // its windows have no native handle for a Direct3D 12 swapchain.
+    if (native_->headless && driver_name() != "vulkan") {
+        last_error_ = "A headless device can show windows only with Vulkan; this one uses " +
+                      driver_name() + ".";
         return nullptr;
     }
     const std::string name(title);

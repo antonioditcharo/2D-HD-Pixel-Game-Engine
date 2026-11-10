@@ -61,8 +61,14 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
   (`plan/04` §3). `fit_integer()` computes that placement. For example, 320 × 180 fills
   1920 × 1080 at exactly 6×, and sits at 4× with a 43-pixel border in 1366 × 768. A
   window smaller than the image shows it at 1×, centred and cropped.
-- Tests open a real window with a Vulkan swapchain through SDL's offscreen video driver
-  on lavapipe, and present small and cropped images to it.
+- A **headless** device runs on SDL's offscreen video driver, which offers Vulkan
+  surfaces only. So it can show windows with Vulkan, but not with Direct3D 12, whose
+  swapchain needs a real window handle (checked in SDL 3.4.18's source).
+  `create_window()` then fails with a message that says so; an ordinary device has no
+  such limit.
+- Tests open a real window with a Vulkan swapchain through the offscreen driver on
+  lavapipe, and present small and cropped images to it. On other backends the test
+  checks the message instead.
 
 ## 5. Shaders (ADR-015)
 
@@ -84,8 +90,10 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
   `sudo apt-get install mesa-vulkan-drivers`.
 - Without any GPU the render tests are **skipped with a message**. With
   `SPARXEL_REQUIRE_GPU=1` a missing GPU **fails** them instead. Linux CI installs lavapipe
-  and sets this, so rendering is really tested there. The Windows CI runners have no GPU,
-  so the render tests are skipped on Windows until GPU-equipped runners exist (ADR-016).
+  and sets this, so rendering is really tested there. On the Windows CI runners SDL finds
+  a Direct3D 12 device (the log reports `GPU driver: direct3d12`), so the render tests
+  run there too, except presenting to a window (§4). Windows CI does not set the flag,
+  so a runner without a device would skip them.
 - **AddressSanitizer:** lavapipe keeps some memory reachable only from its own globals.
   When SDL unloads the driver at exit, LeakSanitizer reports that memory (112 bytes) with
   misattributed stack frames. With the driver kept loaded

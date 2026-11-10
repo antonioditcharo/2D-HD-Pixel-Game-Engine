@@ -37,7 +37,9 @@ struct Rect {
 };
 
 struct DeviceOptions {
-    /// Create the device without any window, for tests, tools and offline rendering.
+    /// Create the device without a display, for tests, tools and offline rendering. Such a
+    /// device can still show windows with the Vulkan backend (through SDL's offscreen
+    /// video driver), but not with Direct3D 12, which needs a real window.
     bool headless = false;
     /// Ask the driver for validation. Slower; for development.
     bool debug = false;
@@ -164,7 +166,8 @@ public:
     [[nodiscard]] std::unique_ptr<RenderTarget> create_render_target(std::uint32_t width,
                                                                      std::uint32_t height);
 
-    /// A resizable window that this device presents to. Null if it cannot be created.
+    /// A resizable window that this device presents to. Null if it cannot be created,
+    /// including on a headless device whose backend is not Vulkan (see DeviceOptions).
     [[nodiscard]] std::unique_ptr<Window> create_window(std::string_view title, std::uint32_t width,
                                                         std::uint32_t height);
 

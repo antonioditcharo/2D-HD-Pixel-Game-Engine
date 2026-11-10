@@ -219,7 +219,17 @@ TEST_CASE("A window presents a target") {
     if (device == nullptr) {
         return;
     }
+    if (device->driver_name() != "vulkan") {
+        // The shared test device is headless, which can show windows only with Vulkan.
+        CHECK(device->create_window("Sparxel test", 100, 60) == nullptr);
+        CHECK(device->last_error() ==
+              "A headless device can show windows only with Vulkan; this one uses " +
+                  device->driver_name() + ".");
+        MESSAGE("Presenting to a window is tested with Vulkan only.");
+        return;
+    }
     const auto window = device->create_window("Sparxel test", 100, 60);
+    INFO(device->last_error());
     REQUIRE(window != nullptr);
     CHECK(window->width() == 100);
     CHECK(window->height() == 60);
