@@ -180,7 +180,7 @@ namespace {
 
 using common::expected_text;
 using common::format_number;
-using common::quoted;
+using common::quote;
 using common::range_text;
 
 /// Deeper nesting than this is refused. It keeps the compiler's recursion bounded for any
@@ -253,7 +253,7 @@ struct Type {
     if (const double* real = std::get_if<double>(&value)) {
         return format_number(*real);
     }
-    return quoted(std::get<std::string>(value));
+    return quote(std::get<std::string>(value));
 }
 
 /// The value a variable starts with when none is given. Empty for an empty choice list.
@@ -375,7 +375,7 @@ private:
     [[nodiscard]] const reflect::TypeInfo* object_type(BlockId block, const std::string& object) {
         const reflect::TypeInfo* type = objects_ ? objects_(object) : nullptr;
         if (type == nullptr) {
-            error(block, "There is no object called " + quoted(object) + ".");
+            error(block, "There is no object called " + quote(object) + ".");
         }
         return type;
     }
@@ -384,19 +384,19 @@ private:
 
     void check_names_and_ids() {
         if (!common::is_valid_script_name(asset_.name)) {
-            error(BlockId{}, "The logic asset's name " + quoted(asset_.name) +
+            error(BlockId{}, "The logic asset's name " + quote(asset_.name) +
                                  " is not valid: use 1 to 128 letters, digits, '_', '-', '.' "
                                  "or '/'.");
         }
         for (const Sequence& sequence : asset_.sequences) {
             claim_id(sequence.id, true);
             if (!reflect::is_valid_id(sequence.name)) {
-                error(sequence.id, "The sequence name " + quoted(sequence.name) +
+                error(sequence.id, "The sequence name " + quote(sequence.name) +
                                        " is not valid: use lowercase letters, digits and "
                                        "underscores, starting with a letter.");
             } else if (!sequences_.insert(sequence.name).second) {
                 error(sequence.id,
-                      "There is already a sequence called " + quoted(sequence.name) + ".");
+                      "There is already a sequence called " + quote(sequence.name) + ".");
             }
             claim_ids(sequence.steps);
         }
@@ -451,21 +451,21 @@ private:
     void variables() {
         for (const Variable& variable : asset_.variables) {
             if (!reflect::is_valid_id(variable.id)) {
-                error(BlockId{}, "The variable name " + quoted(variable.id) +
+                error(BlockId{}, "The variable name " + quote(variable.id) +
                                      " is not valid: use lowercase letters, digits and "
                                      "underscores, starting with a letter.");
                 continue;
             }
             if (variables_.contains(variable.id)) {
-                error(BlockId{}, "There is already a variable called " + quoted(variable.id) + ".");
+                error(BlockId{}, "There is already a variable called " + quote(variable.id) + ".");
                 continue;
             }
             VariableInfo info{&variable, nullptr};
             if (variable.kind == reflect::ValueKind::Choice) {
                 info.choice = registry_.find_choice_list(variable.choice_list);
                 if (info.choice == nullptr) {
-                    error(BlockId{}, "The variable " + quoted(variable.id) +
-                                         " uses the choice list " + quoted(variable.choice_list) +
+                    error(BlockId{}, "The variable " + quote(variable.id) +
+                                         " uses the choice list " + quote(variable.choice_list) +
                                          ", which does not exist.");
                     continue;
                 }
@@ -475,12 +475,12 @@ private:
             const std::optional<reflect::Value> start =
                 variable.initial ? variable.initial : zero_value(variable.kind, info.choice);
             if (!start) {
-                error(BlockId{}, "The variable " + quoted(variable.id) +
+                error(BlockId{}, "The variable " + quote(variable.id) +
                                      " needs a starting value: its choice list is empty.");
                 continue;
             }
             const std::optional<std::string> initial = literal_code(
-                BlockId{}, *start, slot, "The starting value of " + quoted(variable.id));
+                BlockId{}, *start, slot, "The starting value of " + quote(variable.id));
             if (initial) {
                 emit(BlockId{}, "vars[" + lua_string(variable.id) + "] = " + *initial);
             }
@@ -597,7 +597,7 @@ private:
         case ExprKind::Variable: {
             const auto found = variables_.find(expr.member);
             if (found == variables_.end()) {
-                error(where, "There is no variable called " + quoted(expr.member) + ".");
+                error(where, "There is no variable called " + quote(expr.member) + ".");
                 return std::nullopt;
             }
             type = Type{found->second.variable->kind, found->second.choice};
@@ -638,7 +638,7 @@ private:
         const reflect::PropertyInfo* property = object->find_property(expr.member);
         if (property == nullptr) {
             error(where,
-                  quoted(expr.object) + " has no property called " + quoted(expr.member) + ".");
+                  quote(expr.object) + " has no property called " + quote(expr.member) + ".");
             return std::nullopt;
         }
         type = Type{property->kind, property->choice};
@@ -648,7 +648,7 @@ private:
     /// The code for the arguments of `function`, starting with ", ", or nothing.
     std::optional<std::string> arguments_code(BlockId where, const reflect::FunctionInfo& function,
                                               const std::vector<Expr>& arguments) {
-        const std::string name = quoted(function.meta.display_name);
+        const std::string name = quote(function.meta.display_name);
         const std::size_t needed = function.parameters.size();
         if (arguments.size() != needed) {
             error(where, name + " needs " + std::to_string(needed) +
@@ -662,7 +662,7 @@ private:
             const reflect::ParameterInfo& parameter = function.parameters[i];
             const Slot slot{parameter.kind, parameter.choice, parameter.limits};
             const std::optional<std::string> argument = slot_code(
-                where, arguments[i], slot, quoted(parameter.meta.display_name) + " of " + name);
+                where, arguments[i], slot, quote(parameter.meta.display_name) + " of " + name);
             if (argument) {
                 code += ", " + *argument;
             } else {
@@ -679,12 +679,12 @@ private:
         }
         const reflect::FunctionInfo* function = object->find_function(expr.member);
         if (function == nullptr) {
-            error(where, quoted(expr.object) + " has no condition or value called " +
-                             quoted(expr.member) + ".");
+            error(where, quote(expr.object) + " has no condition or value called " +
+                             quote(expr.member) + ".");
             return std::nullopt;
         }
         if (function->role == reflect::FunctionRole::Action || !function->result_kind) {
-            error(where, quoted(function->meta.display_name) +
+            error(where, quote(function->meta.display_name) +
                              " is an action: it does something but gives no value, so it "
                              "cannot be used here.");
             return std::nullopt;
@@ -709,7 +709,7 @@ private:
                 }
             }
         }
-        error(where, quoted(expr.member) + " is not a value of this rule's event.");
+        error(where, quote(expr.member) + " is not a value of this rule's event.");
         return std::nullopt;
     }
 
@@ -873,7 +873,7 @@ private:
             return;
         case StmtKind::Run:
             if (!sequences_.contains(stmt.member)) {
-                error(stmt.id, "There is no sequence called " + quoted(stmt.member) + ".");
+                error(stmt.id, "There is no sequence called " + quote(stmt.member) + ".");
                 return;
             }
             emit(stmt.id, trace() + sequence_entry(stmt.member) + "()");
@@ -899,11 +899,11 @@ private:
         const reflect::FunctionInfo* function = object->find_function(stmt.member);
         if (function == nullptr) {
             error(stmt.id,
-                  quoted(stmt.object) + " has no action called " + quoted(stmt.member) + ".");
+                  quote(stmt.object) + " has no action called " + quote(stmt.member) + ".");
             return;
         }
         if (function->role != reflect::FunctionRole::Action) {
-            error(stmt.id, quoted(function->meta.display_name) +
+            error(stmt.id, quote(function->meta.display_name) +
                                (function->role == reflect::FunctionRole::Condition
                                     ? " is a condition: it answers yes or no and changes "
                                       "nothing. Use it in an If."
@@ -927,10 +927,10 @@ private:
         const reflect::PropertyInfo* property = object->find_property(stmt.member);
         if (property == nullptr) {
             error(stmt.id,
-                  quoted(stmt.object) + " has no property called " + quoted(stmt.member) + ".");
+                  quote(stmt.object) + " has no property called " + quote(stmt.member) + ".");
             return;
         }
-        const std::string what = quoted(property->meta.display_name) + " of " + quoted(stmt.object);
+        const std::string what = quote(property->meta.display_name) + " of " + quote(stmt.object);
         if (reflect::has_flag(property->flags, reflect::property_flag::read_only)) {
             error(stmt.id, what + " cannot be changed.");
             return;
@@ -950,7 +950,7 @@ private:
     void set_variable_statement(const Stmt& stmt) {
         const auto found = variables_.find(stmt.member);
         if (found == variables_.end()) {
-            error(stmt.id, "There is no variable called " + quoted(stmt.member) + ".");
+            error(stmt.id, "There is no variable called " + quote(stmt.member) + ".");
             return;
         }
         const Expr* value = single_argument(stmt);
@@ -960,7 +960,7 @@ private:
         const VariableInfo& info = found->second;
         const std::optional<std::string> code =
             slot_code(stmt.id, *value, Slot{info.variable->kind, info.choice, {}},
-                      "The variable " + quoted(stmt.member));
+                      "The variable " + quote(stmt.member));
         if (code) {
             emit(stmt.id, trace() + "vars[" + lua_string(stmt.member) + "] = " + *code);
         }
@@ -1022,7 +1022,7 @@ private:
         event_ = nullptr;
         std::size_t payload = 0;
         if (!reflect::is_valid_id(rule.event)) {
-            error(rule.id, "The event name " + quoted(rule.event) + " is not valid.");
+            error(rule.id, "The event name " + quote(rule.event) + " is not valid.");
             return;
         }
         if (!rule.object.empty()) {
@@ -1033,7 +1033,7 @@ private:
             event_ = object->find_event(rule.event);
             if (event_ == nullptr) {
                 error(rule.id,
-                      quoted(rule.object) + " has no event called " + quoted(rule.event) + ".");
+                      quote(rule.object) + " has no event called " + quote(rule.event) + ".");
                 return;
             }
             payload = event_->parameters.size();

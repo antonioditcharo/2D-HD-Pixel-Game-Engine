@@ -8,6 +8,7 @@ configure_file(
 
 add_library(engine_foundation STATIC
     src/reflect.cpp
+    src/text.cpp
     src/version.cpp
 )
 add_library(engine::foundation ALIAS engine_foundation)

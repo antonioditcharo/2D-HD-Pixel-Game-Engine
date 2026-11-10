@@ -54,6 +54,8 @@ struct Expr {
     CompareOp compare = CompareOp::Equal;
     ArithmeticOp arithmetic = ArithmeticOp::Add;
     std::vector<Expr> operands;
+
+    friend bool operator==(const Expr&, const Expr&) = default;
 };
 
 // ---------------------------------------------------------------------------------------
@@ -79,6 +81,8 @@ struct Stmt {
     std::vector<Expr> arguments;
     std::vector<Stmt> body;
     std::vector<Stmt> otherwise;
+
+    friend bool operator==(const Stmt&, const Stmt&) = default;
 };
 
 // ---------------------------------------------------------------------------------------
@@ -93,6 +97,8 @@ struct Variable {
     /// Must fit the kind; for choices, an entry id or value. Empty means no, 0, empty text
     /// or the first entry of the choice list.
     std::optional<reflect::Value> initial;
+
+    friend bool operator==(const Variable&, const Variable&) = default;
 };
 
 /// A list of steps that can wait (layer 4).
@@ -100,6 +106,8 @@ struct Sequence {
     BlockId id;
     std::string name; ///< An id: how other blocks and the host start it.
     std::vector<Stmt> steps;
+
+    friend bool operator==(const Sequence&, const Sequence&) = default;
 };
 
 /// "When [event], if [conditions], do [actions], otherwise [actions]" (layer 3).
@@ -112,6 +120,8 @@ struct Rule {
     std::vector<Expr> conditions; ///< All must be true.
     std::vector<Stmt> actions;
     std::vector<Stmt> otherwise;
+
+    friend bool operator==(const Rule&, const Rule&) = default;
 };
 
 /// One logic asset: what one file in a project holds, and what compiles to one script.
@@ -120,6 +130,8 @@ struct LogicAsset {
     std::vector<Variable> variables;
     std::vector<Sequence> sequences;
     std::vector<Rule> rules; ///< In the order they run for the same event.
+
+    friend bool operator==(const LogicAsset&, const LogicAsset&) = default;
 };
 
 // ---------------------------------------------------------------------------------------

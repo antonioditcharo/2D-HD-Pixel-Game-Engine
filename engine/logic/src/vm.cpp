@@ -27,7 +27,7 @@ namespace reflect = engine::reflect;
 using common::expected_text;
 using common::format_number;
 using common::is_valid_script_name;
-using common::quoted;
+using common::quote;
 using common::range_text;
 
 /// A wait shorter than this counts as over. It absorbs rounding when many small frame
@@ -91,7 +91,7 @@ struct Binding {
         const char* text = lua_tolstring(state, index, &length);
         constexpr std::size_t max_shown = 40;
         const std::string shown(text, std::min(length, max_shown));
-        return quoted(length > max_shown ? shown + "..." : shown);
+        return quote(length > max_shown ? shown + "..." : shown);
     }
     case LUA_TTABLE:
         return "a table";
@@ -533,7 +533,7 @@ void interrupt(lua_State* state, int gc) {
     const std::string_view name = string_at(state, 1);
     const auto found = impl.bindings.find(name);
     if (found == impl.bindings.end()) {
-        raise(state, "There is no object called " + quoted(name) + ".");
+        raise(state, "There is no object called " + quote(name) + ".");
     }
     return found->second;
 }
@@ -554,10 +554,10 @@ int script_call(lua_State* state) {
     const std::string_view function_id = name_argument(state, 2, "sx.call", "a function");
     const reflect::FunctionInfo* function = binding.type->find_function(function_id);
     if (function == nullptr) {
-        raise(state, quoted(object_name) + " has no action, condition or value called " +
-                         quoted(function_id) + ".");
+        raise(state, quote(object_name) + " has no action, condition or value called " +
+                         quote(function_id) + ".");
     }
-    const std::string function_name = quoted(function->meta.display_name);
+    const std::string function_name = quote(function->meta.display_name);
     const std::size_t given = static_cast<std::size_t>(lua_gettop(state) - 2);
     const std::size_t needed = function->parameters.size();
     if (given != needed) {
@@ -573,10 +573,9 @@ int script_call(lua_State* state) {
         const Conversion converted =
             to_value(state, index, parameter.kind, parameter.choice, arguments[i]);
         if (converted != Conversion::Ok) {
-            raise(state,
-                  misfit_message(quoted(parameter.meta.display_name) + " of " + function_name,
-                                 parameter.kind, parameter.limits, parameter.choice,
-                                 to_set_result(converted), given_text(state, index)));
+            raise(state, misfit_message(quote(parameter.meta.display_name) + " of " + function_name,
+                                        parameter.kind, parameter.limits, parameter.choice,
+                                        to_set_result(converted), given_text(state, index)));
         }
     }
 
@@ -584,10 +583,10 @@ int script_call(lua_State* state) {
     if (!result.ok()) {
         if (result.error == reflect::CallError::WrongType ||
             result.error == reflect::CallError::WrongArgumentCount) {
-            raise(state, function_name + " could not be run on " + quoted(object_name) + ".");
+            raise(state, function_name + " could not be run on " + quote(object_name) + ".");
         }
         const reflect::ParameterInfo& parameter = function->parameters[result.argument];
-        raise(state, misfit_message(quoted(parameter.meta.display_name) + " of " + function_name,
+        raise(state, misfit_message(quote(parameter.meta.display_name) + " of " + function_name,
                                     parameter.kind, parameter.limits, parameter.choice,
                                     to_set_result(result.error),
                                     given_text(state, static_cast<int>(result.argument) + 3)));
@@ -605,7 +604,7 @@ property_argument(lua_State* state, const Binding& binding, const char* function
     const reflect::PropertyInfo* property = binding.type->find_property(property_id);
     if (property == nullptr) {
         raise(state,
-              quoted(string_at(state, 1)) + " has no property called " + quoted(property_id) + ".");
+              quote(string_at(state, 1)) + " has no property called " + quote(property_id) + ".");
     }
     return *property;
 }
@@ -616,7 +615,7 @@ int script_get(lua_State* state) {
     const reflect::PropertyInfo& property = property_argument(state, binding, "sx.get");
     const std::optional<reflect::Value> value = reflect::get_property(binding.object, property);
     if (!value) {
-        raise(state, quoted(property.meta.display_name) + " could not be read.");
+        raise(state, quote(property.meta.display_name) + " could not be read.");
     }
     push_value(state, *value, property.choice);
     return 1;
@@ -627,7 +626,7 @@ int script_set(lua_State* state) {
     const Binding& binding = object_argument(state, "sx.set");
     const reflect::PropertyInfo& property = property_argument(state, binding, "sx.set");
     const std::string what =
-        quoted(property.meta.display_name) + " of " + quoted(string_at(state, 1));
+        quote(property.meta.display_name) + " of " + quote(string_at(state, 1));
     if (lua_gettop(state) != 3) {
         raise(state, "sx.set needs an object, a property and one value.");
     }
@@ -861,7 +860,7 @@ std::optional<TaskId> Vm::start(ScriptId script_id, std::string_view function,
     if (lua_type(script->thread, -1) != LUA_TFUNCTION) {
         lua_pop(script->thread, 1);
         impl.report(ScriptErrorKind::Runtime, script->name, 0,
-                    "The script has no function called " + quoted(function) + ".");
+                    "The script has no function called " + quote(function) + ".");
         return std::nullopt;
     }
     Task& task = impl.create_task(*script);
@@ -870,7 +869,7 @@ std::optional<TaskId> Vm::start(ScriptId script_id, std::string_view function,
         impl.release(task);
         impl.remove_finished();
         impl.report(ScriptErrorKind::Runtime, script->name, 0,
-                    "Too many values were given to " + quoted(function) + ".");
+                    "Too many values were given to " + quote(function) + ".");
         return std::nullopt;
     }
     for (const reflect::Value& argument : arguments) {
