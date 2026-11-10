@@ -215,6 +215,7 @@ void register_types(reflect::Registry& registry) {
     input::register_types(registry);
     register_behaviours(registry);
     register_save_types(registry);
+    register_audio_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -235,7 +236,9 @@ struct Runtime::Impl {
     input::InputState state;
     input::InputObject input_object;
     SaveObject save_object;
-    std::vector<std::string> save_problems;
+    std::unique_ptr<audio::AudioEngine> audio_engine;
+    AudioObject audio_object;
+    std::vector<std::string> problems;
     std::unique_ptr<logic::Vm> vm;
     FixedStepClock clock;
     const input::Recording* replay{nullptr};
@@ -323,6 +326,20 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         SDL_free(pref);
         return path;
     });
+    // Sound: a missing sound output is reported, and the game runs silent.
+    if (options.audio != AudioMode::Off) {
+        std::string error;
+        r.audio_engine = audio::AudioEngine::create(
+            audio::AudioOptions{options.audio == AudioMode::Headless, 48000, 2}, error);
+        if (r.audio_engine == nullptr) {
+            issues.push_back(serialize::Issue{"", "No sound: " + error});
+        }
+    }
+    r.audio_object = AudioObject(r.audio_engine.get(), &r.assets);
+    if (!r.vm->bind("audio", reflect::ObjectRef::of(r.audio_object))) {
+        issues.push_back(
+            serialize::Issue{"", "The audio object could not be made available to logic."});
+    }
     if (!r.vm->bind("game", reflect::ObjectRef::of(r.save_object))) {
         issues.push_back(
             serialize::Issue{"", "The game object could not be made available to logic."});
@@ -460,15 +477,18 @@ void Runtime::step() {
             std::vector<serialize::Issue> issues;
             if (!load_from_slot(request.slot, issues) || !issues.empty()) {
                 for (const serialize::Issue& issue : issues) {
-                    r.save_problems.push_back(issue.path + ": " + issue.message);
+                    r.problems.push_back(issue.path + ": " + issue.message);
                 }
             }
         } else {
             std::string error;
             if (!save_to_slot(request.slot, error)) {
-                r.save_problems.push_back(error);
+                r.problems.push_back(error);
             }
         }
+    }
+    for (std::string& problem : r.audio_object.take_problems()) {
+        r.problems.push_back(std::move(problem));
     }
 }
 
@@ -694,8 +714,12 @@ std::filesystem::path Runtime::save_folder() const {
     return impl_->save_object.folder();
 }
 
-const std::vector<std::string>& Runtime::save_problems() const noexcept {
-    return impl_->save_problems;
+const std::vector<std::string>& Runtime::problems() const noexcept {
+    return impl_->problems;
+}
+
+audio::AudioEngine* Runtime::audio() noexcept {
+    return impl_->audio_engine.get();
 }
 
 } // namespace engine::game

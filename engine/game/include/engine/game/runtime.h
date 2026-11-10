@@ -12,6 +12,7 @@
 #include "engine/game/behaviours.h"
 #include "engine/game/clock.h"
 #include "engine/game/save.h"
+#include "engine/game/sound.h"
 #include "engine/input/input.h"
 #include "engine/logic/vm.h"
 #include "engine/render/render.h"
@@ -60,6 +61,12 @@ void register_types(reflect::Registry& registry);
 // The runtime
 // ---------------------------------------------------------------------------------------
 
+enum class AudioMode : std::uint8_t {
+    Off,      ///< No sound at all.
+    Device,   ///< The computer's sound output. If there is none, the game runs silent.
+    Headless, ///< Mixed but not played: read with Runtime::audio()->render(), for tests.
+};
+
 struct RuntimeOptions {
     /// Without graphics, nothing is drawn: for tests, servers and tools. The simulation is
     /// identical either way.
@@ -72,6 +79,7 @@ struct RuntimeOptions {
     /// operating system suggests (on Windows, under AppData\Roaming\Sparxel).
     std::filesystem::path save_folder;
     std::string window_title = "Sparxel";
+    AudioMode audio = AudioMode::Device;
 };
 
 class Runtime {
@@ -124,8 +132,10 @@ public:
     bool load_from_slot(std::int64_t slot, std::vector<serialize::Issue>& issues);
     /// Where save slots go (see RuntimeOptions::save_folder).
     [[nodiscard]] std::filesystem::path save_folder() const;
-    /// Problems with saving or loading that logic asked for, oldest first.
-    [[nodiscard]] const std::vector<std::string>& save_problems() const noexcept;
+    /// Problems with what logic asked for (saving, loading, playing sounds), oldest first.
+    [[nodiscard]] const std::vector<std::string>& problems() const noexcept;
+    /// The audio engine; null with AudioMode::Off or when no sound output was found.
+    [[nodiscard]] audio::AudioEngine* audio() noexcept;
 
     struct Impl;
 

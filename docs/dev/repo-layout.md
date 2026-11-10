@@ -14,6 +14,7 @@
 │   ├── assets/        The asset database (GUIDs in .meta files) and importers.
 │   ├── scene2d/       Classic 2D scenes: transforms and sprites drawn from the world.
 │   ├── input/         Named actions bound to keys and gamepad buttons; recording and replay.
+│   ├── audio/         Sound effects and music: buses, fades, decoding (miniaudio inside).
 │   └── game/          The runtime: opens a project and runs it; logic reaching the world; the clock.
 ├── editor/            The editor application (not started). May use engine/, never the
 │                      other way round.

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "support/gpu.h"
+#include "support/wav.h"
 
 namespace engine::render {
 std::ostream& operator<<(std::ostream& out, Color c) {
@@ -31,6 +32,7 @@ std::ostream& operator<<(std::ostream& out, Color c) {
 } // namespace engine::render
 
 namespace assets = engine::assets;
+namespace audio = engine::audio;
 namespace game = engine::game;
 namespace input = engine::input;
 namespace logic = engine::logic;
@@ -101,6 +103,9 @@ struct Project {
         // The images, imported once to learn their GUIDs (kept in their .meta files).
         write_png(folder.path / "assets/art/hero.png", hero_colour);
         write_png(folder.path / "assets/art/rock.png", rock_colour);
+        // Music at 0.5 and a chime at 0.25: levels the mix test can recognise.
+        write_sound(folder.path / "assets/music/theme.wav", test_support::wav(4800, 16384));
+        write_sound(folder.path / "assets/sfx/chime.wav", test_support::wav(2400, 8192));
         assets::AssetDatabase db(folder.path / "assets");
         db.refresh();
         REQUIRE(db.issues().empty());
@@ -158,14 +163,22 @@ struct Project {
                                           {pressed("menu")},
                                           {ir::do_action(23, "game", "load", {whole(2)})},
                                           {}});
-        rules.rules.push_back(
-            logic::Rule{logic::BlockId{1}, "", "game_start", {}, {ir::log(2, text("start"))}, {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "",
+            "game_start",
+            {},
+            {ir::log(2, text("start")),
+             ir::do_action(30, "audio", "play_music",
+                           {text("music/theme.wav"), ir::literal(reflect::Value{0.0})})},
+            {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{3},
             "input",
             "pressed",
             {ir::compare(logic::CompareOp::Equal, ir::event_value("action"), text("interact"))},
-            {ir::log(4, text("hello"))},
+            {ir::log(4, text("hello")),
+             ir::do_action(31, "audio", "play_sound", {text("sfx/chime.wav")})},
             {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{5}, "torch", "finished", {}, {ir::log(6, text("torch done"))}, {}});
@@ -192,6 +205,11 @@ struct Project {
 
     static logic::Expr whole(std::int64_t value) { return ir::literal(reflect::Value{value}); }
 
+    static void write_sound(const fs::path& file, const std::vector<std::uint8_t>& bytes) {
+        write_bytes(file,
+                    std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    }
+
     /// Writes a solid-colour 2 x 2 PNG.
     static void write_png(const fs::path& file, render::Color c) {
         assets::Image image;
@@ -210,6 +228,10 @@ struct Project {
         if (options.save_folder.empty()) {
             options.save_folder = folder.path / "saves";
         }
+        // Tests never depend on a sound card: mix headless instead.
+        if (options.audio == game::AudioMode::Device) {
+            options.audio = game::AudioMode::Headless;
+        }
         std::vector<serialize::Issue> issues;
         std::unique_ptr<game::Runtime> runtime = game::Runtime::open(folder.path, options, issues);
         INFO(issues_text(issues));
@@ -225,6 +247,7 @@ game::RuntimeOptions no_graphics(const input::Recording* replay) {
     game::RuntimeOptions options;
     options.graphics = false;
     options.replay = replay;
+    options.audio = game::AudioMode::Headless;
     return options;
 }
 
@@ -663,7 +686,7 @@ TEST_CASE("Logic saves and loads slots at the end of the step") {
     runtime->step(); // step 40: Menu loads slot 2
     CHECK(transform_of(*runtime, "hero").x == 0.0);
     CHECK(runtime->step_count() == 2); // the step count when it was saved
-    CHECK(runtime->save_problems().empty());
+    CHECK(runtime->problems().empty());
 
     // Problems are collected, not thrown: loading an empty slot, saving to slot 0.
     std::vector<serialize::Issue> issues;
@@ -677,6 +700,58 @@ TEST_CASE("Logic saves and loads slots at the end of the step") {
     issues.clear();
     CHECK(runtime->load_from_slot(99, issues));
     CHECK(issues.empty());
+}
+
+TEST_CASE("Rules play music and sounds from assets") {
+    const Project project;
+    input::Recording replay;
+    replay.record(0, key(input::Key::Z), true); // Interact: the chime
+    const auto runtime = project.open(no_graphics(&replay));
+    audio::AudioEngine* mixer = runtime->audio();
+    REQUIRE(mixer != nullptr);
+    // The game-start Rule started the theme, found by its path.
+    assets::AssetDatabase db(project.folder.path / "assets");
+    db.refresh(); // reads the .meta files the runtime wrote: the same GUIDs
+    const assets::AssetRecord* theme = db.find("music/theme.wav");
+    const assets::AssetRecord* scene = db.find("maps/start.dscene");
+    REQUIRE(theme != nullptr);
+    REQUIRE(scene != nullptr);
+    CHECK(mixer->music() == theme->guid.to_string());
+
+    const auto left = [mixer](std::uint32_t frames) {
+        std::vector<float> out(std::size_t{frames} * 2);
+        REQUIRE(mixer->render(out));
+        std::vector<float> channel;
+        for (std::uint32_t i = 0; i < frames; ++i) {
+            channel.push_back(out[std::size_t{i} * 2]);
+        }
+        return channel;
+    };
+    std::vector<float> mixed = left(480);
+    CHECK(mixed[100] == doctest::Approx(0.5).epsilon(0.001));
+    runtime->step(); // Interact: the chime plays over the music
+    mixed = left(480);
+    CHECK(mixed[100] == doctest::Approx(0.75).epsilon(0.001));
+    CHECK(runtime->problems().empty());
+
+    // Missing or unreadable sounds become problems, not crashes.
+    game::AudioObject sounds(mixer, &db);
+    sounds.play_sound("sfx/nothing.wav");
+    sounds.play_music("maps/start.dscene", 0.0);
+    sounds.play_sound(engine::Guid::generate().to_string());
+    const std::vector<std::string> problems = sounds.take_problems();
+    REQUIRE(problems.size() == 3);
+    CHECK(problems[0] == "There is no sound sfx/nothing.wav in assets/.");
+    CHECK(problems[1] == "maps/start.dscene: " + scene->guid.to_string() +
+                             " is not a sound miniaudio can read (WAV, FLAC or MP3).");
+    sounds.set_music_volume(50);
+    CHECK(mixer->volume(audio::Bus::Music) == 0.5);
+    sounds.set_sound_volume(250);
+    CHECK(mixer->volume(audio::Bus::Sounds) == 1.0);
+    // Without an engine, every action quietly does nothing.
+    game::AudioObject silent;
+    silent.play_sound("sfx/chime.wav");
+    CHECK(silent.take_problems().empty());
 }
 
 TEST_CASE("Problems are reported with the file they are in") {

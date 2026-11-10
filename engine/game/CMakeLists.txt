@@ -8,6 +8,7 @@ add_library(engine_game STATIC
     src/logic_world.cpp
     src/runtime.cpp
     src/save.cpp
+    src/sound.cpp
 )
 add_library(engine::game ALIAS engine_game)
 
@@ -22,6 +23,7 @@ target_link_libraries(engine_game
         engine::render
         engine::scene2d
         engine::input
+        engine::audio
     PRIVATE
         SDL3::SDL3
 )

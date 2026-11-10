@@ -5,6 +5,7 @@
     "doctest",
     "flecs",
     "luau",
+    "miniaudio",
     "nlohmann-json",
     {
       "name": "sdl3",

@@ -109,6 +109,20 @@ engine_configure_test_target(engine_scene2d_tests)
 
 add_test(NAME scene2d COMMAND engine_scene2d_tests)
 
+add_executable(engine_audio_tests
+    test_main.cpp
+    audio/audio_test.cpp
+)
+target_link_libraries(engine_audio_tests PRIVATE
+    engine::audio
+    doctest::doctest
+)
+target_compile_definitions(engine_audio_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+target_include_directories(engine_audio_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+engine_configure_test_target(engine_audio_tests)
+
+add_test(NAME audio COMMAND engine_audio_tests)
+
 add_executable(engine_game_tests
     test_main.cpp
     game/behaviours_test.cpp

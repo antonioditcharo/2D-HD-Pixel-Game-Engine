@@ -239,6 +239,14 @@ public domain or under the MIT licence; used here as public domain, so no notice
 required. SDL's OpenGL ES headers are Apache-2.0; they only declare an API that Sparxel
 does not use.
 
+## miniaudio
+
+Version 0.11.25, from https://github.com/mackron/miniaudio. Used by the audio module
+(`engine/audio`): mixing, sound output and the WAV, FLAC and MP3 decoders. Copyright 2025
+David Reid, offered as a choice of two licences: public domain (the Unlicense) or MIT No
+Attribution. Neither requires a notice; it is listed so this file names every library in
+the runtime.
+
 ## Build-time tools
 
 The shader compiler (SDL_shadercross with DXC and SPIRV-Cross) runs only while building

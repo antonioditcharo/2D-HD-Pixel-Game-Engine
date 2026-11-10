@@ -273,7 +273,7 @@ same save (tested).
 **Slots.** The **Game** object (`game`) gives logic *"Save the game in slot [n]"*, *"Load
 the game from slot [n]"* and the condition *"Slot [n] has a save"*, for slots 1 to 99.
 Saving and loading happen at the end of the step (step 6), after every script has run,
-so no Rule ever sees a half-loaded world. Problems are collected in `save_problems()`.
+so no Rule ever sees a half-loaded world. Problems are collected in `problems()`.
 
 - Slot files (`slot-07.sparxel-save`) are JSON, written **atomically**: to a temporary
   file that then replaces the slot in one step, so a crash or power cut while saving
