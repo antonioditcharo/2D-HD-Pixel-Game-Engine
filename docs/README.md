@@ -129,6 +129,7 @@ Details and the questions that remain open are in
 | [Building](dev/building.md) | How to build and test the code |
 | [Coding standards](dev/coding-standards.md) | Language rules, naming, formatting |
 | [Repository layout](dev/repo-layout.md) | What lives where |
+| [Reflection registry](dev/reflection.md) | How engine features describe their data for the editor and no-code blocks |
 
 ### Sources
 [sources.md](sources.md) lists 104 sources, each with an ID (`[S#]`) and a note on how it was

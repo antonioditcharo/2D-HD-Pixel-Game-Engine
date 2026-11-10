@@ -19,7 +19,8 @@ place. There is no engine to use yet.
 | Owner decisions (licence, scope, team) | Recorded: [`docs/plan/09`](docs/plan/09-risks-quality-legal.md) §5 |
 | Product name | **Sparxel**, chosen after a preliminary screening ([`docs/research/05`](docs/research/05-name-screening.md) §7). Professional trademark clearance still needed |
 | Build system, tests and CI | In place: [`docs/dev/building.md`](docs/dev/building.md) |
-| Engine and editor | Not started. Next: the reflection registry and the Phase 0 prototypes ([`docs/plan/08`](docs/plan/08-roadmap.md)) |
+| Engine | Started: the reflection registry, first version ([`docs/dev/reflection.md`](docs/dev/reflection.md)). Next: its actions and conditions, then the Phase 0 prototypes ([`docs/plan/08`](docs/plan/08-roadmap.md)) |
+| Editor | Not started |
 
 Start with the [executive summary](docs/README.md#executive-summary).
 

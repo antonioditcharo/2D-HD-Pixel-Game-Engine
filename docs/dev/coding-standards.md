@@ -21,6 +21,8 @@ them, so in practice: run the formatter, fix what the compiler and `clang-tidy` 
 |---|---|---|
 | Namespaces | `lower_case` | `engine` |
 | Types (classes, structs, enums) | `CamelCase` | `Version` |
+| Enumerators | `CamelCase` | `ValueKind::Float` |
+| Constants (`inline constexpr` values) | `lower_case` | `property_flag::read_only` |
 | Functions | `lower_case` | `version_string()` |
 | Variables and parameters | `lower_case` | `frame_count` |
 | Private member variables | `lower_case_` with a trailing underscore | `size_` |

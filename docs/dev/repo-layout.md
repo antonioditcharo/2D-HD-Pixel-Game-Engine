@@ -3,8 +3,8 @@
 ```
 .
 ├── engine/            Runtime code. Everything here can ship inside an exported game.
-│   └── foundation/    Lowest layer: version info today; memory, jobs, logging and
-│                      reflection later.
+│   └── foundation/    Lowest layer: version info and the reflection registry today;
+│                      memory, jobs and logging later.
 ├── editor/            The editor application (not started). May use engine/, never the
 │                      other way round.
 ├── tests/             Unit tests, one folder per engine module.

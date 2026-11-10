@@ -263,7 +263,7 @@ Order of work for one developer. "Week" is a unit of ordering here, not a promis
 | 1 | Screen candidate product names and choose one | Done: **Sparxel** (`research/05` §7) |
 | 1 | Set up the repository structure, licence, CMake, vcpkg and CI | Done (`docs/dev/`) |
 | 2 | Write coding standards and the folder layout | Done (`docs/dev/`) |
-| 2 | Draft the reflection registry API (it drives everything) | Next |
+| 2 | Draft the reflection registry API (it drives everything) | v0 done: types, properties, choice lists (`docs/dev/reflection.md`). Actions and conditions next |
 | 2 | Choose and obtain the reference test hardware (ADR-001) | Open |
 | 3 | Start Spike R (rendering), then Spike L (logic). Paper-prototype the World and Logic workspaces | Open |
 | 4 | Start Spike U (Qt vs WebView2). Run the first usability test of the paper prototypes with 5 non-coders. Write up spike findings | Open |
