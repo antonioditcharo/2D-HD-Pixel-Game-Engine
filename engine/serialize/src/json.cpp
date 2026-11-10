@@ -619,10 +619,14 @@ using Migration = void (*)(Json& document);
 constexpr std::array<Migration, logic_version - 1> logic_migrations{};
 
 /// A copy of `json` brought from `version` up to logic_version.
-[[nodiscard]] Json migrate_logic(const Json& json, std::uint64_t version) {
+[[nodiscard]] Json migrate_logic(const Json& json, [[maybe_unused]] std::uint64_t version) {
     Json document = json;
-    for (std::uint64_t v = version; v < static_cast<std::uint64_t>(logic_version); ++v) {
-        logic_migrations.at(static_cast<std::size_t>(v - 1))(document);
+    // Compiled only once a migration exists: with none, MSVC proves the loop body
+    // unreachable and warns (C4702).
+    if constexpr (logic_version > 1) {
+        for (std::uint64_t v = version; v < static_cast<std::uint64_t>(logic_version); ++v) {
+            logic_migrations.at(static_cast<std::size_t>(v - 1))(document);
+        }
     }
     return document;
 }
