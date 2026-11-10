@@ -1,5 +1,6 @@
 #include "engine/game/runtime.h"
 
+#include "engine/foundation/text.h"
 #include "engine/game/logic_world.h"
 #include "engine/logic/compiler.h"
 
@@ -36,9 +37,9 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 9> known_project_keys{
-    "format", "version", "name",       "start_scene", "ppu",
-    "width",  "height",  "background", "render_style"};
+constexpr std::array<std::string_view, 12> known_project_keys{
+    "format",     "version",      "name",         "start_scene",     "ppu",       "width", "height",
+    "background", "render_style", "camera_pitch", "camera_distance", "camera_fov"};
 
 [[nodiscard]] std::string entry_path(const std::string& file, const std::string& key) {
     std::string path = file;
@@ -180,13 +181,37 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
             issues.push_back(serialize::Issue{entry_path(file, key), unknown_entry(key)});
         }
     }
-    if (const auto style = doc.find("render_style");
-        style != doc.end() &&
-        !(style->is_string() && style->get_ref<const std::string&>() == "classic_2d")) {
-        issues.push_back(serialize::Issue{file + "/render_style",
-                                          "Only the Classic 2D render style (\"classic_2d\") is "
-                                          "available in this version."});
-        ok = false;
+    const auto number = [&](const char* key, double& out, double min, double max) {
+        const auto found_key = doc.find(key);
+        if (found_key == doc.end()) {
+            return; // keeps the default
+        }
+        if (!found_key->is_number() || found_key->get<double>() < min ||
+            found_key->get<double>() > max) {
+            issues.push_back(serialize::Issue{entry_path(file, key),
+                                              "This must be a number from " +
+                                                  engine::text::format_number(min) + " to " +
+                                                  engine::text::format_number(max) + "."});
+            ok = false;
+            return;
+        }
+        out = found_key->get<double>();
+    };
+    number("camera_pitch", settings.camera_pitch, 5.0, 85.0);
+    number("camera_distance", settings.camera_distance, 1.0, 200.0);
+    number("camera_fov", settings.camera_fov, 5.0, 90.0);
+    if (const auto style = doc.find("render_style"); style != doc.end()) {
+        const std::string name = style->is_string() ? style->get<std::string>() : std::string();
+        if (name == "classic_2d") {
+            settings.style = RenderStyle::Classic2D;
+        } else if (name == "diorama") {
+            settings.style = RenderStyle::Diorama;
+        } else {
+            issues.push_back(serialize::Issue{file + "/render_style",
+                                              "The render style must be \"classic_2d\" or "
+                                              "\"diorama\"."});
+            ok = false;
+        }
     }
     return ok ? std::optional<ProjectSettings>(std::move(settings)) : std::nullopt;
 }
@@ -197,7 +222,10 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["version"] = project_version;
     json["name"] = settings.name;
     json["start_scene"] = settings.start_scene;
-    json["render_style"] = "classic_2d";
+    json["render_style"] = settings.style == RenderStyle::Diorama ? "diorama" : "classic_2d";
+    json["camera_pitch"] = settings.camera_pitch;
+    json["camera_distance"] = settings.camera_distance;
+    json["camera_fov"] = settings.camera_fov;
     json["ppu"] = settings.ppu;
     json["width"] = settings.width;
     json["height"] = settings.height;
@@ -250,6 +278,7 @@ struct Runtime::Impl {
     std::unique_ptr<render::Window> window;
     std::unique_ptr<render::RenderTarget> target;
     std::unique_ptr<render::SpriteRenderer> sprites;
+    std::unique_ptr<render::WorldRenderer> world_renderer; ///< For the Diorama style.
     std::unique_ptr<scene2d::TextureCache> textures;
 };
 
@@ -400,7 +429,11 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
                 r.device->create_window(options.window_title, static_cast<std::uint32_t>(fit.width),
                                         static_cast<std::uint32_t>(fit.height));
         }
+        if (r.settings.style == RenderStyle::Diorama) {
+            r.world_renderer = render::WorldRenderer::create(*r.device);
+        }
         if (r.target == nullptr || r.sprites == nullptr ||
+            (r.settings.style == RenderStyle::Diorama && r.world_renderer == nullptr) ||
             (!options.headless && r.window == nullptr)) {
             issues.push_back(serialize::Issue{"", r.device->last_error()});
             return nullptr;
@@ -522,6 +555,18 @@ bool Runtime::draw() {
                 found = true;
             }
         });
+    }
+    if (r.settings.style == RenderStyle::Diorama) {
+        scene2d::DioramaCamera orbit;
+        orbit.x = camera.x;
+        orbit.y = camera.y;
+        orbit.pitch = r.settings.camera_pitch;
+        orbit.distance = r.settings.camera_distance;
+        orbit.fov = r.settings.camera_fov;
+        orbit.ppu = r.settings.ppu;
+        scene2d::draw_diorama(*r.world, *r.textures, *r.world_renderer, *r.target, orbit,
+                              r.settings.background);
+        return true;
     }
     scene2d::draw_world(*r.world, *r.textures, *r.sprites, *r.target, camera,
                         r.settings.background);

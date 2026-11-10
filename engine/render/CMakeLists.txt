@@ -14,6 +14,8 @@ target_link_libraries(engine_render PRIVATE SDL3::SDL3)
 engine_add_shaders(engine_render
     shaders/sprite.vert.hlsl
     shaders/sprite.frag.hlsl
+    shaders/world.vert.hlsl
+    shaders/world.frag.hlsl
 )
 
 engine_configure_runtime_target(engine_render)

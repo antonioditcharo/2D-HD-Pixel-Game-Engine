@@ -6,6 +6,7 @@
 //
 // See docs/dev/rendering.md.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -185,6 +186,7 @@ private:
 
     friend class RenderTarget;
     friend class SpriteRenderer;
+    friend class WorldRenderer;
     friend class Window;
 };
 
@@ -225,6 +227,91 @@ public:
 
 private:
     SpriteRenderer(Device& device, std::unique_ptr<Native> native);
+
+    Device& device_;
+    std::unique_ptr<Native> native_;
+    Stats stats_;
+};
+
+// ---------------------------------------------------------------------------------------
+// 3D: the Diorama style (plan/04 §4)
+// ---------------------------------------------------------------------------------------
+
+/// A point or direction in world units. The world is right-handed with y up.
+struct Vec3 {
+    float x = 0.0F;
+    float y = 0.0F;
+    float z = 0.0F;
+
+    friend constexpr bool operator==(Vec3, Vec3) = default;
+};
+
+/// A 4 x 4 matrix stored row by row, applied to column vectors: clip = m * (x, y, z, 1).
+/// Clip space is the GPU's: x and y from -1 to 1 with y up, depth from 0 (near) to 1 (far).
+struct Mat4 {
+    std::array<float, 16> m{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+
+    /// A perspective projection looking down -z, with a vertical field of view in radians.
+    [[nodiscard]] static Mat4 perspective(float fov_y, float aspect, float near, float far);
+    /// An orthographic projection of the box from (left, bottom, -near) to (right, top, -far).
+    [[nodiscard]] static Mat4 orthographic(float left, float right, float bottom, float top,
+                                           float near, float far);
+    /// A camera at `eye` looking at `target`, with `up` roughly up.
+    [[nodiscard]] static Mat4 look_at(Vec3 eye, Vec3 target, Vec3 up);
+
+    /// m * (p, 1): clip coordinates x, y, z, w.
+    [[nodiscard]] std::array<float, 4> transform(Vec3 p) const noexcept;
+
+    friend Mat4 operator*(const Mat4& a, const Mat4& b) noexcept;
+    friend bool operator==(const Mat4&, const Mat4&) = default;
+};
+
+/// Distance fog: from `start` to `end` units from the eye, colours fade to `color`.
+struct Fog {
+    Color color{0, 0, 0, 255};
+    float start = 0.0F;
+    float end = 0.0F; ///< At or below `start`: no fog.
+};
+
+/// Draws textured quads in 3D with a depth buffer: the ground, walls and billboarded
+/// sprites of a diorama.
+///
+/// Texels with alpha below one half are cut out (neither drawn nor hiding what is behind),
+/// so pixel art keeps hard edges and needs no sorting: the depth buffer orders everything.
+/// Each quad's colour multiplies its texels; that is where lighting and tint go.
+class WorldRenderer {
+public:
+    /// Returns null and sets the device's last_error() if the pipeline cannot be created.
+    [[nodiscard]] static std::unique_ptr<WorldRenderer> create(Device& device);
+
+    WorldRenderer(const WorldRenderer&) = delete;
+    WorldRenderer& operator=(const WorldRenderer&) = delete;
+    WorldRenderer(WorldRenderer&&) = delete;
+    WorldRenderer& operator=(WorldRenderer&&) = delete;
+    ~WorldRenderer();
+
+    /// Starts a frame into `target`, cleared to `clear`, seen through `view_projection`
+    /// from `eye` (for fog).
+    void begin(RenderTarget& target, Color clear, const Mat4& view_projection, Vec3 eye,
+               Fog fog = {});
+    /// Queues a quad showing the `source` pixels of `texture`. The corners are the world
+    /// positions of the source's top-left, top-right, bottom-right and bottom-left.
+    void draw(const Texture& texture, const std::array<Vec3, 4>& corners, Rect source,
+              std::array<float, 4> color = {1.0F, 1.0F, 1.0F, 1.0F});
+    /// Sends the frame to the GPU. Returns false, with the device's last_error() set, if it
+    /// could not.
+    bool end();
+
+    struct Stats {
+        std::size_t quads = 0;
+        std::size_t draw_calls = 0; ///< One per run of quads sharing a texture.
+    };
+    [[nodiscard]] Stats last_stats() const noexcept { return stats_; }
+
+    struct Native;
+
+private:
+    WorldRenderer(Device& device, std::unique_ptr<Native> native);
 
     Device& device_;
     std::unique_ptr<Native> native_;

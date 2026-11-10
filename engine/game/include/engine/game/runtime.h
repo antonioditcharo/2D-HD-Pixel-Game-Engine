@@ -39,13 +39,25 @@ inline constexpr std::string_view project_file = "project.sparxel.json";
 inline constexpr std::string_view project_format = "sparxel.project";
 inline constexpr int project_version = 1;
 
+/// How the game is drawn (plan/04 §3 and §4).
+enum class RenderStyle : std::uint8_t {
+    Classic2D, ///< "classic_2d": flat, pixel-perfect 2D.
+    Diorama,   ///< "diorama": the same world in 3D, the HD-2D look.
+};
+
 struct ProjectSettings {
     std::string name;
+    RenderStyle style = RenderStyle::Classic2D;
     std::uint32_t ppu = 16;    ///< Pixels per world unit (tile), 8 to 64 (plan/04 §2).
     std::uint32_t width = 320; ///< The internal resolution, upscaled pixel-perfect.
     std::uint32_t height = 180;
     std::string start_scene; ///< The scene asset to start in, a path in assets/.
     render::Color background{20, 24, 40, 255};
+    /// The Diorama camera: how far it looks down (5 to 85 degrees), how far it stands from
+    /// the player (1 to 200 tiles), and its vertical field of view (5 to 90 degrees).
+    double camera_pitch = 35.0;
+    double camera_distance = 12.0;
+    double camera_fov = 30.0;
 };
 
 /// Reads `root`/project.sparxel.json. Returns nothing, with issues, if it is missing or

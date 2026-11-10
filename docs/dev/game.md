@@ -59,7 +59,8 @@ MyGame/
 | `ppu` | Pixels per world unit (one tile) | 16; 8 to 64 (`plan/04` §2) |
 | `width`, `height` | The internal resolution, upscaled pixel-perfect | 320 × 180; 16 to 7680 × 4320 |
 | `background` | The clear colour, `[red, green, blue]` | `[20, 24, 40]` |
-| `render_style` | `"classic_2d"`, the only style so far | `"classic_2d"` |
+| `render_style` | `"classic_2d"`, flat 2D, or `"diorama"`, the same world in 3D ([scene2d.md](scene2d.md) §7) | `"classic_2d"` |
+| `camera_pitch`, `camera_distance`, `camera_fov` | The Diorama camera, which follows the hero: degrees looking down, tiles away, and vertical field of view | 35 (5 to 85), 12 (1 to 200), 30 (5 to 90) |
 
 - Problems are reported in plain language with where they are, for example
   `project.sparxel.json/ppu`: *"This must be a whole number from 8 to 64."* A value out of
@@ -121,8 +122,9 @@ take their places in it as they arrive.
 
 ### Drawing
 
-`draw()` renders the world with `scene2d::draw_world()` ([scene2d.md](scene2d.md)). The
-camera follows the first entity with a Top-down Mover, so the hero stays centred. The
+`draw()` renders the world with `scene2d::draw_world()`, or in the Diorama style with
+`scene2d::draw_diorama()` and the project's camera settings ([scene2d.md](scene2d.md)).
+The camera follows the first entity with a Top-down Mover, so the hero stays centred. The
 window shows the image pixel-perfect with black bars around it ([rendering.md](rendering.md)
 §4).
 
@@ -295,6 +297,7 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 | Facing and walking | Every facing rule; exact frames of the cycle, back and forth and starting over, at 6 frames per second; the standing frame; clamped settings; the runtime turning the hero left and animating it |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
+| Diorama (GPU) | The same project in the Diorama style: the hero drawn as a billboard above the centre, lit as `brightness()` says; the settings round-trip; an unknown style and an out-of-range camera refused |
 | Logic and world | Names and GUIDs resolve; an entity's event reaches Rules written with its name and with its GUID, once each; Rules act through several components; logic survives storage moves |
 | Clock | Exact stepping, stalls and the step cap |
 | Save files | Slot file names and limits; atomic writes creating folders and replacing files, leaving no temporary file; a failed write reported |

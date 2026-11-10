@@ -110,6 +110,11 @@ void register_types(reflect::Registry& registry) {
         .tooltip("The painted tiles.");
     tilemap.property<&Tilemap::visible>("visible").tooltip("Hide the tiles without removing "
                                                            "them.");
+    tilemap.property<&Tilemap::height>("height")
+        .range(0.0, 16.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("In the Diorama style, how tall each tile stands: 0 is flat ground.");
     tilemap.property<&Tilemap::solid>("solid").tooltip(
         "Every tile of this map blocks movement. Paint walls on their own map.");
 }
@@ -643,6 +648,229 @@ DrawStats draw_world(const world::World& world, TextureCache& textures,
     }
     sprites.end();
     stats.drawn = items.size();
+    return stats;
+}
+
+// ---------------------------------------------------------------------------------------
+// Diorama
+// ---------------------------------------------------------------------------------------
+
+namespace {
+
+constexpr double pi = 3.14159265358979323846;
+
+[[nodiscard]] render::Vec3 unit(render::Vec3 v) noexcept {
+    const float length = std::sqrt((v.x * v.x) + (v.y * v.y) + (v.z * v.z));
+    return length > 0.0F ? render::Vec3{v.x / length, v.y / length, v.z / length} : v;
+}
+
+/// The camera's eye and its horizontal right-hand direction.
+struct Orbit {
+    render::Vec3 eye;
+    render::Vec3 target;
+    render::Vec3 right; ///< On the ground plane: billboards face along its normal.
+};
+
+Orbit orbit(const DioramaCamera& camera) {
+    const double pitch =
+        std::clamp(std::isfinite(camera.pitch) ? camera.pitch : 35.0, 5.0, 85.0) * pi / 180.0;
+    const double yaw = (std::isfinite(camera.yaw) ? camera.yaw : 0.0) * pi / 180.0;
+    const double distance =
+        std::isfinite(camera.distance) && camera.distance > 0.01 ? camera.distance : 12.0;
+    Orbit o;
+    o.target = render::Vec3{static_cast<float>(camera.x), 0.0F, static_cast<float>(camera.y)};
+    // With yaw 0 the camera stands south of the point (larger y) and looks north.
+    const double ground = distance * std::cos(pitch);
+    o.eye = render::Vec3{static_cast<float>(camera.x + (std::sin(yaw) * ground)),
+                         static_cast<float>(distance * std::sin(pitch)),
+                         static_cast<float>(camera.y + (std::cos(yaw) * ground))};
+    o.right =
+        render::Vec3{static_cast<float>(std::cos(yaw)), 0.0F, static_cast<float>(-std::sin(yaw))};
+    return o;
+}
+
+std::array<float, 4> lit(float light, render::Color tint) {
+    return {light * static_cast<float>(tint.r) / 255.0F,
+            light * static_cast<float>(tint.g) / 255.0F,
+            light * static_cast<float>(tint.b) / 255.0F, static_cast<float>(tint.a) / 255.0F};
+}
+
+} // namespace
+
+float brightness(render::Vec3 normal, const DioramaLight& light) noexcept {
+    const render::Vec3 n = unit(normal);
+    const render::Vec3 s = unit(light.sun);
+    const float facing = (n.x * s.x) + (n.y * s.y) + (n.z * s.z);
+    return light.ambient + (light.diffuse * std::max(facing, 0.0F));
+}
+
+render::Mat4 diorama_view_projection(const DioramaCamera& camera, float aspect, render::Vec3* eye) {
+    const Orbit o = orbit(camera);
+    if (eye != nullptr) {
+        *eye = o.eye;
+    }
+    const double fov =
+        std::clamp(std::isfinite(camera.fov) ? camera.fov : 30.0, 1.0, 120.0) * pi / 180.0;
+    const double distance =
+        std::isfinite(camera.distance) && camera.distance > 0.01 ? camera.distance : 12.0;
+    // Near and far follow the distance, so depth precision suits any camera.
+    const auto near = static_cast<float>(distance / 64.0);
+    const auto far = static_cast<float>((distance * 8.0) + 64.0);
+    return render::Mat4::perspective(static_cast<float>(fov), aspect > 0.0F ? aspect : 1.0F, near,
+                                     far) *
+           render::Mat4::look_at(o.eye, o.target, render::Vec3{0.0F, 1.0F, 0.0F});
+}
+
+DrawStats draw_diorama(const world::World& world, TextureCache& textures,
+                       render::WorldRenderer& renderer, render::RenderTarget& target,
+                       const DioramaCamera& camera, render::Color clear, const DioramaLight& light,
+                       render::Fog fog) {
+    DrawStats stats;
+    render::Vec3 eye;
+    const render::Mat4 view_projection = diorama_view_projection(
+        camera, static_cast<float>(target.width()) / static_cast<float>(target.height()), &eye);
+    const Orbit o = orbit(camera);
+    const double ppu = static_cast<double>(std::max<std::uint32_t>(camera.ppu, 1));
+    renderer.begin(target, clear, view_projection, eye, fog);
+
+    const reflect::TypeInfo* transform_type = world.registry().find_type<Transform2D>();
+    if (transform_type == nullptr) {
+        renderer.end();
+        return stats;
+    }
+    // Faces of a block, by the normal they face; side faces see the ground around.
+    const float top_light = brightness(render::Vec3{0, 1, 0}, light);
+    const float north_light = brightness(render::Vec3{0, 0, -1}, light);
+    const float south_light = brightness(render::Vec3{0, 0, 1}, light);
+    const float west_light = brightness(render::Vec3{-1, 0, 0}, light);
+    const float east_light = brightness(render::Vec3{1, 0, 0}, light);
+    // Billboards face the camera across the ground: their normal points at the eye.
+    const float sprite_light = brightness(render::Vec3{-o.right.z, 0.0F, o.right.x}, light);
+
+    world.each(*transform_type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        const Transform2D* transform = ref.as<Transform2D>();
+        if (transform == nullptr) {
+            return;
+        }
+        // Layers lift things a hair, so maps painted over each other do not flicker.
+        const auto lift = static_cast<float>(transform->layer) * 0.002F;
+
+        if (const Tilemap* tilemap = world.get<Tilemap>(entity);
+            tilemap != nullptr && tilemap->visible) {
+            const std::optional<Guid> image = Guid::parse(tilemap->tileset);
+            const render::Texture* texture = image ? textures.get(*image) : nullptr;
+            std::string error;
+            const TileGrid* grid = tilemap->grid(error);
+            const std::uint32_t size = tilemap->tile_size == 0
+                                           ? std::max<std::uint32_t>(camera.ppu, 1)
+                                           : tilemap->tile_size;
+            if (texture == nullptr || grid == nullptr || texture->width() < size ||
+                texture->height() < size) {
+                ++stats.missing;
+            } else {
+                const std::uint32_t columns = texture->width() / size;
+                const std::uint64_t tiles = std::uint64_t{columns} * (texture->height() / size);
+                const auto tile = static_cast<float>(static_cast<double>(size) / ppu);
+                const float height = std::isfinite(tilemap->height)
+                                         ? static_cast<float>(std::max(tilemap->height, 0.0))
+                                         : 0.0F;
+                const auto x0 = static_cast<float>(transform->x);
+                const auto z0 = static_cast<float>(transform->y);
+                const auto filled = [&](std::int64_t x, std::int64_t y) {
+                    return x >= 0 && y >= 0 &&
+                           grid->at(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y)) >=
+                               0;
+                };
+                for (std::uint32_t y = 0; y < grid->height; ++y) {
+                    for (std::uint32_t x = 0; x < grid->width; ++x) {
+                        const std::int32_t number = grid->at(x, y);
+                        if (number < 0 || static_cast<std::uint64_t>(number) >= tiles) {
+                            continue;
+                        }
+                        const auto n = static_cast<std::uint32_t>(number);
+                        const std::uint32_t column = n % columns;
+                        const std::uint32_t row = n / columns;
+                        const render::Rect source{
+                            static_cast<float>(column * size), static_cast<float>(row * size),
+                            static_cast<float>(size), static_cast<float>(size)};
+                        const float left = x0 + (static_cast<float>(x) * tile);
+                        const float right = left + tile;
+                        const float north = z0 + (static_cast<float>(y) * tile);
+                        const float south = north + tile;
+                        const float top = height + lift;
+                        // The top face: the tile as seen from above, north edge at the top.
+                        renderer.draw(
+                            *texture,
+                            {render::Vec3{left, top, north}, render::Vec3{right, top, north},
+                             render::Vec3{right, top, south}, render::Vec3{left, top, south}},
+                            source, lit(top_light, render::Color{255, 255, 255, 255}));
+                        ++stats.drawn;
+                        if (height <= 0.0F) {
+                            continue;
+                        }
+                        // Side faces, only where no neighbouring block hides them.
+                        const auto side = [&](render::Vec3 a, render::Vec3 b, float light_level) {
+                            renderer.draw(
+                                *texture,
+                                {render::Vec3{a.x, top, a.z}, render::Vec3{b.x, top, b.z},
+                                 render::Vec3{b.x, lift, b.z}, render::Vec3{a.x, lift, a.z}},
+                                source, lit(light_level, render::Color{255, 255, 255, 255}));
+                            ++stats.drawn;
+                        };
+                        const auto gx = static_cast<std::int64_t>(x);
+                        const auto gy = static_cast<std::int64_t>(y);
+                        if (!filled(gx, gy + 1)) {
+                            side({left, 0, south}, {right, 0, south}, south_light);
+                        }
+                        if (!filled(gx, gy - 1)) {
+                            side({right, 0, north}, {left, 0, north}, north_light);
+                        }
+                        if (!filled(gx - 1, gy)) {
+                            side({left, 0, north}, {left, 0, south}, west_light);
+                        }
+                        if (!filled(gx + 1, gy)) {
+                            side({right, 0, south}, {right, 0, north}, east_light);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (const Sprite* sprite = world.get<Sprite>(entity);
+            sprite != nullptr && sprite->visible) {
+            const std::optional<Guid> image = Guid::parse(sprite->image);
+            const render::Texture* texture = image ? textures.get(*image) : nullptr;
+            if (texture == nullptr) {
+                ++stats.missing;
+                return;
+            }
+            const render::Rect source =
+                frame_rect(*texture, sprite->frame_width, sprite->frame_height, sprite->frame);
+            const auto width = static_cast<float>(static_cast<double>(source.w) / ppu);
+            const auto height = static_cast<float>(static_cast<double>(source.h) / ppu);
+            // Upright, facing the camera, with the pivot on the map position.
+            const render::Vec3 base{static_cast<float>(transform->x), lift,
+                                    static_cast<float>(transform->y)};
+            const auto px = static_cast<float>(sprite->pivot_x);
+            const auto py = static_cast<float>(sprite->pivot_y);
+            const render::Vec3 r = o.right;
+            const float left = -px * width;
+            const float right_edge = (1.0F - px) * width;
+            const float top = py * height;
+            const float bottom = -(1.0F - py) * height;
+            const auto at = [&](float along, float up) {
+                return render::Vec3{base.x + (r.x * along), base.y + up, base.z + (r.z * along)};
+            };
+            renderer.draw(
+                *texture,
+                {at(left, top), at(right_edge, top), at(right_edge, bottom), at(left, bottom)},
+                source,
+                lit(sprite_light,
+                    render::Color{sprite->tint_r, sprite->tint_g, sprite->tint_b, sprite->tint_a}));
+            ++stats.drawn;
+        }
+    });
+    renderer.end();
     return stats;
 }
 

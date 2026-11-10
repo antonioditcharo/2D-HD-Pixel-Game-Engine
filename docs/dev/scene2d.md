@@ -127,7 +127,34 @@ that has a Position and a Sprite or a Tilemap.
 A test repaints a PNG on disk from blue to green; after `refresh()` and `apply()`, the next
 frame shows green.
 
-## 7. Tests
+## 7. The Diorama style
+
+`draw_diorama(world, textures, renderer, target, camera, clear, light, fog)` draws the same
+world in 3D, the HD-2D look (`plan/04` §4). Nothing in the scene changes: a project picks
+the style ([game.md](game.md) §2).
+
+- **Space:** a map position (x, y) is the world point (x, 0, y): the ground is the x-z
+  plane, up is +y, one unit is one tile.
+- **The camera** (`DioramaCamera`) orbits the point it looks at: `pitch` (how far it looks
+  down, kept from 5 to 85 degrees), `yaw`, `distance` and a narrow vertical `fov` (30
+  degrees by default, the telephoto look of HD-2D). With yaw 0 it stands south of the
+  point, so north is up the screen, as in the 2D view. The point is at the centre of the
+  image (tested).
+- **Sprites** are upright billboards (`plan/04` §5.1, "Upright"): they turn about the
+  vertical axis to face the camera, with their pivot on the map position, so feet stand on
+  the ground. 1 image pixel is 1/`ppu` of a tile, as in 2D.
+- **Tilemaps** are the ground. A Tilemap's `height` turns every tile into a block of that
+  many tiles, with the tile's picture on its top and sides; sides are drawn only where no
+  neighbouring block hides them (one block is 5 quads; two side by side are 8; tested).
+  Layers lift maps a hair (0.002 tiles each), so maps painted over each other do not
+  flicker.
+- **Lighting** (`DioramaLight`): every face gets `ambient` plus `diffuse` times how much it
+  faces the sun (`brightness()`), so tops, sides and sprites shade differently. Tests
+  check the exact colours this gives.
+- **Depth** sorts everything; there is no draw order to manage. **Fog** fades distant
+  things into the haze.
+
+## 8. Tests
 
 The drawing tests need a GPU and run on lavapipe in CI ([rendering.md](rendering.md) §6);
 the others run anywhere:
@@ -141,9 +168,11 @@ the others run anywhere:
 | Tilemap text | Parsing, ragged rows, Windows line ends, round trips, every kind of bad cell, the size limits, and the component's cache |
 | Animation | Exact frames over 24 steps with looping; a one-shot animation finishing once at 0.3 s; Stop; negative and NaN times ignored |
 | Solid tiles | Exact stops in all four directions; touching; rounding either side of an edge; walking out of a wall but not through the next; beside the map; maps not solid, offset, with larger tiles, or broken |
+| Diorama (GPU) | Ground under the point looked at, lit from above to the exact shade; sky beyond the map; a sprite standing above the point with the ground in front, shaded as it faces the camera; still facing it a quarter turn later; fog; block faces counted; broken maps and missing images counted |
+| Diorama camera and light | `brightness()` for faces up, sideways and down, with any length of normal; the eye's position from pitch and distance; the point at the centre; north up the screen; pitch kept below 90 degrees |
 | Frames and tilemaps (GPU) | Exact pixels for frames 0, 1 and a wrapped 2; a 2 × 2 map with an empty cell and a skipped tile; a sprite over its map; tiles in view counted for an aligned and an offset camera; bad text and a missing tileset counted |
 
-## 8. Next increments
+## 9. Next increments
 
 1. **Animation clips from Aseprite tags,** and directional walk animations for the
    Top-down Mover.
@@ -151,4 +180,5 @@ the others run anywhere:
    between characters, with the physics module.
 3. **Several tile layers** and autotiling rules for painting.
 4. **2D lights** with normal and mask maps (`plan/04` §3, Classic 2D lighting).
-5. **The Diorama style:** the same components on billboards in a 3D world.
+5. **Diorama, further:** point lights and shadows, billboard modes other than Upright,
+   directional sprite sets, and tilt-shift depth of field (`plan/04` §5 to §8).

@@ -107,6 +107,9 @@ struct Tilemap {
     /// Every tile of this map blocks movement (see sweep()). Paint walls on their own map,
     /// hidden if the art is on another one.
     bool solid = false;
+    /// In the Diorama style, how tall each tile stands, in tiles: 0 is flat ground; above,
+    /// every tile is a block with the tile's picture on its top and sides.
+    double height = 0.0;
 
     /// The parsed tiles, kept until `tiles` changes. Null, with `error` set, if the text
     /// is not valid.
@@ -202,5 +205,48 @@ struct DrawStats {
 DrawStats draw_world(const world::World& world, TextureCache& textures,
                      render::SpriteRenderer& sprites, render::RenderTarget& target,
                      const Camera2D& camera, render::Color clear);
+
+// ---------------------------------------------------------------------------------------
+// The Diorama style (plan/04 §4): the same entities in 3D
+// ---------------------------------------------------------------------------------------
+
+/// The camera of the Diorama style. A map position (x, y) is the world point (x, 0, y): the
+/// ground is the x-z plane, up is +y. The camera orbits the point it looks at.
+struct DioramaCamera {
+    double x = 0.0; ///< The map point looked at, in tiles.
+    double y = 0.0;
+    /// How far the camera looks down, in degrees: 90 is straight down. Kept from 5 to 85.
+    double pitch = 35.0;
+    /// Turning around the point, in degrees: 0 looks towards smaller map y ("north"), as
+    /// the 2D view does.
+    double yaw = 0.0;
+    double distance = 12.0; ///< From the point, in tiles.
+    double fov = 30.0;      ///< Vertical field of view, in degrees: narrow is the HD-2D look.
+    std::uint32_t ppu = 16; ///< Pixels per tile, to size sprites and tiles.
+};
+
+/// The light of a diorama: every face is lit by `ambient` plus `diffuse` times how much it
+/// faces the sun.
+struct DioramaLight {
+    render::Vec3 sun{-0.4F, 1.0F, 0.6F}; ///< Towards the sun; need not be normalised.
+    float ambient = 0.55F;
+    float diffuse = 0.45F;
+};
+
+/// How bright a face with `normal` is under `light`, from 0 to 1 (and above, if the light
+/// adds up to more).
+[[nodiscard]] float brightness(render::Vec3 normal, const DioramaLight& light) noexcept;
+
+/// The camera's view-projection for a target of `aspect` (width / height), and its eye.
+[[nodiscard]] render::Mat4 diorama_view_projection(const DioramaCamera& camera, float aspect,
+                                                   render::Vec3* eye = nullptr);
+
+/// Draws the world in the Diorama style: tilemaps as ground and blocks, sprites as
+/// upright billboards facing the camera, ordered by depth, lit and fogged. Missing images
+/// and invalid tiles are counted as in draw_world(); `drawn` counts quads.
+DrawStats draw_diorama(const world::World& world, TextureCache& textures,
+                       render::WorldRenderer& renderer, render::RenderTarget& target,
+                       const DioramaCamera& camera, render::Color clear,
+                       const DioramaLight& light = {}, render::Fog fog = {});
 
 } // namespace engine::scene2d

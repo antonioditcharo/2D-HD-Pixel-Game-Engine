@@ -299,12 +299,30 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(got.height == 270);
     CHECK(got.start_scene == "maps/town.dscene");
     CHECK(got.background == render::Color{1, 2, 3, 255});
+    CHECK(got.style == game::RenderStyle::Classic2D);
+
+    // The Diorama style and its camera round-trip too.
+    game::ProjectSettings diorama = settings;
+    diorama.style = game::RenderStyle::Diorama;
+    diorama.camera_pitch = 40.0;
+    diorama.camera_distance = 9.5;
+    diorama.camera_fov = 25.0;
+    write_json(folder.path / game::project_file, game::project_to_json(diorama));
+    issues.clear();
+    const game::ProjectSettings again =
+        game::read_project(folder.path, issues).value_or(game::ProjectSettings{});
+    CHECK(issues.empty());
+    CHECK(again.style == game::RenderStyle::Diorama);
+    CHECK(again.camera_pitch == 40.0);
+    CHECK(again.camera_distance == 9.5);
+    CHECK(again.camera_fov == 25.0);
 
     // Out-of-range values and a wrong style refuse the project; unknown entries do not.
     serialize::Json json = game::project_to_json(settings);
     json["ppu"] = 4;
     json["background"] = serialize::Json::array({1, 2});
-    json["render_style"] = "diorama";
+    json["render_style"] = "isometric";
+    json["camera_pitch"] = 90;
     json["shiny"] = true;
     write_json(folder.path / game::project_file, json);
     issues.clear();
@@ -316,7 +334,8 @@ TEST_CASE("Project settings are read, checked and written back") {
     }
     CHECK(paths == std::vector<std::string>{
                        "project.sparxel.json/ppu", "project.sparxel.json/background",
-                       "project.sparxel.json/shiny", "project.sparxel.json/render_style"});
+                       "project.sparxel.json/shiny", "project.sparxel.json/camera_pitch",
+                       "project.sparxel.json/render_style"});
 
     json = game::project_to_json(settings);
     json["shiny"] = true;
@@ -824,4 +843,45 @@ TEST_CASE("The game draws pixel-perfect, with the camera following the hero") {
     CHECK(pixel(pixels, 32, 9, 14) == background);
     CHECK(pixel(pixels, 32, 14, 14) == background);
     CHECK(pixel(pixels, 32, 15, 13) == background);
+}
+
+TEST_CASE("A Diorama project draws the hero as a lit billboard the camera follows") {
+    if (test_support::gpu() == nullptr) {
+        return;
+    }
+    const Project project;
+    // Switch the project to the Diorama style, with the camera 4 tiles away.
+    std::vector<serialize::Issue> issues;
+    game::ProjectSettings settings =
+        game::read_project(project.folder.path, issues).value_or(game::ProjectSettings{});
+    REQUIRE(issues.empty());
+    settings.style = game::RenderStyle::Diorama;
+    settings.camera_distance = 4.0;
+    write_json(project.folder.path / game::project_file, game::project_to_json(settings));
+
+    input::Recording replay;
+    replay.record(0, key(input::Key::Right), true);
+    replay.record(15, key(input::Key::Right), false); // one tile right, off the rock
+    game::RuntimeOptions options;
+    options.headless = true;
+    options.replay = &replay;
+    const auto runtime = project.open(options);
+    for (int i = 0; i < 15; ++i) {
+        runtime->step();
+    }
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    REQUIRE(pixels.size() == std::size_t{32} * 32 * 4);
+
+    // The camera looks at the hero's feet, the centre of the image: the billboard stands
+    // just above it, facing the camera, lit as brightness() says.
+    const float light = scene2d::brightness(render::Vec3{0, 0, 1}, scene2d::DioramaLight{});
+    const auto lit = [light](std::uint8_t channel) {
+        return static_cast<int>(std::lround(light * static_cast<float>(channel)));
+    };
+    const render::Color hero = pixel(pixels, 32, 16, 14);
+    CHECK(std::abs(hero.r - lit(hero_colour.r)) <= 2);
+    CHECK(std::abs(hero.g - lit(hero_colour.g)) <= 2);
+    CHECK(std::abs(hero.b - lit(hero_colour.b)) <= 2);
+    CHECK(pixel(pixels, 32, 16, 4) == background); // sky: no ground in this project
 }

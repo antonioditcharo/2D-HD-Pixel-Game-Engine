@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 
@@ -10,6 +11,10 @@
 #include "sprite_frag_spirv.h"
 #include "sprite_vert_dxil.h"
 #include "sprite_vert_spirv.h"
+#include "world_frag_dxil.h"
+#include "world_frag_spirv.h"
+#include "world_vert_dxil.h"
+#include "world_vert_spirv.h"
 
 namespace engine::render {
 
@@ -663,6 +668,424 @@ bool SpriteRenderer::end() {
         return false;
     }
     stats_.sprites = n.textures.size();
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------
+// Mat4
+// ---------------------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] Vec3 subtract(Vec3 a, Vec3 b) noexcept {
+    return Vec3{a.x - b.x, a.y - b.y, a.z - b.z};
+}
+[[nodiscard]] Vec3 cross(Vec3 a, Vec3 b) noexcept {
+    return Vec3{(a.y * b.z) - (a.z * b.y), (a.z * b.x) - (a.x * b.z), (a.x * b.y) - (a.y * b.x)};
+}
+[[nodiscard]] float dot(Vec3 a, Vec3 b) noexcept {
+    return (a.x * b.x) + (a.y * b.y) + (a.z * b.z);
+}
+[[nodiscard]] Vec3 normalize(Vec3 v) noexcept {
+    const float length = std::sqrt(dot(v, v));
+    return length > 0.0F ? Vec3{v.x / length, v.y / length, v.z / length} : v;
+}
+
+} // namespace
+
+Mat4 Mat4::perspective(float fov_y, float aspect, float near, float far) {
+    const float f = 1.0F / std::tan(fov_y / 2.0F);
+    Mat4 r;
+    r.m = {f / aspect, 0, 0,  0, 0, f, 0, 0, 0, 0, far / (near - far), (near * far) / (near - far),
+           0,          0, -1, 0};
+    return r;
+}
+
+Mat4 Mat4::orthographic(float left, float right, float bottom, float top, float near, float far) {
+    Mat4 r;
+    r.m = {2.0F / (right - left),
+           0,
+           0,
+           -(right + left) / (right - left),
+           0,
+           2.0F / (top - bottom),
+           0,
+           -(top + bottom) / (top - bottom),
+           0,
+           0,
+           1.0F / (near - far),
+           near / (near - far),
+           0,
+           0,
+           0,
+           1};
+    return r;
+}
+
+Mat4 Mat4::look_at(Vec3 eye, Vec3 target, Vec3 up) {
+    const Vec3 f = normalize(subtract(target, eye));
+    const Vec3 s = normalize(cross(f, up));
+    const Vec3 u = cross(s, f);
+    Mat4 r;
+    r.m = {s.x,  s.y,  s.z,  -dot(s, eye), u.x, u.y, u.z, -dot(u, eye),
+           -f.x, -f.y, -f.z, dot(f, eye),  0,   0,   0,   1};
+    return r;
+}
+
+std::array<float, 4> Mat4::transform(Vec3 p) const noexcept {
+    std::array<float, 4> out{};
+    for (std::size_t row = 0; row < 4; ++row) {
+        out[row] = (m[(row * 4) + 0] * p.x) + (m[(row * 4) + 1] * p.y) + (m[(row * 4) + 2] * p.z) +
+                   m[(row * 4) + 3];
+    }
+    return out;
+}
+
+Mat4 operator*(const Mat4& a, const Mat4& b) noexcept {
+    Mat4 r;
+    for (std::size_t row = 0; row < 4; ++row) {
+        for (std::size_t column = 0; column < 4; ++column) {
+            float sum = 0.0F;
+            for (std::size_t k = 0; k < 4; ++k) {
+                sum += a.m[(row * 4) + k] * b.m[(k * 4) + column];
+            }
+            r.m[(row * 4) + column] = sum;
+        }
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------------------------------
+// WorldRenderer
+// ---------------------------------------------------------------------------------------
+
+namespace {
+
+/// One corner of a world quad, as the vertex shader reads it.
+struct WorldVertex {
+    float x;
+    float y;
+    float z;
+    float u;
+    float v;
+    float r;
+    float g;
+    float b;
+    float a;
+};
+
+} // namespace
+
+struct WorldRenderer::Native {
+    SDL_GPUDevice* device{nullptr};
+    SDL_GPUGraphicsPipeline* pipeline{nullptr};
+    SDL_GPUSampler* sampler{nullptr};
+    SDL_GPUTextureFormat depth_format{SDL_GPU_TEXTUREFORMAT_D16_UNORM};
+    SDL_GPUTexture* depth{nullptr};
+    std::uint32_t depth_width = 0;
+    std::uint32_t depth_height = 0;
+    SDL_GPUBuffer* vertex_buffer{nullptr};
+    std::uint32_t vertex_capacity = 0; ///< In vertices.
+
+    // The frame being recorded.
+    RenderTarget* target{nullptr};
+    Color clear;
+    Mat4 view_projection;
+    Vec3 eye;
+    Fog fog;
+    std::vector<WorldVertex> vertices;
+    std::vector<const Texture*> textures; ///< One per quad.
+};
+
+WorldRenderer::WorldRenderer(Device& device, std::unique_ptr<Native> native)
+    : device_(device), native_(std::move(native)) {}
+
+WorldRenderer::~WorldRenderer() {
+    release(native_->device, native_->vertex_buffer);
+    if (native_->depth != nullptr) {
+        SDL_ReleaseGPUTexture(native_->device, native_->depth);
+    }
+    SDL_ReleaseGPUSampler(native_->device, native_->sampler);
+    SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->pipeline);
+}
+
+std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
+    SDL_GPUDevice* gpu = device.native().device;
+    const SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(gpu);
+    const bool spirv = (formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0;
+    if (!spirv && (formats & SDL_GPU_SHADERFORMAT_DXIL) == 0) {
+        device.last_error_ = "The GPU accepts neither SPIR-V nor DXIL shaders.";
+        return nullptr;
+    }
+    // The most precise depth format the GPU can render to.
+    SDL_GPUTextureFormat depth_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+    for (const SDL_GPUTextureFormat candidate :
+         {SDL_GPU_TEXTUREFORMAT_D32_FLOAT, SDL_GPU_TEXTUREFORMAT_D24_UNORM,
+          SDL_GPU_TEXTUREFORMAT_D16_UNORM}) {
+        if (SDL_GPUTextureSupportsFormat(gpu, candidate, SDL_GPU_TEXTURETYPE_2D,
+                                         SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)) {
+            depth_format = candidate;
+            break;
+        }
+    }
+    if (depth_format == SDL_GPU_TEXTUREFORMAT_INVALID) {
+        device.last_error_ = "The GPU has no depth buffer format.";
+        return nullptr;
+    }
+
+    SDL_GPUShaderCreateInfo vertex_info{};
+    vertex_info.code = spirv ? world_vert_spirv.data() : world_vert_dxil.data();
+    vertex_info.code_size = spirv ? world_vert_spirv.size() : world_vert_dxil.size();
+    vertex_info.entrypoint = "main";
+    vertex_info.format = spirv ? SDL_GPU_SHADERFORMAT_SPIRV : SDL_GPU_SHADERFORMAT_DXIL;
+    vertex_info.stage = SDL_GPU_SHADERSTAGE_VERTEX;
+    vertex_info.num_uniform_buffers = 1;
+    SDL_GPUShader* vertex_shader = SDL_CreateGPUShader(gpu, &vertex_info);
+
+    SDL_GPUShaderCreateInfo fragment_info{};
+    fragment_info.code = spirv ? world_frag_spirv.data() : world_frag_dxil.data();
+    fragment_info.code_size = spirv ? world_frag_spirv.size() : world_frag_dxil.size();
+    fragment_info.entrypoint = "main";
+    fragment_info.format = vertex_info.format;
+    fragment_info.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
+    fragment_info.num_samplers = 1;
+    fragment_info.num_uniform_buffers = 1;
+    SDL_GPUShader* fragment_shader = SDL_CreateGPUShader(gpu, &fragment_info);
+
+    SDL_GPUGraphicsPipeline* pipeline = nullptr;
+    if (vertex_shader == nullptr || fragment_shader == nullptr) {
+        device.last_error_ = sdl_error("Creating the world shaders failed");
+    } else {
+        SDL_GPUVertexBufferDescription buffer{};
+        buffer.slot = 0;
+        buffer.pitch = sizeof(WorldVertex);
+        buffer.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+        SDL_GPUVertexAttribute attributes[3]{};
+        attributes[0] = {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0};
+        attributes[1] = {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, 12};
+        attributes[2] = {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 20};
+
+        SDL_GPUColorTargetDescription color{};
+        color.format = pixel_format;
+
+        SDL_GPUGraphicsPipelineCreateInfo info{};
+        info.vertex_shader = vertex_shader;
+        info.fragment_shader = fragment_shader;
+        info.vertex_input_state.vertex_buffer_descriptions = &buffer;
+        info.vertex_input_state.num_vertex_buffers = 1;
+        info.vertex_input_state.vertex_attributes = attributes;
+        info.vertex_input_state.num_vertex_attributes = 3;
+        info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        info.depth_stencil_state.enable_depth_test = true;
+        info.depth_stencil_state.enable_depth_write = true;
+        info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
+        info.target_info.color_target_descriptions = &color;
+        info.target_info.num_color_targets = 1;
+        info.target_info.has_depth_stencil_target = true;
+        info.target_info.depth_stencil_format = depth_format;
+        pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &info);
+    }
+    if (pipeline == nullptr && vertex_shader != nullptr && fragment_shader != nullptr) {
+        device.last_error_ = sdl_error("Creating the world pipeline failed");
+    }
+    release(gpu, vertex_shader);
+    release(gpu, fragment_shader);
+    if (pipeline == nullptr) {
+        return nullptr;
+    }
+
+    SDL_GPUSamplerCreateInfo sampler_info{};
+    sampler_info.min_filter = SDL_GPU_FILTER_NEAREST;
+    sampler_info.mag_filter = SDL_GPU_FILTER_NEAREST;
+    sampler_info.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+    sampler_info.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    sampler_info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    sampler_info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    SDL_GPUSampler* sampler = SDL_CreateGPUSampler(gpu, &sampler_info);
+    if (sampler == nullptr) {
+        device.last_error_ = sdl_error("Creating the world sampler failed");
+        SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
+        return nullptr;
+    }
+
+    auto native = std::make_unique<Native>();
+    native->device = gpu;
+    native->pipeline = pipeline;
+    native->sampler = sampler;
+    native->depth_format = depth_format;
+    return std::unique_ptr<WorldRenderer>(new WorldRenderer(device, std::move(native)));
+}
+
+void WorldRenderer::begin(RenderTarget& target, Color clear, const Mat4& view_projection, Vec3 eye,
+                          Fog fog) {
+    native_->target = &target;
+    native_->clear = clear;
+    native_->view_projection = view_projection;
+    native_->eye = eye;
+    native_->fog = fog;
+    native_->vertices.clear();
+    native_->textures.clear();
+}
+
+void WorldRenderer::draw(const Texture& texture, const std::array<Vec3, 4>& corners, Rect source,
+                         std::array<float, 4> color) {
+    if (native_->target == nullptr) {
+        return;
+    }
+    const auto tex_w = static_cast<float>(texture.width());
+    const auto tex_h = static_cast<float>(texture.height());
+    const float u0 = source.x / tex_w;
+    const float v0 = source.y / tex_h;
+    const float u1 = (source.x + source.w) / tex_w;
+    const float v1 = (source.y + source.h) / tex_h;
+    const auto corner = [&](const Vec3& p, float u, float v) {
+        return WorldVertex{p.x, p.y, p.z, u, v, color[0], color[1], color[2], color[3]};
+    };
+    const WorldVertex tl = corner(corners[0], u0, v0);
+    const WorldVertex tr = corner(corners[1], u1, v0);
+    const WorldVertex br = corner(corners[2], u1, v1);
+    const WorldVertex bl = corner(corners[3], u0, v1);
+    const WorldVertex quad[6] = {tl, tr, bl, tr, br, bl};
+    native_->vertices.insert(native_->vertices.end(), std::begin(quad), std::end(quad));
+    native_->textures.push_back(&texture);
+}
+
+bool WorldRenderer::end() {
+    Native& n = *native_;
+    RenderTarget* target = n.target;
+    n.target = nullptr;
+    if (target == nullptr) {
+        return false;
+    }
+    stats_ = Stats{};
+    // The depth buffer matches the target's size.
+    if (n.depth == nullptr || n.depth_width != target->width() ||
+        n.depth_height != target->height()) {
+        if (n.depth != nullptr) {
+            SDL_ReleaseGPUTexture(n.device, n.depth);
+        }
+        SDL_GPUTextureCreateInfo depth_info{};
+        depth_info.type = SDL_GPU_TEXTURETYPE_2D;
+        depth_info.format = n.depth_format;
+        depth_info.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+        depth_info.width = target->width();
+        depth_info.height = target->height();
+        depth_info.layer_count_or_depth = 1;
+        depth_info.num_levels = 1;
+        n.depth = SDL_CreateGPUTexture(n.device, &depth_info);
+        n.depth_width = n.depth == nullptr ? 0 : target->width();
+        n.depth_height = n.depth == nullptr ? 0 : target->height();
+        if (n.depth == nullptr) {
+            device_.last_error_ = sdl_error("Creating the depth buffer failed");
+            return false;
+        }
+    }
+
+    const auto vertex_count = static_cast<std::uint32_t>(n.vertices.size());
+    const std::uint32_t bytes = vertex_count * static_cast<std::uint32_t>(sizeof(WorldVertex));
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(n.device);
+    if (commands == nullptr) {
+        device_.last_error_ = sdl_error("Acquiring a command buffer failed");
+        return false;
+    }
+    SDL_GPUTransferBuffer* upload = nullptr;
+    if (vertex_count > 0) {
+        if (vertex_count > n.vertex_capacity) {
+            release(n.device, n.vertex_buffer);
+            SDL_GPUBufferCreateInfo buffer_info{};
+            buffer_info.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+            buffer_info.size = bytes;
+            n.vertex_buffer = SDL_CreateGPUBuffer(n.device, &buffer_info);
+            n.vertex_capacity = n.vertex_buffer == nullptr ? 0 : vertex_count;
+        }
+        SDL_GPUTransferBufferCreateInfo upload_info{};
+        upload_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        upload_info.size = bytes;
+        upload = n.vertex_buffer == nullptr ? nullptr
+                                            : SDL_CreateGPUTransferBuffer(n.device, &upload_info);
+        void* mapped =
+            upload == nullptr ? nullptr : SDL_MapGPUTransferBuffer(n.device, upload, false);
+        if (mapped == nullptr) {
+            device_.last_error_ = sdl_error("Uploading the world failed");
+            release(n.device, upload);
+            SDL_CancelGPUCommandBuffer(commands);
+            return false;
+        }
+        std::memcpy(mapped, n.vertices.data(), bytes);
+        SDL_UnmapGPUTransferBuffer(n.device, upload);
+        SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+        SDL_GPUTransferBufferLocation from{};
+        from.transfer_buffer = upload;
+        SDL_GPUBufferRegion to{};
+        to.buffer = n.vertex_buffer;
+        to.size = bytes;
+        SDL_UploadToGPUBuffer(copy, &from, &to, true);
+        SDL_EndGPUCopyPass(copy);
+    }
+
+    SDL_GPUColorTargetInfo color{};
+    color.texture = target->native().texture;
+    color.clear_color =
+        SDL_FColor{static_cast<float>(n.clear.r) / 255.0F, static_cast<float>(n.clear.g) / 255.0F,
+                   static_cast<float>(n.clear.b) / 255.0F, static_cast<float>(n.clear.a) / 255.0F};
+    color.load_op = SDL_GPU_LOADOP_CLEAR;
+    color.store_op = SDL_GPU_STOREOP_STORE;
+    SDL_GPUDepthStencilTargetInfo depth{};
+    depth.texture = n.depth;
+    depth.clear_depth = 1.0F;
+    depth.load_op = SDL_GPU_LOADOP_CLEAR;
+    depth.store_op = SDL_GPU_STOREOP_DONT_CARE;
+    depth.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+    depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+    depth.cycle = true;
+    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &color, 1, &depth);
+    if (vertex_count > 0) {
+        SDL_BindGPUGraphicsPipeline(pass, n.pipeline);
+        SDL_GPUBufferBinding binding{};
+        binding.buffer = n.vertex_buffer;
+        SDL_BindGPUVertexBuffers(pass, 0, &binding, 1);
+        std::array<float, 20> camera{};
+        std::copy(n.view_projection.m.begin(), n.view_projection.m.end(), camera.begin());
+        camera[16] = n.eye.x;
+        camera[17] = n.eye.y;
+        camera[18] = n.eye.z;
+        SDL_PushGPUVertexUniformData(commands, 0, camera.data(), sizeof(camera));
+        const bool fog_on = n.fog.end > n.fog.start;
+        const std::array<float, 8> fog{static_cast<float>(n.fog.color.r) / 255.0F,
+                                       static_cast<float>(n.fog.color.g) / 255.0F,
+                                       static_cast<float>(n.fog.color.b) / 255.0F,
+                                       1.0F,
+                                       n.fog.start,
+                                       fog_on ? 1.0F / (n.fog.end - n.fog.start) : 0.0F,
+                                       fog_on ? 1.0F : 0.0F,
+                                       0.0F};
+        SDL_PushGPUFragmentUniformData(commands, 0, fog.data(), sizeof(fog));
+        std::size_t first = 0;
+        while (first < n.textures.size()) {
+            std::size_t last = first + 1;
+            while (last < n.textures.size() && n.textures[last] == n.textures[first]) {
+                ++last;
+            }
+            SDL_GPUTextureSamplerBinding sampler{};
+            sampler.texture = n.textures[first]->native().texture;
+            sampler.sampler = n.sampler;
+            SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
+            SDL_DrawGPUPrimitives(pass, static_cast<std::uint32_t>((last - first) * 6), 1,
+                                  static_cast<std::uint32_t>(first * 6), 0);
+            ++stats_.draw_calls;
+            first = last;
+        }
+    }
+    SDL_EndGPURenderPass(pass);
+    const bool submitted = SDL_SubmitGPUCommandBuffer(commands);
+    release(n.device, upload);
+    if (!submitted) {
+        device_.last_error_ = sdl_error("Submitting the frame failed");
+        return false;
+    }
+    stats_.quads = n.textures.size();
     return true;
 }
 

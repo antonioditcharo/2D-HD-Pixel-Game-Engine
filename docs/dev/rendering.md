@@ -1,14 +1,16 @@
 # Rendering
 
-> **Status: v0.1, the first step of Spike R.** A GPU device on the SDL3 GPU API, textures,
-> offscreen render targets with readback, and a batched sprite renderer, with shaders
-> compiled offline from HLSL. Tested pixel by pixel on a software GPU. The HD-2D features
-> (lit billboards, shadows, depth of field, bloom) come next (§7).
+> **Status: v0.2, Spike R under way.** A GPU device on the SDL3 GPU API, textures,
+> offscreen render targets with readback, a batched sprite renderer, and a 3D world
+> renderer with a depth buffer, alpha cutout, per-quad lighting colour and distance fog,
+> with shaders compiled offline from HLSL. Tested pixel by pixel on a software GPU. Shadows,
+> normal-mapped lighting, depth of field and bloom come next (§8).
 >
 > Code: [`engine/render/include/engine/render/render.h`](../../engine/render/include/engine/render/render.h),
 > [`src/render.cpp`](../../engine/render/src/render.cpp) and the shaders in
 > [`engine/render/shaders/`](../../engine/render/shaders/). Tests:
-> [`tests/render/render_test.cpp`](../../tests/render/render_test.cpp).
+> [`tests/render/render_test.cpp`](../../tests/render/render_test.cpp) and
+> [`world_test.cpp`](../../tests/render/world_test.cpp).
 
 ## 1. What it is for
 
@@ -39,6 +41,7 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
 | `Texture` | RGBA8 pixels uploaded to the GPU |
 | `RenderTarget` | An offscreen image to draw into; `read_pixels()` copies it back |
 | `SpriteRenderer` | Draws textured, tinted rectangles in batches |
+| `WorldRenderer` | Draws textured quads in 3D with a depth buffer, alpha cutout, lighting colour and fog (§7) |
 
 ## 3. Sprites
 
@@ -100,13 +103,43 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
   (`LD_PRELOAD="$(gcc -print-file-name=libasan.so) /usr/lib/x86_64-linux-gnu/libvulkan_lvp.so"`)
   no leak is reported, so it is not Sparxel's.
 
-## 7. Next increments
+## 7. The world renderer (3D)
+
+`WorldRenderer` draws textured quads in 3D for the Diorama style (`plan/04` §4); the scene
+side is in [scene2d.md](scene2d.md) §7.
+
+```cpp
+const Mat4 camera = Mat4::perspective(fov, aspect, near, far) * Mat4::look_at(eye, target, up);
+world->begin(*target, sky, camera, eye, Fog{haze, 20.0F, 60.0F});
+world->draw(*texture, {top_left, top_right, bottom_right, bottom_left}, source, {r, g, b, a});
+world->end();
+```
+
+- **Coordinates:** right-handed, y up. `Mat4` is stored row by row and applied to column
+  vectors; `perspective()` and `orthographic()` give the GPU's clip space (depth 0 at the
+  near plane, 1 at the far one; y up), which SDL GPU uses on every backend. The vertex
+  shader receives the matrix as four rows and applies it with dot products, so packing
+  rules cannot differ between SPIR-V and DXIL.
+- **Depth:** a depth buffer the size of the target, in the most precise format the GPU
+  offers (32-bit float, else 24- or 16-bit), cleared each frame; nearer wins whatever the
+  draw order (tested, and the test fails with depth testing off).
+- **Alpha cutout:** texels below half opacity are discarded, neither drawn nor hiding what
+  is behind. Pixel art keeps hard edges and needs no sorting, as `plan/04` §5.2 asks:
+  sprites are alpha-tested and write depth.
+- **Colour:** each quad's colour multiplies its texels: lighting times tint.
+- **Fog:** linear with distance from the eye, from `start` to `end`, towards the fog
+  colour; off when `end` is not past `start`.
+- **Batching:** one draw call per run of quads sharing a texture, as for sprites.
+- Translucent quads (blended, sorted back to front) are not supported yet: every texel is
+  either fully drawn or cut out.
+
+## 8. Next increments
 
 Towards the reference scene of Spike R (`plan/08` Phase 0, `plan/04` §4):
 
 1. **Frame pacing:** vsync choice and frame-time measurement.
-2. **3D:** a depth buffer, a perspective camera, and meshes for the diorama.
-3. **Lit billboard sprites** with normal maps and shadows (`plan/04` §5).
+2. **Translucency:** sorted, blended quads for glass, water and fading sprites.
+3. **Lit billboard sprites** with normal maps, point lights and shadows (`plan/04` §5).
 4. **Post-processing:** tilt-shift depth of field, bloom and fog (`plan/04` §8).
 5. **GPU timing** to measure frames against the `plan/04` §11 budgets on reference
    hardware.

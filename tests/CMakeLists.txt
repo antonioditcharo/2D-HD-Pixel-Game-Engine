@@ -70,6 +70,7 @@ add_test(NAME world COMMAND engine_world_tests)
 add_executable(engine_render_tests
     test_main.cpp
     render/render_test.cpp
+    render/world_test.cpp
 )
 target_link_libraries(engine_render_tests PRIVATE
     engine::render

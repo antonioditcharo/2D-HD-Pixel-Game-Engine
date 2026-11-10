@@ -8,6 +8,7 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -551,4 +552,118 @@ TEST_CASE("Sprite sheet frames and tilemaps draw pixel-exact") {
         tilemap->tileset = Guid::generate().to_string();
         CHECK(scene2d::draw_world(*w, textures, *sprites, *target, camera, green).missing == 1);
     }
+}
+
+TEST_CASE("The Diorama style: lit ground, standing sprites, blocks, turning and fog") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const Fixture f;
+    const auto w = f.make_world();
+    // A 2 x 2 red ground around the origin. 2 pixels per tile, so 2 x 2 images are 1 tile.
+    const world::Entity ground = w->create("ground");
+    scene2d::Transform2D* at = w->add<scene2d::Transform2D>(ground);
+    at->x = -1.0;
+    at->y = -1.0;
+    scene2d::Tilemap* map = w->add<scene2d::Tilemap>(ground);
+    map->tileset = f.red_image.to_string();
+    map->tiles = "0,0\n0,0";
+
+    // An odd size puts the point looked at on the centre pixel.
+    const auto target = device->create_render_target(17, 17);
+    const auto renderer = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(renderer != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    scene2d::DioramaCamera camera;
+    camera.pitch = 45.0;
+    camera.distance = 4.0;
+    camera.fov = 30.0;
+    camera.ppu = 2;
+    const scene2d::DioramaLight light;
+    const auto shade = [](float level, std::uint8_t channel) {
+        return static_cast<int>(std::lround(level * static_cast<float>(channel)));
+    };
+    const auto close_to = [](Color c, int r, int g, int b) {
+        return std::abs(c.r - r) <= 2 && std::abs(c.g - g) <= 2 && std::abs(c.b - b) <= 2;
+    };
+
+    scene2d::DrawStats stats =
+        scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
+    CHECK(stats.drawn == 4);
+    CHECK(stats.missing == 0);
+    std::vector<std::uint8_t> pixels = target->read_pixels();
+    const float top = scene2d::brightness(render::Vec3{0, 1, 0}, light);
+    CHECK(close_to(pixel(pixels, 17, 8, 8), shade(top, 255), 0, 0)); // lit from above
+    // The top row looks about 2 tiles north of the point: beyond the map, at the sky.
+    CHECK(pixel(pixels, 17, 8, 0) == f.background);
+
+    // A blue sprite standing on the point: above it on screen, with the ground in front.
+    Fixture::place(*w, "Hero", 0.0, 0.0, f.blue_image);
+    stats = scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
+    CHECK(stats.drawn == 5);
+    pixels = target->read_pixels();
+    const float facing = scene2d::brightness(render::Vec3{0, 0, 1}, light); // towards the eye
+    CHECK(close_to(pixel(pixels, 17, 8, 6), 0, 0, shade(facing, 255)));
+    CHECK(close_to(pixel(pixels, 17, 8, 10), shade(top, 255), 0, 0));
+
+    // Turned a quarter, the sprite still faces the camera (now lit from the side).
+    camera.yaw = 90.0;
+    scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
+    const float side = scene2d::brightness(render::Vec3{1, 0, 0}, light);
+    CHECK(close_to(pixel(target->read_pixels(), 17, 8, 6), 0, 0, shade(side, 255)));
+    camera.yaw = 0.0;
+
+    // Fog from 0 to 1 tile: everything drawn is fog.
+    const render::Fog fog{Color{200, 210, 220, 255}, 0.0F, 1.0F};
+    scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light, fog);
+    CHECK(pixel(target->read_pixels(), 17, 8, 10) == Color{200, 210, 220, 255});
+
+    // Blocks: one tile 1 high is a top and four sides; two side by side hide two sides.
+    map->tiles = "0";
+    map->height = 1.0;
+    w->get<scene2d::Sprite>(w->find_named("Hero").at(0))->visible = false;
+    CHECK(scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light)
+              .drawn == 5);
+    map->tiles = "0,0";
+    CHECK(scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light)
+              .drawn == 8);
+    // A broken map and a missing image are counted, not drawn.
+    map->tiles = "x";
+    w->get<scene2d::Sprite>(w->find_named("Hero").at(0))->visible = true;
+    w->get<scene2d::Sprite>(w->find_named("Hero").at(0))->image = Guid::generate().to_string();
+    stats = scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
+    CHECK(stats.missing == 2);
+    CHECK(stats.drawn == 0);
+}
+
+TEST_CASE("Diorama lighting and camera") {
+    const scene2d::DioramaLight light{render::Vec3{0, 1, 0}, 0.25F, 0.75F};
+    CHECK(scene2d::brightness(render::Vec3{0, 1, 0}, light) == doctest::Approx(1.0));
+    CHECK(scene2d::brightness(render::Vec3{0, 5, 0}, light) == doctest::Approx(1.0));  // normalised
+    CHECK(scene2d::brightness(render::Vec3{1, 0, 0}, light) == doctest::Approx(0.25)); // side
+    CHECK(scene2d::brightness(render::Vec3{0, -1, 0}, light) == doctest::Approx(0.25)); // below
+
+    // The camera looks at its point from the south, above; the point is at the centre.
+    scene2d::DioramaCamera camera;
+    camera.x = 3.0;
+    camera.y = 5.0;
+    camera.pitch = 30.0;
+    camera.distance = 10.0;
+    render::Vec3 eye;
+    const render::Mat4 vp = scene2d::diorama_view_projection(camera, 1.0F, &eye);
+    CHECK(eye.x == doctest::Approx(3.0));
+    CHECK(eye.y == doctest::Approx(5.0)); // 10 * sin(30 degrees)
+    CHECK(eye.z == doctest::Approx(5.0 + (10.0 * std::cos(3.14159265358979 / 6.0))));
+    const auto clip = vp.transform(render::Vec3{3.0F, 0.0F, 5.0F});
+    CHECK(clip[0] / clip[3] == doctest::Approx(0.0).epsilon(1e-5));
+    CHECK(clip[1] / clip[3] == doctest::Approx(0.0).epsilon(1e-5));
+    // North of the point (smaller y) is higher on screen, as in the 2D view.
+    const auto north = vp.transform(render::Vec3{3.0F, 0.0F, 4.0F});
+    CHECK(north[1] / north[3] > 0.0F);
+    // Pitch is kept from 5 to 85 degrees, so the camera never looks straight down.
+    camera.pitch = 90.0;
+    static_cast<void>(scene2d::diorama_view_projection(camera, 1.0F, &eye));
+    CHECK(eye.y == doctest::Approx(10.0 * std::sin(85.0 * 3.14159265358979 / 180.0)));
 }
