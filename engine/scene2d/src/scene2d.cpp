@@ -110,6 +110,8 @@ void register_types(reflect::Registry& registry) {
         .tooltip("The painted tiles.");
     tilemap.property<&Tilemap::visible>("visible").tooltip("Hide the tiles without removing "
                                                            "them.");
+    tilemap.property<&Tilemap::solid>("solid").tooltip(
+        "Every tile of this map blocks movement. Paint walls on their own map.");
 }
 
 bool register_components(world::World& world) {
@@ -226,6 +228,118 @@ const TileGrid* Tilemap::grid(std::string& error) const {
         return nullptr;
     }
     return &*parsed_;
+}
+
+// ---------------------------------------------------------------------------------------
+// Collisions
+// ---------------------------------------------------------------------------------------
+
+namespace {
+
+/// Tolerance for positions that are a rounding error away from a tile edge.
+constexpr double edge_tolerance = 1e-9;
+
+/// The tile lines a span [low, high) covers, as [first, end), not clamped to the map.
+struct Span {
+    double first = 0.0;
+    double end = 0.0;
+};
+
+Span covered(double low, double high, double tile) {
+    return Span{std::floor((low + edge_tolerance) / tile),
+                std::ceil((high - edge_tolerance) / tile)};
+}
+
+} // namespace
+
+double sweep(const world::World& world, const Box& box, Axis axis, double distance,
+             std::uint32_t ppu) {
+    if (!std::isfinite(distance) || distance == 0.0) {
+        return 0.0;
+    }
+    const reflect::TypeInfo* type = world.registry().find_type<Tilemap>();
+    if (type == nullptr) {
+        return distance;
+    }
+    double allowed = distance;
+    world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        const Tilemap* tilemap = ref.as<Tilemap>();
+        const Transform2D* transform = world.get<Transform2D>(entity);
+        if (tilemap == nullptr || transform == nullptr || !tilemap->solid) {
+            return;
+        }
+        std::string error;
+        const TileGrid* grid = tilemap->grid(error);
+        if (grid == nullptr || grid->width == 0) {
+            return;
+        }
+        const std::uint32_t units = std::max<std::uint32_t>(ppu, 1);
+        const std::uint32_t pixels = tilemap->tile_size == 0 ? units : tilemap->tile_size;
+        const double tile = static_cast<double>(pixels) / static_cast<double>(units);
+        // In the map's own space, "along" the moving axis and "across" the other one.
+        const bool x_axis = axis == Axis::X;
+        const double origin_along = x_axis ? transform->x : transform->y;
+        const double origin_across = x_axis ? transform->y : transform->x;
+        const double low = (x_axis ? box.left : box.top) - origin_along;
+        const double high = (x_axis ? box.right : box.bottom) - origin_along;
+        const double across_low = (x_axis ? box.top : box.left) - origin_across;
+        const double across_high = (x_axis ? box.bottom : box.right) - origin_across;
+        if (!std::isfinite(low) || !std::isfinite(high) || !std::isfinite(across_low) ||
+            !std::isfinite(across_high) || !std::isfinite(tile)) {
+            return; // a broken position: nothing to compare against
+        }
+        const auto along_count = static_cast<double>(x_axis ? grid->width : grid->height);
+        const auto across_count = static_cast<double>(x_axis ? grid->height : grid->width);
+
+        // Tile lines as whole numbers, clamped to the map. The map is at most
+        // max_tilemap_side tiles a side, so these never overflow.
+        const auto clamp_line = [](double line, double count) {
+            return static_cast<std::int64_t>(std::clamp(line, -1.0, count));
+        };
+        const Span across = covered(across_low, across_high, tile);
+        const std::int64_t across_first = clamp_line(std::max(across.first, 0.0), across_count);
+        const std::int64_t across_end =
+            clamp_line(std::min(across.end, across_count), across_count);
+        if (across_first >= across_end) {
+            return; // the box passes beside the map
+        }
+        const auto solid_line = [&](std::int64_t line) {
+            for (std::int64_t other = across_first; other < across_end; ++other) {
+                const auto a = static_cast<std::uint32_t>(line);
+                const auto b = static_cast<std::uint32_t>(other);
+                if ((x_axis ? grid->at(a, b) : grid->at(b, a)) >= 0) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        const Span now = covered(low, high, tile);
+        if (distance > 0.0) {
+            // The lines entered: from the first one past the box to the last one reached.
+            const std::int64_t first = clamp_line(now.end, along_count);
+            const std::int64_t last = clamp_line(
+                std::ceil((high + distance - edge_tolerance) / tile) - 1.0, along_count - 1.0);
+            for (std::int64_t line = std::max<std::int64_t>(first, 0); line <= last; ++line) {
+                if (solid_line(line)) {
+                    allowed =
+                        std::min(allowed, std::max(0.0, (static_cast<double>(line) * tile) - high));
+                    break;
+                }
+            }
+        } else {
+            const std::int64_t first = clamp_line(now.first - 1.0, along_count - 1.0);
+            const std::int64_t last =
+                clamp_line(std::floor((low + distance + edge_tolerance) / tile), along_count);
+            for (std::int64_t line = first; line >= std::max<std::int64_t>(last, 0); --line) {
+                if (solid_line(line)) {
+                    allowed = std::max(allowed,
+                                       std::min(0.0, (static_cast<double>(line + 1) * tile) - low));
+                    break;
+                }
+            }
+        }
+    });
+    return allowed;
 }
 
 // ---------------------------------------------------------------------------------------

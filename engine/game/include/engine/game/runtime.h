@@ -56,11 +56,18 @@ struct ProjectSettings {
 // ---------------------------------------------------------------------------------------
 
 /// "Top-down Mover" (plan/05 §3.1): moves the entity with the move_up, move_down,
-/// move_left and move_right actions. Diagonals are as fast as straight lines.
+/// move_left and move_right actions. Diagonals are as fast as straight lines. Solid
+/// tilemaps stop it: its hitbox, centred on the bottom of its position (the feet), slides
+/// along walls.
 struct TopDownMover {
     double speed = 4.0; ///< Tiles per second.
     bool enabled = true;
+    double hitbox_width = 0.75; ///< In tiles.
+    double hitbox_height = 0.5; ///< In tiles, upwards from the position.
 };
+
+/// The box an entity with `mover` at (x, y) occupies, for collisions.
+[[nodiscard]] scene2d::Box hitbox(const TopDownMover& mover, double x, double y);
 
 /// Registers every type the runtime uses: Classic 2D components, input, and behaviours.
 void register_types(reflect::Registry& registry);

@@ -104,6 +104,9 @@ struct Tilemap {
     std::uint32_t tile_size = 0; ///< In pixels, square. 0 uses the camera's PPU.
     std::string tiles;
     bool visible = true;
+    /// Every tile of this map blocks movement (see sweep()). Paint walls on their own map,
+    /// hidden if the art is on another one.
+    bool solid = false;
 
     /// The parsed tiles, kept until `tiles` changes. Null, with `error` set, if the text
     /// is not valid.
@@ -127,6 +130,25 @@ bool register_components(world::World& world);
 /// it once per fixed step. Returns the entities whose animation reached its end this time
 /// (animations that do not loop), so their "finished" event can be sent.
 std::vector<world::Entity> animate(world::World& world, double seconds);
+
+/// An axis-aligned box in world units, such as a character's feet. Edges are half-open:
+/// a box whose right edge is exactly on a tile's left edge does not overlap it.
+struct Box {
+    double left = 0.0;
+    double top = 0.0;
+    double right = 0.0;
+    double bottom = 0.0;
+};
+
+enum class Axis : std::uint8_t { X, Y };
+
+/// How far `box` can move by `distance` along `axis` before it would enter a tile of a
+/// solid Tilemap in `world`, visible or not: `distance` itself if nothing is in the way,
+/// else the distance to the first such tile's edge (0 when touching it). Tiles the box
+/// already overlaps do not block, so a character placed inside a wall can walk out.
+/// `ppu` sizes tilemaps whose tile_size is 0.
+[[nodiscard]] double sweep(const world::World& world, const Box& box, Axis axis, double distance,
+                           std::uint32_t ppu);
 
 /// A pixel-perfect orthographic camera.
 struct Camera2D {

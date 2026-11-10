@@ -217,6 +217,25 @@ void register_types(reflect::Registry& registry) {
         "How fast it walks, in tiles per second.");
     mover.property<&TopDownMover::enabled>("enabled").tooltip(
         "Turn off to stop the player moving, for example in a cutscene.");
+    mover.property<&TopDownMover::hitbox_width>("hitbox_width")
+        .range(0.0, 16.0)
+        .step(0.125)
+        .unit(reflect::Unit::Tiles)
+        .flags(reflect::property_flag::advanced)
+        .display_name("Hitbox width")
+        .tooltip("How wide the feet are, for bumping into walls.");
+    mover.property<&TopDownMover::hitbox_height>("hitbox_height")
+        .range(0.0, 16.0)
+        .step(0.125)
+        .unit(reflect::Unit::Tiles)
+        .flags(reflect::property_flag::advanced)
+        .display_name("Hitbox height")
+        .tooltip("How deep the feet are, for bumping into walls.");
+}
+
+scene2d::Box hitbox(const TopDownMover& mover, double x, double y) {
+    const double half = std::max(mover.hitbox_width, 0.0) / 2.0;
+    return scene2d::Box{x - half, y - std::max(mover.hitbox_height, 0.0), x + half, y};
 }
 
 // ---------------------------------------------------------------------------------------
@@ -395,16 +414,18 @@ void Runtime::step() {
             if (mover == nullptr || transform == nullptr || !mover->enabled) {
                 return;
             }
-            double dx =
+            const double dx =
                 (r.state.held("move_right") ? 1.0 : 0.0) - (r.state.held("move_left") ? 1.0 : 0.0);
-            double dy =
+            const double dy =
                 (r.state.held("move_down") ? 1.0 : 0.0) - (r.state.held("move_up") ? 1.0 : 0.0);
             const double length = std::sqrt(dx * dx + dy * dy);
             if (length > 0.0) {
-                dx /= length;
-                dy /= length;
-                transform->x += dx * mover->speed * dt;
-                transform->y += dy * mover->speed * dt;
+                const double step = mover->speed * dt / length;
+                // One axis at a time, so a diagonal into a wall slides along it.
+                transform->x += scene2d::sweep(*r.world, hitbox(*mover, transform->x, transform->y),
+                                               scene2d::Axis::X, dx * step, r.settings.ppu);
+                transform->y += scene2d::sweep(*r.world, hitbox(*mover, transform->x, transform->y),
+                                               scene2d::Axis::Y, dy * step, r.settings.ppu);
             }
         });
     }

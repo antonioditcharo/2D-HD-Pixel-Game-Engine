@@ -338,6 +338,66 @@ TEST_CASE("Tilemap text is parsed strictly and written back unchanged") {
     CHECK_FALSE(error.empty());
 }
 
+TEST_CASE("Solid tilemaps stop boxes exactly at their edges") {
+    reflect::Registry registry;
+    scene2d::register_types(registry);
+    world::World w(registry);
+    REQUIRE(scene2d::register_components(w));
+    // A 3 x 3 ring of wall around an empty middle tile, at the origin, 1 unit per tile.
+    const world::Entity walls = w.create("walls");
+    w.add<scene2d::Transform2D>(walls);
+    scene2d::Tilemap* ring = w.add<scene2d::Tilemap>(walls);
+    ring->tiles = "1,1,1\n1,,1\n1,1,1";
+    ring->solid = true;
+    constexpr std::uint32_t ppu = 16;
+    using scene2d::Axis;
+    const auto sweep = [&](const scene2d::Box& box, Axis axis, double distance) {
+        return scene2d::sweep(w, box, axis, distance, ppu);
+    };
+
+    // Feet in the middle tile; the bottom edge lies on the ring's bottom row.
+    const scene2d::Box feet{1.25, 1.5, 1.75, 2.0};
+    CHECK(sweep(feet, Axis::X, 1.0) == doctest::Approx(0.25));
+    CHECK(sweep(feet, Axis::X, -1.0) == doctest::Approx(-0.25));
+    CHECK(sweep(feet, Axis::Y, 0.5) == 0.0); // touching
+    CHECK(sweep(feet, Axis::Y, -1.0) == doctest::Approx(-0.5));
+    CHECK(sweep(feet, Axis::X, 0.1) == 0.1); // nothing in the way
+    CHECK(sweep(feet, Axis::X, 0.0) == 0.0);
+    CHECK(sweep(feet, Axis::X, std::numeric_limits<double>::quiet_NaN()) == 0.0);
+
+    // A rounding error either side of an edge never lets a box through.
+    CHECK(sweep(scene2d::Box{1.25, 1.5, 2.0 - 1e-12, 2.0}, Axis::X, 0.5) == doctest::Approx(0.0));
+    CHECK(sweep(scene2d::Box{1.25, 1.5, 2.0 + 1e-12, 2.0}, Axis::X, 0.5) == 0.0);
+
+    // A box already inside a wall can walk out of it, but not through another.
+    const scene2d::Box stuck{0.25, 1.5, 0.75, 2.0};
+    CHECK(sweep(stuck, Axis::X, -1.0) == -1.0);
+    CHECK(sweep(stuck, Axis::X, 1.0) == 1.0);
+    CHECK(sweep(stuck, Axis::X, 2.0) == doctest::Approx(1.25)); // stops at the right wall
+
+    // Beside the map, or with the map not solid, nothing blocks.
+    CHECK(sweep(scene2d::Box{1.25, 5.0, 1.75, 5.5}, Axis::X, 3.0) == 3.0);
+    ring->solid = false;
+    CHECK(sweep(feet, Axis::X, 1.0) == 1.0);
+    ring->solid = true;
+
+    // A second map elsewhere, with 32-pixel tiles (2 units), and a broken one ignored.
+    const world::Entity post = w.create("post");
+    w.add<scene2d::Transform2D>(post)->x = 10.0;
+    scene2d::Tilemap* big = w.add<scene2d::Tilemap>(post);
+    big->tiles = "1";
+    big->tile_size = 32;
+    big->solid = true;
+    const world::Entity broken = w.create("broken");
+    w.add<scene2d::Transform2D>(broken);
+    scene2d::Tilemap* bad = w.add<scene2d::Tilemap>(broken);
+    bad->tiles = "nonsense";
+    bad->solid = true;
+    CHECK(sweep(scene2d::Box{7.0, 0.5, 8.0, 1.0}, Axis::X, 5.0) == doctest::Approx(2.0));
+    CHECK(sweep(scene2d::Box{12.5, 0.5, 13.0, 1.0}, Axis::X, -5.0) == doctest::Approx(-0.5));
+    CHECK(sweep(scene2d::Box{10.5, 2.5, 11.0, 3.0}, Axis::Y, -5.0) == doctest::Approx(-0.5));
+}
+
 TEST_CASE("Animations step through frames, loop or finish once") {
     reflect::Registry registry;
     scene2d::register_types(registry);

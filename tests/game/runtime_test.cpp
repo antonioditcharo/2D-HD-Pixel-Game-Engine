@@ -329,6 +329,47 @@ TEST_CASE("Diagonals are as fast as straight lines, and a disabled mover stays p
     CHECK(transform_of(*runtime, "hero").x == doctest::Approx(each));
 }
 
+TEST_CASE("Walls stop the hero, who slides along them") {
+    const Project project;
+    input::Recording replay;
+    replay.record(0, key(input::Key::Right), true);
+    replay.record(60, key(input::Key::Down), true);
+    const auto runtime = project.open(no_graphics(&replay));
+
+    // A wall one tile thick, from x = 3, and from y = -2 to 2.
+    world::World& w = runtime->world();
+    const world::Entity walls = w.create("walls");
+    w.add<scene2d::Transform2D>(walls)->x = 3.0;
+    w.get<scene2d::Transform2D>(walls)->y = -2.0;
+    scene2d::Tilemap* map = w.add<scene2d::Tilemap>(walls);
+    map->tiles = "0\n0\n0\n0";
+    map->solid = true;
+
+    // One second right at 4 tiles per second would reach x = 4. The hitbox is 0.75 wide,
+    // so the hero stops with its right edge on the wall: x = 3 - 0.375.
+    for (int i = 0; i < 60; ++i) {
+        runtime->step();
+    }
+    CHECK(transform_of(*runtime, "hero").x == doctest::Approx(2.625));
+    CHECK(transform_of(*runtime, "hero").y == 0.0);
+
+    // Right and down: x stays against the wall while y moves at the diagonal speed.
+    for (int i = 0; i < 30; ++i) {
+        runtime->step();
+    }
+    CHECK(transform_of(*runtime, "hero").x == doctest::Approx(2.625));
+    CHECK(transform_of(*runtime, "hero").y == doctest::Approx(0.5 * 4.0 / std::sqrt(2.0)));
+
+    const reflect::TypeInfo* mover = runtime->world().registry().find_type<game::TopDownMover>();
+    REQUIRE(mover != nullptr);
+    CHECK(mover->find_property("hitbox_width")->unit == reflect::Unit::Tiles);
+    const scene2d::Box box = game::hitbox(game::TopDownMover{}, 1.0, 2.0);
+    CHECK(box.left == 0.625);
+    CHECK(box.top == 1.5);
+    CHECK(box.right == 1.375);
+    CHECK(box.bottom == 2.0);
+}
+
 TEST_CASE("Problems are reported with the file they are in") {
     const Project project;
     std::vector<serialize::Issue> issues;

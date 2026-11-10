@@ -127,10 +127,15 @@ Behaviours are components that give an entity a capability with no logic to writ
 |---|---|
 | `speed` | Tiles per second, 0 to 64 (default 4) |
 | `enabled` | Turn off to stop the player moving, for example in a cutscene |
+| `hitbox_width`, `hitbox_height` (advanced) | The feet, in tiles: 0.75 wide and 0.5 deep by default, centred on the bottom of the position |
 
 It walks with the `move_up`, `move_down`, `move_left` and `move_right` actions, so the
 arrow keys, WASD and the gamepad's d-pad all work. **Diagonals are as fast as straight
 lines** (the direction is normalised; tested).
+
+**Walls.** Solid tilemaps ([scene2d.md](scene2d.md) §4) stop the hitbox exactly at their
+edge. Movement is resolved along x, then along y, so walking diagonally into a wall
+slides along it at the diagonal speed (tested).
 
 ## 5. Logic meets the world
 
@@ -199,6 +204,7 @@ drawing (`plan/03` §7).
 | Project settings | A missing file; a round trip; out-of-range values, a wrong style and an unknown entry, each reported at its path; another format or a newer version refused |
 | Recorded input | A temporary project on disk. Right held for 30 steps, in frames of one and two steps, walks the hero exactly 2 tiles; the game-start Rule logs once; Cancel does not trigger the Interact Rule, Interact does; the torch's one-shot animation runs its "finished" Rule once, at 0.3 s |
 | Diagonals | Right and down for one second move 4/√2 tiles on each axis; a disabled mover stays put |
+| Walls | Walking right stops with the hitbox on the wall (x = 2.625 for a wall at 3); adding down slides along it at the diagonal speed |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
 | Logic and world | Names and GUIDs resolve; an entity's event reaches Rules written with its name and with its GUID, once each; Rules act through several components; logic survives storage moves |
@@ -206,8 +212,8 @@ drawing (`plan/03` §7).
 
 ## 9. Next increments
 
-1. **Collisions with the map** (solid tiles), and walk animations that follow the Top-down
-   Mover's direction, so the hero can walk around a village rather than an empty field.
+1. **Walk animations** that follow the Top-down Mover's direction, and touching other
+   characters and triggers, so the hero can explore a village and talk to people.
 2. **Hot reload while playing:** pass asset changes to the texture cache and reload
    changed logic.
 3. **Spawning and destroying from logic,** with entities created by Rules addressable by
