@@ -37,9 +37,10 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 12> known_project_keys{
-    "format",     "version",      "name",         "start_scene",     "ppu",       "width", "height",
-    "background", "render_style", "camera_pitch", "camera_distance", "camera_fov"};
+constexpr std::array<std::string_view, 13> known_project_keys{
+    "format",       "version",         "name",       "start_scene",  "ppu",
+    "width",        "height",          "background", "render_style", "gravity",
+    "camera_pitch", "camera_distance", "camera_fov"};
 
 [[nodiscard]] std::string entry_path(const std::string& file, const std::string& key) {
     std::string path = file;
@@ -200,6 +201,22 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
     number("camera_pitch", settings.camera_pitch, 5.0, 85.0);
     number("camera_distance", settings.camera_distance, 1.0, 200.0);
     number("camera_fov", settings.camera_fov, 5.0, 90.0);
+    if (const auto gravity = doc.find("gravity"); gravity != doc.end()) {
+        const bool valid =
+            gravity->is_array() && gravity->size() == 2 &&
+            std::all_of(gravity->begin(), gravity->end(), [](const serialize::Json& v) {
+                return v.is_number() && std::abs(v.get<double>()) <= 1000.0;
+            });
+        if (valid) {
+            settings.gravity_x = (*gravity)[0].get<double>();
+            settings.gravity_y = (*gravity)[1].get<double>();
+        } else {
+            issues.push_back(
+                serialize::Issue{file + "/gravity",
+                                 "Gravity must be two numbers from -1000 to 1000 (across, down)."});
+            ok = false;
+        }
+    }
     if (const auto style = doc.find("render_style"); style != doc.end()) {
         const std::string name = style->is_string() ? style->get<std::string>() : std::string();
         if (name == "classic_2d") {
@@ -226,6 +243,7 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["camera_pitch"] = settings.camera_pitch;
     json["camera_distance"] = settings.camera_distance;
     json["camera_fov"] = settings.camera_fov;
+    json["gravity"] = serialize::Json::array({settings.gravity_x, settings.gravity_y});
     json["ppu"] = settings.ppu;
     json["width"] = settings.width;
     json["height"] = settings.height;
@@ -263,6 +281,7 @@ struct Runtime::Impl {
     std::unique_ptr<world::World> world;
     input::InputState state;
     input::InputObject input_object;
+    std::unique_ptr<PhysicsLink> physics;
     SaveObject save_object;
     std::unique_ptr<audio::AudioEngine> audio_engine;
     AudioObject audio_object;
@@ -300,6 +319,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     r.world = std::make_unique<world::World>(r.registry);
     scene2d::register_components(*r.world);
     register_behaviour_components(*r.world);
+    r.physics = std::make_unique<PhysicsLink>(r.settings.gravity_x, r.settings.gravity_y);
 
     // Assets.
     r.assets.refresh();
@@ -458,6 +478,17 @@ void Runtime::step() {
     // 2. Movement, with walls, bodies and walk animations; then trigger areas.
     const double dt = r.clock.step_seconds();
     move_characters(*r.world, r.state, dt, r.settings.ppu);
+    // Physics: dynamic bodies move, and bodies that start touching tell Rules.
+    for (const auto& [first, second] : r.physics->step(*r.world, r.state, dt, r.settings.ppu)) {
+        for (const auto& [touched, other] : {std::pair{first, second}, std::pair{second, first}}) {
+            const std::vector<std::string> who = names_of(*r.world, other);
+            const std::array<reflect::Value, 1> payload{
+                reflect::Value{who.empty() ? std::string() : who.back()}};
+            if (r.world->get<PhysicsBody>(touched) != nullptr) {
+                emit(*r.vm, *r.world, touched, "touched", payload);
+            }
+        }
+    }
     for (const TriggerEvent& event : update_triggers(*r.world)) {
         const std::vector<std::string> who = names_of(*r.world, event.who);
         const std::array<reflect::Value, 1> payload{
@@ -721,6 +752,8 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
         }
     }
     r.steps = step->get<std::uint64_t>();
+    // The simulation starts again from the loaded world.
+    r.physics->invalidate();
     // Movers already standing in trigger areas are inside, not walking in.
     static_cast<void>(update_triggers(*r.world));
     return true;

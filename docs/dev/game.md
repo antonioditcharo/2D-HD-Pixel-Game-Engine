@@ -60,6 +60,7 @@ MyGame/
 | `width`, `height` | The internal resolution, upscaled pixel-perfect | 320 × 180; 16 to 7680 × 4320 |
 | `background` | The clear colour, `[red, green, blue]` | `[20, 24, 40]` |
 | `render_style` | `"classic_2d"`, flat 2D, or `"diorama"`, the same world in 3D ([scene2d.md](scene2d.md) §7) | `"classic_2d"` |
+| `gravity` | For Physics Bodies, `[across, down]` in tiles per second squared ([physics.md](physics.md)) | `[0, 0]`, each -1000 to 1000 |
 | `camera_pitch`, `camera_distance`, `camera_fov` | The Diorama camera, which follows the hero: degrees looking down, tiles away, and vertical field of view | 35 (5 to 85), 12 (1 to 200), 30 (5 to 90) |
 
 - Problems are reported in plain language with where they are, for example
@@ -105,7 +106,8 @@ draws and presents. It returns false when the player closes the window. Each `st
 
 1. **Input.** The step's controls, from the recording or from the operating system.
 2. **Movement.** Every enabled Top-down Mover walks, stopped by walls and Solid Bodies,
-   and Walk Animations update (§4). Then Trigger Areas send **"entered"** and
+   and Walk Animations update (§4). Physics Bodies then take a step of the simulation, and
+   those that start touching send **"touched"** ([physics.md](physics.md)). Then Trigger Areas send **"entered"** and
    **"exited"** for the movers that walked in or out.
 3. **Input events.** Each action pressed this step emits `input.pressed` with the action,
    so *"When Interact is pressed"* Rules run. For Interact, each enabled mover (in GUID

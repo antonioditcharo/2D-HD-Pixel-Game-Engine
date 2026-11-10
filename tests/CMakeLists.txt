@@ -124,6 +124,19 @@ engine_configure_test_target(engine_audio_tests)
 
 add_test(NAME audio COMMAND engine_audio_tests)
 
+add_executable(engine_physics_tests
+    test_main.cpp
+    physics/physics_test.cpp
+)
+target_link_libraries(engine_physics_tests PRIVATE
+    engine::physics
+    doctest::doctest
+)
+target_compile_definitions(engine_physics_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+engine_configure_test_target(engine_physics_tests)
+
+add_test(NAME physics COMMAND engine_physics_tests)
+
 add_executable(engine_game_tests
     test_main.cpp
     game/behaviours_test.cpp

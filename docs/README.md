@@ -136,6 +136,7 @@ Details and the questions that remain open are in
 | [Assets](dev/assets.md) | The asset database: GUIDs in `.meta` files, change detection, image import |
 | [Classic 2D scenes](dev/scene2d.md) | Sprites, sprite-sheet animation, tilemaps and solid tiles, pixel-perfect drawing, hot reload |
 | [Game](dev/game.md) | The runtime that plays a project: behaviours, logic reaching the world, the fixed-step clock, saved games |
+| [Physics](dev/physics.md) | Rigid bodies on Box2D: falling, pushing, bouncing, contacts, Physics Bodies in games |
 | [Audio](dev/audio.md) | Sound effects and music: buses, fades, decoding, sound in no-code logic |
 | [Player and sample](dev/player.md) | Playing a project folder, headless runs and screenshots, and the Hello Sparxel sample village |
 | [Input](dev/input.md) | Named actions, bindings and presets, recording and replay, input in no-code logic |

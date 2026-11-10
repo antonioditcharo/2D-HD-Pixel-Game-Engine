@@ -15,6 +15,7 @@
 │   ├── scene2d/       Classic 2D scenes: transforms and sprites drawn from the world.
 │   ├── input/         Named actions bound to keys and gamepad buttons; recording and replay.
 │   ├── audio/         Sound effects and music: buses, fades, decoding (miniaudio inside).
+│   ├── physics/       Rigid bodies and contacts (Box2D inside).
 │   └── game/          The runtime: opens a project and runs it; logic reaching the world; the clock.
 ├── player/            sparxel-player: plays a project folder; what exported games run.
 ├── samples/           Sample projects (hello: a small village), made by tools/make_sample.py.

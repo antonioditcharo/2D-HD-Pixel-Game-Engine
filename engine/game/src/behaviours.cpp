@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -130,6 +131,67 @@ void register_behaviours(reflect::Registry& registry) {
     interactable.event<std::string>("interacted", {"who"})
         .text("When {who} interacts with it")
         .tooltip("Happens when the player presses Interact while facing it, close by.");
+
+    registry.add_choice_list<physics::BodyType>("body_type")
+        .display_name("Body type")
+        .entry(physics::BodyType::Static, "static", "Fixed", "Never moves.")
+        .entry(physics::BodyType::Dynamic, "dynamic", "Moving",
+               "Falls, slides and bounces, and can be pushed.")
+        .entry(physics::BodyType::Kinematic, "kinematic", "Driven",
+               "Moves only where logic puts it, pushing what is in the way.");
+    registry.add_choice_list<physics::ShapeKind>("body_shape")
+        .display_name("Shape")
+        .entry(physics::ShapeKind::Box, "box")
+        .entry(physics::ShapeKind::Circle, "circle");
+    auto simulated = registry.add_type<PhysicsBody>("physics_body")
+                         .display_name("Physics Body")
+                         .category("Physics")
+                         .tooltip("Falls, slides, bounces and pushes, with real physics.");
+    simulated.property<&PhysicsBody::type>("type").tooltip("How it moves.");
+    simulated.property<&PhysicsBody::shape>("shape").tooltip("A box or a circle.");
+    simulated.property<&PhysicsBody::width>("width")
+        .range(0.02, 64.0)
+        .step(0.125)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("A box's width, centred on the position.");
+    simulated.property<&PhysicsBody::height>("height")
+        .range(0.02, 64.0)
+        .step(0.125)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("A box's height, upwards from the position.");
+    simulated.property<&PhysicsBody::radius>("radius")
+        .range(0.01, 32.0)
+        .step(0.125)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("A circle's radius; it sits on the position.");
+    simulated.property<&PhysicsBody::density>("density")
+        .range(0.001, 1000.0)
+        .flags(reflect::property_flag::advanced)
+        .tooltip("How heavy it is for its size.");
+    simulated.property<&PhysicsBody::friction>("friction")
+        .range(0.0, 10.0)
+        .step(0.1)
+        .flags(reflect::property_flag::advanced)
+        .tooltip("How much it grips what it slides on.");
+    simulated.property<&PhysicsBody::bounciness>("bounciness")
+        .range(0.0, 1.0)
+        .step(0.1)
+        .tooltip("0 does not bounce; 1 bounces back as high as it fell.");
+    simulated.property<&PhysicsBody::damping>("damping")
+        .range(0.0, 100.0)
+        .step(0.5)
+        .tooltip("Slows it down over time. In top-down games, so pushed things stop.");
+    simulated.property<&PhysicsBody::gravity_scale>("gravity_scale")
+        .range(-100.0, 100.0)
+        .flags(reflect::property_flag::advanced)
+        .display_name("Gravity scale")
+        .tooltip("How strongly gravity pulls it: 0 floats, 1 is normal.");
+    simulated.action<&PhysicsBody::push>("push", {"x", "y"})
+        .text("Push it by ({x}, {y})")
+        .tooltip("An instant push. Heavier things move less.");
+    simulated.event<std::string>("touched", {"who"})
+        .text("When it touches {who}")
+        .tooltip("Happens when it starts touching something: another body or a wall.");
 }
 
 bool register_behaviour_components(world::World& world) {
@@ -138,7 +200,8 @@ bool register_behaviour_components(world::World& world) {
     const bool body = world.register_component<Body>();
     const bool trigger = world.register_component<Trigger>();
     const bool interactable = world.register_component<Interactable>();
-    return mover && walk && body && trigger && interactable;
+    const bool simulated = world.register_component<PhysicsBody>();
+    return mover && walk && body && trigger && interactable && simulated;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -233,8 +296,14 @@ void move_characters(world::World& world, const input::InputState& input, double
         WalkAnimation* walk = world.get<WalkAnimation>(entity);
         scene2d::Sprite* sprite = world.get<scene2d::Sprite>(entity);
         mover->moving = mover->enabled && length > 0.0;
+        // A mover with a dynamic Physics Body is moved by the simulation (PhysicsLink).
+        const PhysicsBody* simulated = world.get<PhysicsBody>(entity);
+        const bool by_physics =
+            simulated != nullptr && simulated->type == physics::BodyType::Dynamic;
         if (mover->moving) {
             mover->facing = facing_for(mover->facing, dx, dy);
+        }
+        if (mover->moving && !by_physics) {
             std::vector<scene2d::Box> others;
             others.reserve(obstacles.size());
             for (const Obstacle& obstacle : obstacles) {
@@ -400,6 +469,190 @@ world::Entity find_interaction(const world::World& world, world::Entity mover_en
         }
     });
     return best;
+}
+
+// ---------------------------------------------------------------------------------------
+// Physics
+// ---------------------------------------------------------------------------------------
+
+namespace {
+
+/// From a body's position (the bottom of its shape) up to its centre.
+double centre_offset(const PhysicsBody& body) {
+    return body.shape == physics::ShapeKind::Circle ? std::max(body.radius, 0.0)
+                                                    : std::max(body.height, 0.0) / 2.0;
+}
+
+} // namespace
+
+PhysicsLink::PhysicsLink(double gravity_x, double gravity_y)
+    : simulation_(physics::PhysicsWorld::create(gravity_x, gravity_y)) {}
+
+std::uint64_t PhysicsLink::user_for(const Guid& guid) {
+    if (const auto found = user_ids_.find(guid); found != user_ids_.end()) {
+        return found->second;
+    }
+    const std::uint64_t user = next_user_++;
+    user_ids_.emplace(guid, user);
+    users_.emplace(user, guid);
+    return user;
+}
+
+void PhysicsLink::build(world::World& world, std::uint32_t ppu) {
+    simulation_->clear();
+    linked_.clear();
+    walls_.clear();
+    built_ = true;
+    // Solid tilemaps: one static box per run of solid tiles in a row.
+    const reflect::TypeInfo* tilemap_type = world.registry().find_type<scene2d::Tilemap>();
+    if (tilemap_type == nullptr) {
+        return;
+    }
+    world.each(*tilemap_type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        const scene2d::Tilemap* tilemap = ref.as<scene2d::Tilemap>();
+        const scene2d::Transform2D* at = world.get<scene2d::Transform2D>(entity);
+        std::string error;
+        const scene2d::TileGrid* grid =
+            tilemap != nullptr && tilemap->solid ? tilemap->grid(error) : nullptr;
+        if (grid == nullptr || at == nullptr) {
+            return;
+        }
+        const std::uint32_t units = std::max<std::uint32_t>(ppu, 1);
+        const double tile =
+            static_cast<double>(tilemap->tile_size == 0 ? units : tilemap->tile_size) /
+            static_cast<double>(units);
+        const std::uint64_t user = user_for(world.guid(entity));
+        for (std::uint32_t y = 0; y < grid->height; ++y) {
+            std::uint32_t x = 0;
+            while (x < grid->width) {
+                if (grid->at(x, y) < 0) {
+                    ++x;
+                    continue;
+                }
+                const std::uint32_t start = x;
+                while (x < grid->width && grid->at(x, y) >= 0) {
+                    ++x;
+                }
+                physics::BodyDef wall;
+                wall.type = physics::BodyType::Static;
+                wall.width = static_cast<double>(x - start) * tile;
+                wall.height = tile;
+                wall.x = at->x + (static_cast<double>(start) * tile) + (wall.width / 2.0);
+                wall.y = at->y + ((static_cast<double>(y) + 0.5) * tile);
+                wall.user = user;
+                walls_.push_back(simulation_->add(wall));
+            }
+        }
+    });
+}
+
+std::vector<std::pair<world::Entity, world::Entity>>
+PhysicsLink::step(world::World& world, const input::InputState& input, double seconds,
+                  std::uint32_t ppu) {
+    std::vector<std::pair<world::Entity, world::Entity>> touches;
+    const reflect::TypeInfo* type = world.registry().find_type<PhysicsBody>();
+    if (simulation_ == nullptr || type == nullptr) {
+        return touches;
+    }
+    if (!built_) {
+        build(world, ppu);
+    }
+    // Bodies for new Physics Bodies; the simulation follows Positions it does not drive.
+    const double dx =
+        (input.held("move_right") ? 1.0 : 0.0) - (input.held("move_left") ? 1.0 : 0.0);
+    const double dy = (input.held("move_down") ? 1.0 : 0.0) - (input.held("move_up") ? 1.0 : 0.0);
+    const double length = std::sqrt((dx * dx) + (dy * dy));
+    std::vector<Guid> present;
+    world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        PhysicsBody* body = ref.as<PhysicsBody>();
+        const scene2d::Transform2D* at = world.get<scene2d::Transform2D>(entity);
+        if (body == nullptr || at == nullptr) {
+            return;
+        }
+        const Guid guid = world.guid(entity);
+        present.push_back(guid);
+        const double offset = centre_offset(*body);
+        auto found = linked_.find(guid);
+        if (found == linked_.end()) {
+            physics::BodyDef def;
+            def.type = body->type;
+            def.shape = body->shape;
+            def.x = at->x;
+            def.y = at->y - offset;
+            def.width = body->width;
+            def.height = body->height;
+            def.radius = body->radius;
+            def.density = body->density;
+            def.friction = body->friction;
+            def.restitution = body->bounciness;
+            def.damping = body->damping;
+            def.gravity_scale = body->gravity_scale;
+            def.user = user_for(guid);
+            const physics::BodyId id = simulation_->add(def);
+            if (!id.is_valid()) {
+                return;
+            }
+            found = linked_.emplace(guid, Linked{id, offset, body->type}).first;
+        }
+        const Linked& link = found->second;
+        if (link.type == physics::BodyType::Static) {
+            simulation_->set_position(link.body, at->x, at->y - link.centre_offset);
+        } else if (link.type == physics::BodyType::Kinematic) {
+            // Driven: move to where logic put it within this step, pushing on the way.
+            const std::optional<physics::BodyState> now = simulation_->state(link.body);
+            if (now && seconds > 0.0) {
+                simulation_->set_velocity(link.body, (at->x - now->x) / seconds,
+                                          (at->y - link.centre_offset - now->y) / seconds);
+            }
+        } else if (const TopDownMover* mover = world.get<TopDownMover>(entity); mover != nullptr) {
+            // A walking body: its input sets its speed; the simulation does the rest.
+            const double speed = mover->enabled && length > 0.0 ? mover->speed / length : 0.0;
+            simulation_->set_velocity(link.body, dx * speed, dy * speed);
+        }
+        if (body->push_x != 0.0 || body->push_y != 0.0) {
+            simulation_->push(link.body, body->push_x, body->push_y);
+            body->push_x = 0.0;
+            body->push_y = 0.0;
+        }
+    });
+    // Bodies whose entity or component went away.
+    std::sort(present.begin(), present.end());
+    for (auto it = linked_.begin(); it != linked_.end();) {
+        if (!std::binary_search(present.begin(), present.end(), it->first)) {
+            simulation_->remove(it->second.body);
+            it = linked_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    simulation_->step(seconds);
+
+    // Dynamic bodies move their entities.
+    for (const auto& [guid, link] : linked_) {
+        if (link.type != physics::BodyType::Dynamic) {
+            continue;
+        }
+        const world::Entity entity = world.find(guid);
+        scene2d::Transform2D* at = world.get<scene2d::Transform2D>(entity);
+        const std::optional<physics::BodyState> state = simulation_->state(link.body);
+        if (at != nullptr && state) {
+            at->x = state->x;
+            at->y = state->y + link.centre_offset;
+        }
+    }
+    for (const physics::Contact& contact : simulation_->contacts()) {
+        const auto a = users_.find(contact.a);
+        const auto b = users_.find(contact.b);
+        if (a != users_.end() && b != users_.end()) {
+            const world::Entity first = world.find(a->second);
+            const world::Entity second = world.find(b->second);
+            if (world.is_alive(first) && world.is_alive(second)) {
+                touches.emplace_back(first, second);
+            }
+        }
+    }
+    return touches;
 }
 
 } // namespace engine::game

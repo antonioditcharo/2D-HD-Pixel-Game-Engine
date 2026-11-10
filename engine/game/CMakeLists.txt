@@ -24,6 +24,7 @@ target_link_libraries(engine_game
         engine::scene2d
         engine::input
         engine::audio
+        engine::physics
     PRIVATE
         SDL3::SDL3
 )

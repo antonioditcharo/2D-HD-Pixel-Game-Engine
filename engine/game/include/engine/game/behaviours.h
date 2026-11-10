@@ -10,10 +10,14 @@
 #include "engine/foundation/guid.h"
 #include "engine/foundation/reflect.h"
 #include "engine/input/input.h"
+#include "engine/physics/physics.h"
 #include "engine/scene2d/scene2d.h"
 #include "engine/world/world.h"
 
 #include <cstdint>
+#include <memory>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace engine::game {
@@ -83,6 +87,32 @@ struct Interactable {
     bool enabled = true;
 };
 
+/// "Physics Body": the entity takes part in the physics simulation (ADR-008). Dynamic bodies
+/// fall, slide, bounce and are pushed; their Position follows the simulation. Static and
+/// kinematic bodies follow their Position, so logic moves them. The shape is centred on the
+/// bottom of the position, like every behaviour's box. Solid tilemaps are walls to it.
+struct PhysicsBody {
+    physics::BodyType type = physics::BodyType::Dynamic;
+    physics::ShapeKind shape = physics::ShapeKind::Box;
+    double width = 1.0; ///< In tiles, for boxes.
+    double height = 1.0;
+    double radius = 0.5; ///< In tiles, for circles.
+    double density = 1.0;
+    double friction = 0.6;
+    double bounciness = 0.0;
+    double damping = 0.0; ///< Slows it down: in top-down games, so pushed things stop.
+    double gravity_scale = 1.0;
+    // Pushes logic asked for, applied at the next step. Not reflected, so not saved.
+    double push_x = 0.0;
+    double push_y = 0.0;
+
+    /// "Push it by (x, y)": an instant push, in mass times tiles per second.
+    void push(double x, double y) {
+        push_x += x;
+        push_y += y;
+    }
+};
+
 /// How far in front of a mover's hitbox Interact reaches, in tiles.
 inline constexpr double interact_reach = 0.5;
 
@@ -113,6 +143,43 @@ struct TriggerEvent {
 /// returns who entered and exited since the last call: exits first, then entries, each
 /// sorted by trigger then mover GUID. A disabled trigger's occupants exit.
 [[nodiscard]] std::vector<TriggerEvent> update_triggers(world::World& world);
+
+/// Connects the world to a physics simulation, one fixed step at a time.
+class PhysicsLink {
+public:
+    /// Gravity in tiles per second squared; (0, 0) for top-down games.
+    PhysicsLink(double gravity_x, double gravity_y);
+
+    /// Rebuilds the simulation from the world at the next step: after loading a save.
+    void invalidate() noexcept { built_ = false; }
+
+    /// One step: builds walls from solid tilemaps (once), adds and removes bodies as
+    /// Physics Bodies appear and go, moves movers that have a dynamic body by their input,
+    /// applies pushes, steps, writes dynamic bodies' positions back, and returns the pairs
+    /// of entities that started touching (a wall is its tilemap's entity).
+    std::vector<std::pair<world::Entity, world::Entity>>
+    step(world::World& world, const input::InputState& input, double seconds, std::uint32_t ppu);
+
+    [[nodiscard]] physics::PhysicsWorld* simulation() noexcept { return simulation_.get(); }
+
+private:
+    struct Linked {
+        physics::BodyId body;
+        double centre_offset = 0.0; ///< From the position up to the shape's centre.
+        physics::BodyType type = physics::BodyType::Dynamic;
+    };
+
+    void build(world::World& world, std::uint32_t ppu);
+    std::uint64_t user_for(const Guid& guid);
+
+    std::unique_ptr<physics::PhysicsWorld> simulation_;
+    bool built_ = false;
+    std::unordered_map<Guid, Linked, GuidHash> linked_;
+    std::vector<physics::BodyId> walls_;
+    std::unordered_map<std::uint64_t, Guid> users_;
+    std::unordered_map<Guid, std::uint64_t, GuidHash> user_ids_;
+    std::uint64_t next_user_ = 1;
+};
 
 /// The Interactable that `mover` would reach with Interact: the nearest enabled one (not
 /// the mover itself) whose box overlaps the mover's hitbox moved interact_reach tiles the

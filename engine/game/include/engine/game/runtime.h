@@ -58,6 +58,10 @@ struct ProjectSettings {
     double camera_pitch = 35.0;
     double camera_distance = 12.0;
     double camera_fov = 30.0;
+    /// Gravity for Physics Bodies, in tiles per second squared, down the map being +y:
+    /// (0, 0) for top-down games, (0, 30) or so for side views. -1000 to 1000 each.
+    double gravity_x = 0.0;
+    double gravity_y = 0.0;
 };
 
 /// Reads `root`/project.sparxel.json. Returns nothing, with issues, if it is missing or

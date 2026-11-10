@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -134,6 +135,10 @@ struct Project {
         flame->frame_count = 3;
         flame->frames_per_second = 10.0;
         flame->loop = false;
+        // A crate far to the east, with a Physics Body (no gravity unless a test sets it).
+        const world::Entity crate = w.create("crate");
+        w.add<scene2d::Transform2D>(crate)->x = 50.0;
+        w.add<game::PhysicsBody>(crate)->damping = 5.0;
         // An elder to talk to, below the start, and a doorway to the left.
         const world::Entity elder = w.create("elder");
         w.add<scene2d::Transform2D>(elder)->y = 3.0;
@@ -182,6 +187,8 @@ struct Project {
             {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{5}, "torch", "finished", {}, {ir::log(6, text("torch done"))}, {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{40}, "crate", "touched", {}, {ir::log(41, ir::event_value("who"))}, {}});
         rules.rules.push_back(
             logic::Rule{logic::BlockId{7},
                         "elder",
@@ -253,6 +260,13 @@ game::RuntimeOptions no_graphics(const input::Recording* replay) {
 
 input::Binding key(input::Key k) {
     return input::Binding::key(k);
+}
+
+/// Somewhere for issues a test does not look at.
+std::vector<serialize::Issue>& issues_storage() {
+    static std::vector<serialize::Issue> ignored;
+    ignored.clear();
+    return ignored;
 }
 
 const scene2d::Transform2D& transform_of(game::Runtime& runtime, std::string_view name) {
@@ -936,4 +950,70 @@ TEST_CASE("The sample village in the Diorama style: no tile bleeds into its neig
     }
     CHECK(grass_pixels > 10000);
     CHECK(stray == 0);
+}
+
+TEST_CASE("Physics: crates fall onto solid floors, are pushed, and say what they touch") {
+    const Project project;
+    SUBCASE("Falling, with gravity") {
+        std::vector<serialize::Issue> issues;
+        game::ProjectSettings settings =
+            game::read_project(project.folder.path, issues).value_or(game::ProjectSettings{});
+        settings.gravity_y = 20.0;
+        write_json(project.folder.path / game::project_file, game::project_to_json(settings));
+        const auto runtime = project.open(no_graphics(nullptr));
+        CHECK(runtime->settings().gravity_y == 20.0);
+        // A solid floor whose top is at y = 3, under the crate.
+        world::World& w = runtime->world();
+        const world::Entity floor = w.create("floor");
+        w.add<scene2d::Transform2D>(floor)->x = 49.0;
+        w.get<scene2d::Transform2D>(floor)->y = 3.0;
+        scene2d::Tilemap* map = w.add<scene2d::Tilemap>(floor);
+        map->tiles = "0,0,0";
+        map->solid = true;
+        for (int i = 0; i < 120; ++i) {
+            runtime->step();
+        }
+        CHECK(transform_of(*runtime, "crate").y == doctest::Approx(3.0).epsilon(0.01));
+        CHECK(transform_of(*runtime, "crate").x == doctest::Approx(50.0));
+        CHECK(runtime->log().back() == "floor"); // the crate's Rule: who it touched
+    }
+    SUBCASE("Pushing, top-down, until a wall") {
+        input::Recording replay;
+        replay.record(0, key(input::Key::Right), true);
+        const auto runtime = project.open(no_graphics(&replay));
+        world::World& w = runtime->world();
+        // The hero just west of the crate, with a body of its own; a wall from x = 53.
+        const world::Entity hero = w.find_named("hero").at(0);
+        w.get<scene2d::Transform2D>(hero)->x = 48.6;
+        game::PhysicsBody* body = w.add<game::PhysicsBody>(hero);
+        body->width = 0.75;
+        body->height = 0.5;
+        const world::Entity wall = w.create("wall");
+        w.add<scene2d::Transform2D>(wall)->x = 53.0;
+        w.get<scene2d::Transform2D>(wall)->y = -2.0;
+        scene2d::Tilemap* map = w.add<scene2d::Tilemap>(wall);
+        map->tiles = "0\n0\n0";
+        map->solid = true;
+        for (int i = 0; i < 120; ++i) {
+            runtime->step();
+        }
+        // The crate (1 wide) was pushed east until it met the wall; the hero stopped behind.
+        CHECK(transform_of(*runtime, "crate").x == doctest::Approx(52.5).epsilon(0.002));
+        CHECK(transform_of(*runtime, "hero").x == doctest::Approx(52.0 - 0.375).epsilon(0.002));
+        CHECK(w.get<game::TopDownMover>(hero)->facing == game::Facing::Right);
+        const std::vector<std::string>& log = runtime->log();
+        CHECK(std::find(log.begin(), log.end(), "hero") != log.end()); // the crate felt the hero
+        CHECK(std::find(log.begin(), log.end(), "wall") != log.end()); // and then the wall
+
+        // A save keeps where things are; after loading, physics carries on from there.
+        const serialize::Json saved = runtime->save();
+        w.get<game::PhysicsBody>(w.find_named("crate").at(0))->push(-5.0, 0.0);
+        runtime->step();
+        // Pushed back west a little (damping slows it; the hero still leans on it).
+        CHECK(transform_of(*runtime, "crate").x < 52.48);
+        REQUIRE(runtime->load(saved, issues_storage()));
+        CHECK(transform_of(*runtime, "crate").x == doctest::Approx(52.5).epsilon(0.002));
+        runtime->step();
+        CHECK(transform_of(*runtime, "crate").x == doctest::Approx(52.5).epsilon(0.002));
+    }
 }
