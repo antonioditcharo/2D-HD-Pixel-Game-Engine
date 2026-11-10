@@ -1,0 +1,531 @@
+#include "engine/render/render.h"
+
+#include <SDL3/SDL.h>
+
+#include <cstring>
+#include <limits>
+
+#include "sprite_frag_dxil.h"
+#include "sprite_frag_spirv.h"
+#include "sprite_vert_dxil.h"
+#include "sprite_vert_spirv.h"
+
+namespace engine::render {
+
+// ---------------------------------------------------------------------------------------
+// Native state
+// ---------------------------------------------------------------------------------------
+
+struct Device::Native {
+    SDL_GPUDevice* device{nullptr};
+};
+
+struct Texture::Native {
+    SDL_GPUDevice* device{nullptr};
+    SDL_GPUTexture* texture{nullptr};
+};
+
+struct RenderTarget::Native {
+    Device* owner{nullptr};
+    SDL_GPUTexture* texture{nullptr};
+};
+
+namespace {
+
+/// The pixel format of every texture and target: 8-bit RGBA, as pixel art is authored.
+constexpr SDL_GPUTextureFormat pixel_format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+[[nodiscard]] std::string sdl_error(const char* what) {
+    return std::string(what) + ": " + SDL_GetError();
+}
+
+/// The byte size of an RGBA8 image, or 0 if it does not fit a 32-bit GPU transfer.
+[[nodiscard]] std::uint32_t image_bytes(std::uint32_t width, std::uint32_t height) {
+    const std::uint64_t bytes = std::uint64_t{width} * height * 4;
+    return bytes > std::numeric_limits<std::uint32_t>::max() ? 0
+                                                             : static_cast<std::uint32_t>(bytes);
+}
+
+// SDL reports an "invalid parameter" error when asked to release null, which would hide
+// the real error; these release only what exists.
+void release(SDL_GPUDevice* device, SDL_GPUTransferBuffer* buffer) {
+    if (buffer != nullptr) {
+        SDL_ReleaseGPUTransferBuffer(device, buffer);
+    }
+}
+void release(SDL_GPUDevice* device, SDL_GPUBuffer* buffer) {
+    if (buffer != nullptr) {
+        SDL_ReleaseGPUBuffer(device, buffer);
+    }
+}
+void release(SDL_GPUDevice* device, SDL_GPUShader* shader) {
+    if (shader != nullptr) {
+        SDL_ReleaseGPUShader(device, shader);
+    }
+}
+
+/// One corner of a sprite, as the vertex shader reads it.
+struct Vertex {
+    float x;
+    float y;
+    float u;
+    float v;
+    float r;
+    float g;
+    float b;
+    float a;
+};
+static_assert(sizeof(Vertex) == 32);
+
+} // namespace
+
+// ---------------------------------------------------------------------------------------
+// Texture and RenderTarget
+// ---------------------------------------------------------------------------------------
+
+Texture::Texture(std::unique_ptr<Native> native, std::uint32_t width, std::uint32_t height)
+    : native_(std::move(native)), width_(width), height_(height) {}
+
+Texture::~Texture() {
+    SDL_ReleaseGPUTexture(native_->device, native_->texture);
+}
+
+RenderTarget::RenderTarget(std::unique_ptr<Native> native, std::uint32_t width,
+                           std::uint32_t height)
+    : native_(std::move(native)), width_(width), height_(height) {}
+
+RenderTarget::~RenderTarget() {
+    SDL_ReleaseGPUTexture(native_->owner->native().device, native_->texture);
+}
+
+std::vector<std::uint8_t> RenderTarget::read_pixels() {
+    Device& owner = *native_->owner;
+    SDL_GPUDevice* device = owner.native().device;
+    const std::uint32_t bytes = image_bytes(width_, height_);
+
+    SDL_GPUTransferBufferCreateInfo buffer_info{};
+    buffer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    buffer_info.size = bytes;
+    SDL_GPUTransferBuffer* buffer = SDL_CreateGPUTransferBuffer(device, &buffer_info);
+    if (buffer == nullptr) {
+        owner.last_error_ = sdl_error("Creating a download buffer failed");
+        return {};
+    }
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(device);
+    if (commands == nullptr) {
+        owner.last_error_ = sdl_error("Acquiring a command buffer failed");
+        SDL_ReleaseGPUTransferBuffer(device, buffer);
+        return {};
+    }
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+    SDL_GPUTextureRegion region{};
+    region.texture = native_->texture;
+    region.w = width_;
+    region.h = height_;
+    region.d = 1;
+    SDL_GPUTextureTransferInfo destination{};
+    destination.transfer_buffer = buffer;
+    SDL_DownloadFromGPUTexture(copy, &region, &destination);
+    SDL_EndGPUCopyPass(copy);
+
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+    std::vector<std::uint8_t> pixels;
+    if (fence == nullptr || !SDL_WaitForGPUFences(device, true, &fence, 1)) {
+        owner.last_error_ = sdl_error("Waiting for the GPU failed");
+    } else if (const auto* mapped = static_cast<const std::uint8_t*>(
+                   SDL_MapGPUTransferBuffer(device, buffer, false))) {
+        pixels.assign(mapped, mapped + bytes);
+        SDL_UnmapGPUTransferBuffer(device, buffer);
+    } else {
+        owner.last_error_ = sdl_error("Reading the pixels failed");
+    }
+    if (fence != nullptr) {
+        SDL_ReleaseGPUFence(device, fence);
+    }
+    SDL_ReleaseGPUTransferBuffer(device, buffer);
+    return pixels;
+}
+
+// ---------------------------------------------------------------------------------------
+// Device
+// ---------------------------------------------------------------------------------------
+
+Device::Device(std::unique_ptr<Native> native) : native_(std::move(native)) {}
+
+Device::~Device() {
+    SDL_DestroyGPUDevice(native_->device);
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+}
+
+std::unique_ptr<Device> Device::create(const DeviceOptions& options, std::string& error) {
+    // The GPU backends load their drivers through the video subsystem. Without a window,
+    // the "offscreen" video driver provides that without a display. SDL counts
+    // initialisations, so each device initialises and quits the subsystem once.
+    if (options.headless && SDL_WasInit(SDL_INIT_VIDEO) == 0) {
+        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
+    }
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
+        error = sdl_error("Starting SDL video failed");
+        return nullptr;
+    }
+    SDL_GPUDevice* device = SDL_CreateGPUDevice(
+        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL, options.debug, nullptr);
+    if (device == nullptr) {
+        error = sdl_error("No supported GPU was found");
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        return nullptr;
+    }
+    auto native = std::make_unique<Native>();
+    native->device = device;
+    return std::unique_ptr<Device>(new Device(std::move(native)));
+}
+
+std::string Device::driver_name() const {
+    const char* name = SDL_GetGPUDeviceDriver(native_->device);
+    return name == nullptr ? std::string() : std::string(name);
+}
+
+std::unique_ptr<Texture> Device::create_texture(std::uint32_t width, std::uint32_t height,
+                                                std::span<const std::uint8_t> rgba) {
+    const std::uint32_t bytes = image_bytes(width, height);
+    if (width == 0 || height == 0 || bytes == 0 || rgba.size() != bytes) {
+        last_error_ =
+            "A texture needs a size above zero and exactly width x height x 4 bytes of pixels.";
+        return nullptr;
+    }
+    SDL_GPUTextureCreateInfo info{};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = pixel_format;
+    info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    info.width = width;
+    info.height = height;
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    SDL_GPUTexture* texture = SDL_CreateGPUTexture(native_->device, &info);
+    if (texture == nullptr) {
+        last_error_ = sdl_error("Creating a texture failed");
+        return nullptr;
+    }
+
+    SDL_GPUTransferBufferCreateInfo buffer_info{};
+    buffer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    buffer_info.size = bytes;
+    SDL_GPUTransferBuffer* buffer = SDL_CreateGPUTransferBuffer(native_->device, &buffer_info);
+    void* mapped =
+        buffer == nullptr ? nullptr : SDL_MapGPUTransferBuffer(native_->device, buffer, false);
+    SDL_GPUCommandBuffer* commands =
+        mapped == nullptr ? nullptr : SDL_AcquireGPUCommandBuffer(native_->device);
+    if (commands == nullptr) {
+        last_error_ = sdl_error("Uploading a texture failed");
+        if (mapped != nullptr) {
+            SDL_UnmapGPUTransferBuffer(native_->device, buffer);
+        }
+        release(native_->device, buffer);
+        SDL_ReleaseGPUTexture(native_->device, texture);
+        return nullptr;
+    }
+    std::memcpy(mapped, rgba.data(), bytes);
+    SDL_UnmapGPUTransferBuffer(native_->device, buffer);
+
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+    SDL_GPUTextureTransferInfo source{};
+    source.transfer_buffer = buffer;
+    SDL_GPUTextureRegion region{};
+    region.texture = texture;
+    region.w = width;
+    region.h = height;
+    region.d = 1;
+    SDL_UploadToGPUTexture(copy, &source, &region, false);
+    SDL_EndGPUCopyPass(copy);
+    const bool submitted = SDL_SubmitGPUCommandBuffer(commands);
+    SDL_ReleaseGPUTransferBuffer(native_->device, buffer); // Freed once the GPU is done.
+    if (!submitted) {
+        last_error_ = sdl_error("Uploading a texture failed");
+        SDL_ReleaseGPUTexture(native_->device, texture);
+        return nullptr;
+    }
+
+    auto native = std::make_unique<Texture::Native>();
+    native->device = native_->device;
+    native->texture = texture;
+    return std::unique_ptr<Texture>(new Texture(std::move(native), width, height));
+}
+
+std::unique_ptr<RenderTarget> Device::create_render_target(std::uint32_t width,
+                                                           std::uint32_t height) {
+    if (width == 0 || height == 0 || image_bytes(width, height) == 0) {
+        last_error_ = "A render target needs a size above zero.";
+        return nullptr;
+    }
+    SDL_GPUTextureCreateInfo info{};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = pixel_format;
+    info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    info.width = width;
+    info.height = height;
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    SDL_GPUTexture* texture = SDL_CreateGPUTexture(native_->device, &info);
+    if (texture == nullptr) {
+        last_error_ = sdl_error("Creating a render target failed");
+        return nullptr;
+    }
+    auto native = std::make_unique<RenderTarget::Native>();
+    native->owner = this;
+    native->texture = texture;
+    return std::unique_ptr<RenderTarget>(new RenderTarget(std::move(native), width, height));
+}
+
+// ---------------------------------------------------------------------------------------
+// SpriteRenderer
+// ---------------------------------------------------------------------------------------
+
+struct SpriteRenderer::Native {
+    SDL_GPUDevice* device{nullptr};
+    SDL_GPUGraphicsPipeline* pipeline{nullptr};
+    SDL_GPUSampler* sampler{nullptr};
+    SDL_GPUBuffer* vertex_buffer{nullptr};
+    std::uint32_t vertex_capacity = 0; ///< In vertices.
+
+    // The frame being recorded.
+    RenderTarget* target{nullptr};
+    Color clear;
+    std::vector<Vertex> vertices;
+    std::vector<const Texture*> textures; ///< One per sprite.
+};
+
+SpriteRenderer::SpriteRenderer(Device& device, std::unique_ptr<Native> native)
+    : device_(device), native_(std::move(native)) {}
+
+SpriteRenderer::~SpriteRenderer() {
+    release(native_->device, native_->vertex_buffer);
+    SDL_ReleaseGPUSampler(native_->device, native_->sampler);
+    SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->pipeline);
+}
+
+std::unique_ptr<SpriteRenderer> SpriteRenderer::create(Device& device) {
+    SDL_GPUDevice* gpu = device.native().device;
+    const SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(gpu);
+    const bool spirv = (formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0;
+    if (!spirv && (formats & SDL_GPU_SHADERFORMAT_DXIL) == 0) {
+        device.last_error_ = "The GPU accepts neither SPIR-V nor DXIL shaders.";
+        return nullptr;
+    }
+
+    SDL_GPUShaderCreateInfo vertex_info{};
+    vertex_info.code = spirv ? sprite_vert_spirv.data() : sprite_vert_dxil.data();
+    vertex_info.code_size = spirv ? sprite_vert_spirv.size() : sprite_vert_dxil.size();
+    vertex_info.entrypoint = "main";
+    vertex_info.format = spirv ? SDL_GPU_SHADERFORMAT_SPIRV : SDL_GPU_SHADERFORMAT_DXIL;
+    vertex_info.stage = SDL_GPU_SHADERSTAGE_VERTEX;
+    vertex_info.num_uniform_buffers = 1;
+    SDL_GPUShader* vertex_shader = SDL_CreateGPUShader(gpu, &vertex_info);
+
+    SDL_GPUShaderCreateInfo fragment_info{};
+    fragment_info.code = spirv ? sprite_frag_spirv.data() : sprite_frag_dxil.data();
+    fragment_info.code_size = spirv ? sprite_frag_spirv.size() : sprite_frag_dxil.size();
+    fragment_info.entrypoint = "main";
+    fragment_info.format = vertex_info.format;
+    fragment_info.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
+    fragment_info.num_samplers = 1;
+    SDL_GPUShader* fragment_shader = SDL_CreateGPUShader(gpu, &fragment_info);
+
+    SDL_GPUGraphicsPipeline* pipeline = nullptr;
+    if (vertex_shader == nullptr || fragment_shader == nullptr) {
+        device.last_error_ = sdl_error("Creating the sprite shaders failed");
+    } else {
+        SDL_GPUVertexBufferDescription buffer{};
+        buffer.slot = 0;
+        buffer.pitch = sizeof(Vertex);
+        buffer.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+        SDL_GPUVertexAttribute attributes[3]{};
+        attributes[0] = {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, 0};
+        attributes[1] = {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, 8};
+        attributes[2] = {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 16};
+
+        SDL_GPUColorTargetDescription color{};
+        color.format = pixel_format;
+        color.blend_state.enable_blend = true;
+        color.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        color.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        color.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+        color.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        color.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        color.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo info{};
+        info.vertex_shader = vertex_shader;
+        info.fragment_shader = fragment_shader;
+        info.vertex_input_state.vertex_buffer_descriptions = &buffer;
+        info.vertex_input_state.num_vertex_buffers = 1;
+        info.vertex_input_state.vertex_attributes = attributes;
+        info.vertex_input_state.num_vertex_attributes = 3;
+        info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        info.target_info.color_target_descriptions = &color;
+        info.target_info.num_color_targets = 1;
+        pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &info);
+    }
+    if (pipeline == nullptr && vertex_shader != nullptr && fragment_shader != nullptr) {
+        device.last_error_ = sdl_error("Creating the sprite pipeline failed");
+    }
+    release(gpu, vertex_shader);
+    release(gpu, fragment_shader);
+    if (pipeline == nullptr) {
+        return nullptr;
+    }
+
+    SDL_GPUSamplerCreateInfo sampler_info{};
+    sampler_info.min_filter = SDL_GPU_FILTER_NEAREST;
+    sampler_info.mag_filter = SDL_GPU_FILTER_NEAREST;
+    sampler_info.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+    sampler_info.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    sampler_info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    sampler_info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    SDL_GPUSampler* sampler = SDL_CreateGPUSampler(gpu, &sampler_info);
+    if (sampler == nullptr) {
+        device.last_error_ = sdl_error("Creating the sprite sampler failed");
+        SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
+        return nullptr;
+    }
+
+    auto native = std::make_unique<Native>();
+    native->device = gpu;
+    native->pipeline = pipeline;
+    native->sampler = sampler;
+    return std::unique_ptr<SpriteRenderer>(new SpriteRenderer(device, std::move(native)));
+}
+
+void SpriteRenderer::begin(RenderTarget& target, Color clear) {
+    native_->target = &target;
+    native_->clear = clear;
+    native_->vertices.clear();
+    native_->textures.clear();
+}
+
+void SpriteRenderer::draw(const Texture& texture, Rect source, Rect destination, Color tint) {
+    if (native_->target == nullptr) {
+        return;
+    }
+    const auto tex_w = static_cast<float>(texture.width());
+    const auto tex_h = static_cast<float>(texture.height());
+    const float u0 = source.x / tex_w;
+    const float v0 = source.y / tex_h;
+    const float u1 = (source.x + source.w) / tex_w;
+    const float v1 = (source.y + source.h) / tex_h;
+    const float x0 = destination.x;
+    const float y0 = destination.y;
+    const float x1 = destination.x + destination.w;
+    const float y1 = destination.y + destination.h;
+    const float r = static_cast<float>(tint.r) / 255.0F;
+    const float g = static_cast<float>(tint.g) / 255.0F;
+    const float b = static_cast<float>(tint.b) / 255.0F;
+    const float a = static_cast<float>(tint.a) / 255.0F;
+    const Vertex corners[6] = {
+        {x0, y0, u0, v0, r, g, b, a}, {x1, y0, u1, v0, r, g, b, a}, {x0, y1, u0, v1, r, g, b, a},
+        {x1, y0, u1, v0, r, g, b, a}, {x1, y1, u1, v1, r, g, b, a}, {x0, y1, u0, v1, r, g, b, a},
+    };
+    native_->vertices.insert(native_->vertices.end(), std::begin(corners), std::end(corners));
+    native_->textures.push_back(&texture);
+}
+
+bool SpriteRenderer::end() {
+    Native& n = *native_;
+    RenderTarget* target = n.target;
+    n.target = nullptr;
+    if (target == nullptr) {
+        return false;
+    }
+    stats_ = Stats{};
+    const auto vertex_count = static_cast<std::uint32_t>(n.vertices.size());
+    const std::uint32_t bytes = vertex_count * static_cast<std::uint32_t>(sizeof(Vertex));
+
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(n.device);
+    if (commands == nullptr) {
+        device_.last_error_ = sdl_error("Acquiring a command buffer failed");
+        return false;
+    }
+
+    SDL_GPUTransferBuffer* upload = nullptr;
+    if (vertex_count > 0) {
+        if (vertex_count > n.vertex_capacity) {
+            release(n.device, n.vertex_buffer);
+            SDL_GPUBufferCreateInfo buffer_info{};
+            buffer_info.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+            buffer_info.size = bytes;
+            n.vertex_buffer = SDL_CreateGPUBuffer(n.device, &buffer_info);
+            n.vertex_capacity = n.vertex_buffer == nullptr ? 0 : vertex_count;
+        }
+        SDL_GPUTransferBufferCreateInfo upload_info{};
+        upload_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        upload_info.size = bytes;
+        upload = n.vertex_buffer == nullptr ? nullptr
+                                            : SDL_CreateGPUTransferBuffer(n.device, &upload_info);
+        void* mapped =
+            upload == nullptr ? nullptr : SDL_MapGPUTransferBuffer(n.device, upload, false);
+        if (mapped == nullptr) {
+            device_.last_error_ = sdl_error("Uploading sprites failed");
+            release(n.device, upload);
+            SDL_CancelGPUCommandBuffer(commands);
+            return false;
+        }
+        std::memcpy(mapped, n.vertices.data(), bytes);
+        SDL_UnmapGPUTransferBuffer(n.device, upload);
+        SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+        SDL_GPUTransferBufferLocation from{};
+        from.transfer_buffer = upload;
+        SDL_GPUBufferRegion to{};
+        to.buffer = n.vertex_buffer;
+        to.size = bytes;
+        // Cycling gives the upload fresh memory if the previous frame still reads the buffer.
+        SDL_UploadToGPUBuffer(copy, &from, &to, true);
+        SDL_EndGPUCopyPass(copy);
+    }
+
+    SDL_GPUColorTargetInfo color{};
+    color.texture = target->native().texture;
+    color.clear_color =
+        SDL_FColor{static_cast<float>(n.clear.r) / 255.0F, static_cast<float>(n.clear.g) / 255.0F,
+                   static_cast<float>(n.clear.b) / 255.0F, static_cast<float>(n.clear.a) / 255.0F};
+    color.load_op = SDL_GPU_LOADOP_CLEAR;
+    color.store_op = SDL_GPU_STOREOP_STORE;
+    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &color, 1, nullptr);
+    if (vertex_count > 0) {
+        SDL_BindGPUGraphicsPipeline(pass, n.pipeline);
+        SDL_GPUBufferBinding binding{};
+        binding.buffer = n.vertex_buffer;
+        SDL_BindGPUVertexBuffers(pass, 0, &binding, 1);
+        // Pixels to clip space: x from [0, width] to [-1, 1], y from [0, height] to [1, -1].
+        const float transform[4] = {2.0F / static_cast<float>(target->width()),
+                                    -2.0F / static_cast<float>(target->height()), -1.0F, 1.0F};
+        SDL_PushGPUVertexUniformData(commands, 0, transform, sizeof(transform));
+        // One draw per run of sprites sharing a texture, in the order they were queued.
+        std::size_t first = 0;
+        while (first < n.textures.size()) {
+            std::size_t last = first + 1;
+            while (last < n.textures.size() && n.textures[last] == n.textures[first]) {
+                ++last;
+            }
+            SDL_GPUTextureSamplerBinding sampler{};
+            sampler.texture = n.textures[first]->native().texture;
+            sampler.sampler = n.sampler;
+            SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
+            SDL_DrawGPUPrimitives(pass, static_cast<std::uint32_t>((last - first) * 6), 1,
+                                  static_cast<std::uint32_t>(first * 6), 0);
+            ++stats_.draw_calls;
+            first = last;
+        }
+    }
+    SDL_EndGPURenderPass(pass);
+    const bool submitted = SDL_SubmitGPUCommandBuffer(commands);
+    release(n.device, upload);
+    if (!submitted) {
+        device_.last_error_ = sdl_error("Submitting the frame failed");
+        return false;
+    }
+    stats_.sprites = n.textures.size();
+    return true;
+}
+
+} // namespace engine::render

@@ -60,6 +60,13 @@ jobs:
           cmake --version
           ninja --version
 
+      - name: Install a software GPU
+        # Mesa's lavapipe is a Vulkan driver that runs on the CPU, so the renderer's
+        # golden-pixel tests run here without a graphics card.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+
       - name: Restore vcpkg binary cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -83,6 +90,9 @@ jobs:
       - name: Build
         run: cmake --build --preset linux-dev
       - name: Test
+        # Fail, rather than skip, the renderer tests if no GPU is found.
+        env:
+          SPARXEL_REQUIRE_GPU: "1"
         run: ctest --preset linux-dev
       - name: Static analysis
         run: git ls-files '*.cpp' | xargs clang-tidy-18 -p build/linux-dev --quiet

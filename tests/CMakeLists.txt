@@ -66,3 +66,16 @@ target_compile_definitions(engine_world_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEA
 engine_configure_test_target(engine_world_tests)
 
 add_test(NAME world COMMAND engine_world_tests)
+
+add_executable(engine_render_tests
+    test_main.cpp
+    render/render_test.cpp
+)
+target_link_libraries(engine_render_tests PRIVATE
+    engine::render
+    doctest::doctest
+)
+target_compile_definitions(engine_render_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+engine_configure_test_target(engine_render_tests)
+
+add_test(NAME render COMMAND engine_render_tests)

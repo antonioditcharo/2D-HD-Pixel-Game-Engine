@@ -132,6 +132,7 @@ Details and the questions that remain open are in
 | [Reflection registry](dev/reflection.md) | How engine features describe their data for the editor and no-code blocks |
 | [Logic runtime](dev/logic-runtime.md) | The Logic IR, its compiler, and the sandboxed Luau VM that runs no-code logic |
 | [World](dev/world.md) | Entities, GUIDs, the hierarchy and components |
+| [Rendering](dev/rendering.md) | The GPU device, sprites, offline shaders, and testing without a graphics card |
 | [Serialization](dev/serialization.md) | How objects, logic assets and scenes are saved as JSON: determinism, versions, error reporting |
 
 ### Sources

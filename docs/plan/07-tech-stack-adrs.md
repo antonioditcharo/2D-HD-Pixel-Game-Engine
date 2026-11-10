@@ -103,6 +103,10 @@
   - frame time against the `04` §11 budgets.
 
   Record the outcome in this ADR.
+- **Status (November 2026):** started. A device, offscreen targets and a batched sprite
+  renderer run on the SDL GPU API and are tested headless on Mesa's lavapipe in CI
+  (`docs/dev/rendering.md`). No decision on Backend 2 yet: the reference scene's features
+  are still to be built.
 
 ## ADR-005: Editor UI framework
 
@@ -270,6 +274,9 @@
     [S64]. It accepts HLSL or SPIR-V and outputs for every backend the API implements.
     Compiling HLSL at runtime would need the DXC libraries [S64]; we compile offline.
   - Pipeline caches are pre-warmed during export.
+- **Status (November 2026):** in use. CMake runs SDL_shadercross (a vcpkg host tool) at
+  build time to compile each HLSL shader to SPIR-V and DXIL, and embeds both in the engine
+  (`docs/dev/rendering.md` §4).
 
 ## ADR-016: Testing and continuous integration
 
@@ -318,7 +325,7 @@
 
 | Component | Licence (as researched) | Ships in exported games? | Main obligation |
 |---|---|---|---|
-| SDL3 | zlib [S66] | Yes | Do not misrepresent origin; keep the notice in the source |
+| SDL3 | zlib [S66]; bundles HIDAPI and yuv2rgb (BSD-3-Clause) | Yes | Do not misrepresent origin; reproduce the BSD notices (`THIRD_PARTY_NOTICES.md`) |
 | Luau | MIT [S71] | Yes | Include the licence notice |
 | nlohmann/json | MIT [S105] | Yes (project and save files) | Include the licence notice |
 | flecs | MIT [S70]; bundles EmbeddableWebServer (BSD-2-Clause) in its HTTP addon | Yes | Include both notices (`THIRD_PARTY_NOTICES.md`) |

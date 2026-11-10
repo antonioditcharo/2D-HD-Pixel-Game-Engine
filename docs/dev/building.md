@@ -2,7 +2,10 @@
 
 The repository builds the engine modules under `engine/` (see
 [repo-layout.md](repo-layout.md)) and one unit-test executable per module. Third-party
-libraries come from vcpkg, as listed in `vcpkg.json`: today flecs, Luau and nlohmann/json and, for tests, doctest.
+libraries come from vcpkg, as listed in `vcpkg.json`: today flecs, Luau, nlohmann/json and SDL3, plus SDL_shadercross as a build-time shader
+compiler and, for tests, doctest. The renderer's tests need a GPU; on Linux without one,
+install Mesa's software Vulkan driver (`sudo apt-get install mesa-vulkan-drivers`). See
+[rendering.md](rendering.md) §5.
 
 ## What you need
 

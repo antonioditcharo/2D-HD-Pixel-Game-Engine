@@ -5,6 +5,31 @@
     "doctest",
     "flecs",
     "luau",
-    "nlohmann-json"
+    "nlohmann-json",
+    {
+      "name": "sdl3",
+      "default-features": false,
+      "features": [
+        "vulkan"
+      ]
+    },
+    {
+      "name": "sdl3-shadercross",
+      "host": true
+    }
+  ],
+  "overrides": [
+    {
+      "name": "directx-dxc",
+      "version": "2026-05-27"
+    },
+    {
+      "name": "sdl3",
+      "version": "3.4.18"
+    },
+    {
+      "name": "spirv-cross",
+      "version": "1.4.363.0"
+    }
   ]
 }
