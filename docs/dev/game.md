@@ -1,22 +1,141 @@
-# Game: Logic Meets the World
+# Game: the Runtime
 
-> **Status: v0.1.** No-code logic reaches the entities of a world by name or GUID, through
-> all their components, safely across storage moves. Every behaviour below is covered by
-> tests.
+> **Status: v0.1, the first playable loop.** A project folder on disk (settings, PNG
+> images, a scene and Rules) opens and runs: a hero walks with the keyboard or a gamepad,
+> Rules react to the game starting and to buttons, and the game draws pixel-perfect into a
+> window that follows the hero. No-code logic reaches the world's entities by name or GUID,
+> through all their components. Every behaviour below is covered by tests.
 >
-> Code: [`engine/game/include/engine/game/logic_world.h`](../../engine/game/include/engine/game/logic_world.h)
-> and [`src/logic_world.cpp`](../../engine/game/src/logic_world.cpp). Tests:
-> [`tests/game/logic_world_test.cpp`](../../tests/game/logic_world_test.cpp).
+> Code: [`engine/game/include/engine/game/`](../../engine/game/include/engine/game/):
+> [`runtime.h`](../../engine/game/include/engine/game/runtime.h),
+> [`logic_world.h`](../../engine/game/include/engine/game/logic_world.h) and
+> [`clock.h`](../../engine/game/include/engine/game/clock.h). Tests:
+> [`tests/game/`](../../tests/game/).
 
 ## 1. What it is for
 
+`engine/game` connects the engine's parts into a game. The runtime opens a project
+folder, loads its settings, assets, start scene and logic, then runs a loop of fixed
+steps. An exported game runs exactly this, and the editor's Play button will run it too
+(`plan/03` §8).
+
+```mermaid
+flowchart LR
+    P["project.sparxel.json"] --> RT["Runtime::open()"]
+    A["assets/<br/>PNG, .dscene, .drules"] --> RT
+    RT --> W["World<br/>entities, components"]
+    RT --> VM["Logic VM<br/>compiled Rules"]
+    RT --> G["GPU<br/>window or offscreen"]
+    subgraph Step["Each fixed step (1/60 s)"]
+        direction LR
+        I["1. Input"] --> M["2. Movement"] --> E["3. Input events<br/>to Rules"] --> S["4. Waiting<br/>Sequences"]
+    end
+    W --> Step
+    VM --> Step
+```
+
+## 2. A project on disk
+
+```
+MyGame/
+├── project.sparxel.json
+└── assets/
+    ├── art/hero.png (+ .meta)
+    ├── maps/start.dscene      # a scene file (serialization.md §5)
+    └── logic/main.drules      # a logic asset (serialization.md §4)
+```
+
+`project.sparxel.json` (`plan/03` §4) holds the settings:
+
+| Entry | Meaning | Default and range |
+|---|---|---|
+| `format`, `version` | `"sparxel.project"`, version 1 | Required. A newer version asks the user to update Sparxel |
+| `name` | The game's name | Required |
+| `start_scene` | The scene to start in, a path inside `assets/` | Required |
+| `ppu` | Pixels per world unit (one tile) | 16; 8 to 64 (`plan/04` §2) |
+| `width`, `height` | The internal resolution, upscaled pixel-perfect | 320 × 180; 16 to 7680 × 4320 |
+| `background` | The clear colour, `[red, green, blue]` | `[20, 24, 40]` |
+| `render_style` | `"classic_2d"`, the only style so far | `"classic_2d"` |
+
+- Problems are reported in plain language with where they are, for example
+  `project.sparxel.json/ppu`: *"This must be a whole number from 8 to 64."* A value out of
+  range refuses the project. An unknown entry is reported and ignored.
+- `project_to_json()` writes the settings back; reading them again gives the same values
+  (tested).
+
+## 3. Running a project
+
+```cpp
+std::vector<serialize::Issue> issues;
+auto game = game::Runtime::open("MyGame", {}, issues);   // null if it cannot run
+while (game && game->frame(seconds_since_last_frame)) {}
+```
+
+`Runtime::open()`:
+
+1. Reads the settings, registers the engine's types, and creates the world.
+2. Scans `assets/` (writing `.meta` files for new assets) and loads the start scene. A
+   missing or unreadable start scene stops the game.
+3. Compiles every `.drules` and `.dsequence` asset against the world's entities and loads
+   it into the VM. An asset that does not compile is **left out and reported** with the
+   block at fault, for example `assets/logic/bad.drules#block-7`; the rest of the game
+   still runs.
+4. Opens the GPU, an offscreen image at the internal resolution, and a window at the
+   largest whole-number scale that fits 1280 × 720. A missing GPU stops the game only if
+   graphics were asked for.
+5. Emits `game_start`, so Rules such as *"When the game starts: …"* run once.
+
+`RuntimeOptions`:
+
+| Option | Use |
+|---|---|
+| `graphics = false` | No GPU at all: for tests, servers and tools. The simulation is identical |
+| `headless = true` | Draws into the offscreen image only, with no window: for tests and thumbnails |
+| `replay` | Plays an input recording instead of the keyboard and gamepads ([input.md](input.md)) |
+
+### Each frame and each step
+
+`frame(seconds)` asks the fixed-step clock (§7) how many steps are due, runs them, then
+draws and presents. It returns false when the player closes the window. Each `step()`:
+
+1. **Input.** The step's controls, from the recording or from the operating system.
+2. **Movement.** Every enabled Top-down Mover walks (§4).
+3. **Input events.** Each action pressed this step emits `input.pressed` with the action,
+   so *"When Interact is pressed"* Rules run.
+4. **Logic update.** Events that scripts emitted since the last update are delivered,
+   then Sequences whose wait is over resume.
+
+This is the start of the order in `plan/05` §5; physics, Brains and "continuously" Rules
+take their places in it as they arrive.
+
+### Drawing
+
+`draw()` renders the world with `scene2d::draw_world()` ([scene2d.md](scene2d.md)). The
+camera follows the first entity with a Top-down Mover, so the hero stays centred. The
+window shows the image pixel-perfect with black bars around it ([rendering.md](rendering.md)
+§4).
+
+## 4. Behaviours: the Top-down Mover
+
+Behaviours are components that give an entity a capability with no logic to write
+(`plan/05` §3.1). The first is **Top-down Mover** (`top_down_mover`):
+
+| Property | Meaning |
+|---|---|
+| `speed` | Tiles per second, 0 to 64 (default 4) |
+| `enabled` | Turn off to stop the player moving, for example in a cutscene |
+
+It walks with the `move_up`, `move_down`, `move_left` and `move_right` actions, so the
+arrow keys, WASD and the gamepad's d-pad all work. **Diagonals are as fast as straight
+lines** (the direction is normalised; tested).
+
+## 5. Logic meets the world
+
 A Rule such as *"When the chest is opened: unlock it, add 10 gold"* names an object, the
 chest, and members that live on different components: `unlock` on a Lock, `gold` on a
-Purse. This module lets the logic runtime ([logic-runtime.md](logic-runtime.md)) find
+Purse. `logic_world.h` lets the logic runtime ([logic-runtime.md](logic-runtime.md)) find
 that object in the world ([world.md](world.md)), and lets the compiler check the Rule
-against it. `engine/game` will grow into the runtime that connects all the engine's parts.
-
-## 2. Using it
+against it. The runtime does this for every project; on their own:
 
 ```cpp
 world::World w(registry);
@@ -28,7 +147,7 @@ vm.load(asset.name, compiled.source);
 vm.emit("chest", "opened");
 ```
 
-## 3. How names resolve
+### How names resolve
 
 | Name used in logic | Resolves to |
 |---|---|
@@ -37,9 +156,10 @@ vm.emit("chest", "opened");
 | A name shared by several entities, or no entity at all | Nothing: the compiler reports *"There is no object called 'barrel'."*, and so does the VM at run time |
 
 GUIDs never change, so the editor will write them into logic assets. Names are for
-people, and for logic written by hand while they are unique.
+people, and for logic written by hand while they are unique. The runtime also binds the
+`input` object, for conditions such as *"Interact is held"*.
 
-## 4. Objects made of several parts
+## 6. Objects made of several parts
 
 - `Vm::set_object_resolver()` lets the VM ask for an object's parts by name whenever a
   script uses one. For an entity, the parts are its components. `sx.call`, `sx.get`,
@@ -51,7 +171,7 @@ people, and for logic written by hand while they are unique.
   across them, so Rules are checked against everything the entity really has.
 - Objects bound with `Vm::bind()` still work and take precedence over the resolver.
 
-## 5. The fixed-step clock
+## 7. The fixed-step clock
 
 `FixedStepClock` (`clock.h`) turns real frame times into a whole number of simulation
 steps (1/60 s by default), plus `alpha`, how far the next step has come, for interpolated
@@ -59,15 +179,32 @@ drawing (`plan/03` §7).
 
 - Exact frame times give exact steps: 600 frames of 1/60 s are 600 steps (tested), despite
   rounding in the running sum.
-- After a long stall, at most `max_steps` run in one frame and the rest of the backlog is
-  dropped (reported in `dropped`), so the game recovers instead of spiralling.
-- `step_count()` numbers steps for input recording ([input.md](input.md)).
+- After a long stall, at most `max_steps` (8) run in one frame and the rest of the backlog
+  is dropped (reported in `dropped`), so the game recovers instead of spiralling.
+- The runtime numbers its steps itself (`Runtime::step_count()`), which is the step
+  number input recordings use.
 
-## 6. Next increments
+## 8. Tests
 
-1. **Spawning and destroying from logic,** with entities created by Rules addressable by
+| Test | Checks |
+|---|---|
+| Project settings | A missing file; a round trip; out-of-range values, a wrong style and an unknown entry, each reported at its path; another format or a newer version refused |
+| Recorded input | A temporary project on disk. Right held for 30 steps, in frames of one and two steps, walks the hero exactly 2 tiles; the game-start Rule logs once; Cancel does not trigger the Interact Rule, Interact does |
+| Diagonals | Right and down for one second move 4/√2 tiles on each axis; a disabled mover stays put |
+| Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
+| Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
+| Logic and world | Names and GUIDs resolve; Rules act through several components; logic survives storage moves |
+| Clock | Exact stepping, stalls and the step cap |
+
+## 9. Next increments
+
+1. **Tilemaps and animation** in the Classic 2D style, and collisions with the map, so
+   the hero can walk around a village rather than an empty field.
+2. **Hot reload while playing:** pass asset changes to the texture cache and reload
+   changed logic.
+3. **Spawning and destroying from logic,** with entities created by Rules addressable by
    GUID.
-2. **"Who" picking** (`plan/05` §2): *"all objects tagged Enemy"*, *"the other object"* in
+4. **"Who" picking** (`plan/05` §2): *"all objects tagged Enemy"*, *"the other object"* in
    a touch event.
-3. **The game loop:** a fixed-step update that runs input, physics, logic and drawing in
-   the order of `plan/05` §5.
+5. **A `sparxel-run` player executable** that opens a project folder, and Play in the
+   editor (`plan/03` §8).

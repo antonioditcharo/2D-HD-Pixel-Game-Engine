@@ -113,12 +113,14 @@ add_executable(engine_game_tests
     test_main.cpp
     game/clock_test.cpp
     game/logic_world_test.cpp
+    game/runtime_test.cpp
 )
 target_link_libraries(engine_game_tests PRIVATE
     engine::game
     doctest::doctest
 )
 target_compile_definitions(engine_game_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+target_include_directories(engine_game_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 engine_configure_test_target(engine_game_tests)
 
 add_test(NAME game COMMAND engine_game_tests)
