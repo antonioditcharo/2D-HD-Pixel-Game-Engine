@@ -79,3 +79,16 @@ target_compile_definitions(engine_render_tests PRIVATE DOCTEST_CONFIG_USE_STD_HE
 engine_configure_test_target(engine_render_tests)
 
 add_test(NAME render COMMAND engine_render_tests)
+
+add_executable(engine_assets_tests
+    test_main.cpp
+    assets/assets_test.cpp
+)
+target_link_libraries(engine_assets_tests PRIVATE
+    engine::assets
+    doctest::doctest
+)
+target_compile_definitions(engine_assets_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+engine_configure_test_target(engine_assets_tests)
+
+add_test(NAME assets COMMAND engine_assets_tests)
