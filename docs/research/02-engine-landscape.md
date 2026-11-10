@@ -93,8 +93,8 @@ Each tool is assessed against what our target user needs:
   - The **Pixelorama** pixel editor, which is MIT-licensed [S47].
 
 **Analysis**
-- **Strengths:** free and open source with no fees, a clean scene and prefab model, and a
-  proven base for no-code products built on top of it.
+- **Strengths:** free and open source under the MIT licence [S93], a clean scene and prefab
+  model, and a proven base for no-code products built on top of it.
 - **Gaps for our user:**
   - There is no official no-code layer.
   - There are no HD-2D presets.

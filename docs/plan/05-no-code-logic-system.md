@@ -151,6 +151,9 @@ need only layers 1 and 2.
 - **The animation state graph** is a specialised Brain whose states play animation clips.
   Transitions read movement and combat state. This removes the need for a plugin like
   PaperZD [S28].
+- **Staging:** the alpha ships Brains as ready-made templates whose options are tuned in
+  the inspector, including a standard character animation graph. The editor for building
+  and changing Brains arrives at 1.0 (`02`, E5).
 - **Live view:** in Playtest, the active state glows, and transitions flash when taken.
 
 ### 3.6 Tables (layer 6): data and formulas
@@ -288,7 +291,8 @@ That is all. No sheet and no script.
 - Add the behavior **Enemy AI**, then choose the template *Patrol → Chase → Attack →
   Return*.
 - Tune it in the inspector: sight range 6 tiles, attack range 1 tile, patrol path [Path A].
-- To customise, open the Brain and add a state **Flee** with the transition *HP below 20%*.
+- To customise (1.0, Brain editor), open the Brain and add a state **Flee** with the
+  transition *HP below 20%*.
 
 ### 9.5 Fire damage formula (Table)
 - In table **Skills**, the row **Fireball** has Power = 120, Element = Fire.

@@ -4,15 +4,22 @@
 > explicit exit criteria. Work does not move on until the gate passes, which is how scope
 > and quality stay under control (`09`, risk R-01).
 >
-> **The durations are estimates under stated assumptions, not commitments.** They must be
-> re-planned at every gate using measured velocity.
+> **Baseline: one developer.** The owner decided on 9 November 2026 to start solo and add a
+> team later (`09` §5, Q-03). Solo work is planned **by gates, not dates**.
+>
+> The month figures in this document come from a 6–10 person reference team. They are kept
+> to show the relative size of each phase. They are not a solo schedule.
 
 ---
 
-## 1. Assumptions behind the estimates
+## 1. Assumptions
 
-- **Team:** a core team of **6–10 people** (§5). For a solo developer or a duo, see §6.
-- **Scope:** the α and 1.0 feature tags in `02`.
+- **Who:** one developer now (§5). A team may join later (§6).
+- **Timeline:** no solo timeline is given yet. Nothing measured exists to base one on.
+  Phase 0 produces the first velocity data, and the plan is re-estimated at Gate 0 and at
+  every gate after it.
+- **Scope:** the α and 1.0 feature tags in `02`. The α tags describe the solo alpha
+  (§5).
 - **No hidden dependencies:** no console ports, no online services beyond Steam.
 - **Reuse:** the library strategy in ADR-000 holds; we do not rewrite physics, audio, VM or
   ECS.
@@ -23,7 +30,7 @@
 gantt
     dateFormat  YYYY-MM
     axisFormat  %Y-%m
-    title Diorama roadmap (illustrative; months from project start)
+    title Reference team scenario, 6 to 10 people (not the solo schedule)
     section Foundations
     P0 Foundations and spikes          :p0, 2027-01, 3M
     section Core
@@ -37,15 +44,19 @@ gantt
     P6 1.0 hardening                   :p6, after p5, 4M
 ```
 
-The calendar dates in the chart are placeholders that assume a January 2027 start. The
-relative durations are what matter.
+The chart shows the **reference team scenario**, not the solo plan. Its calendar dates are
+placeholders that assume a January 2027 start.
 
-- Adding up the per-phase ranges below, and subtracting the roughly two-month overlap
-  between Phases 1 and 2, gives about **26–33 months** of scheduled work. The chart shows
-  the upper end, finishing around month 33.
-- With a contingency buffer, plan for **about three years** to 1.0 for the assumed team.
+- For the reference team, adding up the per-phase ranges below and subtracting the roughly
+  two-month overlap between Phases 1 and 2 gives about **26–33 months** of scheduled work,
+  or about three years with a contingency buffer.
+- **One developer will take substantially longer.** How much longer is not estimated here,
+  because there is no measured basis for a number. What the chart does show reliably is the
+  order of the phases and their relative sizes.
 
 ## 3. Phases in detail
+
+The month ranges in the headings are for the reference team.
 
 ### Phase 0: Foundations and spikes (≈ 2–3 months)
 **Goal:** de-risk the four biggest unknowns before committing to the architecture.
@@ -72,11 +83,12 @@ relative durations are what matter.
 - Foundation: reflection, job system, memory and logging.
 - Platform (SDL3) and RHI backend.
 - **Renderer v1:** the Diorama style; sprites with all billboard modes, lighting and
-  shadows; the post stack; Looks; texel-density tooling. Classic 2D style. Debug views.
+  shadows; the post stack; Looks; texel-density tooling. Debug views.
 - **World:** flecs integration, scenes, prefabs with overrides, serialization (JSON + GUID).
-- **Physics:** the Collision facade with Jolt and Box2D; character controllers.
+- **Physics:** the Collision facade with Jolt; the 3D character controller.
 - **Audio v1:** playback, buses, spatial audio, loops and crossfades.
-- **Logic runtime v1:** Luau host, scheduler, Rules, Sequences, Brains and messages.
+- **Logic runtime v1:** Luau host, scheduler, Rules, Sequences, the Brain runner and
+  messages.
 - Input actions, save/load v1, localization tables, text (FreeType, HarfBuzz, bitmap
   fonts), game UI runtime v1.
 - **Packaging v1:** cooked pack and a standalone runtime executable.
@@ -106,7 +118,7 @@ SUS ≥ 68 at this gate (target 75 by alpha).
 ### Phase 3: Game systems and narrative (≈ 5–6 months)
 - **Logic v2:**
   - the Sequence list and timeline editors;
-  - the Brain editor with templates;
+  - Brain templates, tuned in the inspector;
   - Tables with formulas and curves;
   - the "why didn't this fire?" explainer and event log;
   - the Logic map.
@@ -120,8 +132,8 @@ SUS ≥ 68 at this gate (target 75 by alpha).
 - **UI workspace** with templates, plus automatic gamepad navigation.
 - **Audio workspace:** SFX generator, music setup and zones.
 - **Characters workspace;** NPC and enemy presets; pathfinding.
-- **Internal vertical slice:** a **30–45 minute HD-2D JRPG demo** built *only* in the
-  editor by the team's designer and artist, with zero script.
+- **Internal vertical slice:** a **30–45 minute JRPG demo** in the Diorama style, built
+  *only* in the editor, with zero script.
 
 **Gate 3:** the vertical slice is complete and playable start to finish with no script
 blocks. Usability round 2 passes ≥ 75% task completion.
@@ -146,8 +158,9 @@ blocks. Usability round 2 passes ≥ 75% task completion.
 
 ### Phase 5: Beta / Early Access (≈ 5–6 months)
 - **More genre kits:** Tactics, Action-Adventure, Platformer and Adventure.
-- **Rendering:** the Retro 3D style, baked lighting and probes, terrain, level streaming.
-- **Logic:** Custom Blocks, optional Luau scripting, input replay.
+- **Rendering:** the Classic 2D and Retro 3D styles, the 2D map mode and Box2D mover,
+  baked lighting and probes, terrain, level streaming.
+- **Logic:** the full Brain editor, Custom Blocks, optional Luau scripting, input replay.
 - **Steam forms:** achievements, stats, leaderboards and cloud saves; upload helper;
   patch builds.
 - **Team features:** Git UI, asset locking, merge tools.
@@ -160,6 +173,8 @@ games are in production.
 ### Phase 6: 1.0 hardening (≈ 3–4 months)
 - File-format freeze with migration guarantees, an LTS policy and performance polish.
 - Documentation completeness and stability.
+- **AI assistant work starts here,** after Gate 5 (`09` §5, Q-06). It is opt-in and
+  follows the rules in `06` §8. It ships when it is ready, at 1.0 or after.
 
 **Gate 6 (1.0):**
 - All 1.0 features from `02` are present.
@@ -168,7 +183,7 @@ games are in production.
 
 ### After 1.0
 - Plugin SDK (C++), editor extension API and a marketplace.
-- Mod and Workshop support, AI assistant (opt-in) and the 3D-to-pixel baker.
+- Mod and Workshop support and the 3D-to-pixel baker.
 - Shader graph and palette-locked lighting.
 - Vulkan backend hardening, Steam Deck support and a Linux runtime.
 - Cloud collaboration.
@@ -196,7 +211,36 @@ flowchart LR
 4. The RHI decision.
 5. The logic compiler.
 
-## 5. Team composition (core team scenario)
+## 5. The solo baseline (current plan)
+
+One developer builds the engine, so the alpha is cut to a **"Minimum Lovable Engine"**. The
+α tags in `02` already reflect this cut.
+
+1. **Phase 0 is unchanged.** The spikes matter even more when time is scarce.
+2. **The solo alpha contains:**
+   - the Diorama render style only. Classic 2D and Retro 3D move to Phase 5;
+   - the Common kit and the RPG kit only;
+   - Behaviors, Links, Rules, Sequences and Tables in full. Brains ship as ready-made
+     templates tuned in the inspector, and the full Brain editor moves to Phase 5;
+   - Sprite Studio for drawing, animation and lighting maps, with `.aseprite` import as the
+     path for professional artists;
+   - no team features.
+3. **Lean on imports first.** `.aseprite` and glTF import can come before the matching
+   built-in tools are complete.
+4. **Build for one vertical slice.** Every feature is judged by whether the Phase 3 JRPG
+   demo needs it.
+5. **Roles one person cannot fill are bought in small pieces or deferred:**
+   - *Usability testing* still happens at every gate (`09` §3). It needs participants, not
+     staff.
+   - *Template art and Look presets* need an artist's eye. Until an artist joins, use a
+     small set of original placeholder assets and treat the presets as provisional.
+6. **Re-plan at every gate.** Gate 0 gives the first measured velocity.
+
+## 6. Scaling up: the reference team
+
+When the project grows, these are the roles the plan assumes. The first two hires that
+remove the most risk are a **rendering engineer** (R-03) and a **technical or pixel
+artist** (Look presets, template art).
 
 | Role | Headcount | Owns |
 |---|---|---|
@@ -209,31 +253,17 @@ flowchart LR
 | QA, docs and community | 1 | Test plans, docs, tutorials, alpha and beta programmes |
 | Producer (part-time or combined with lead) | 0.5 | Gates, scope, risk register |
 
-## 6. Solo or small-team scenario
-
-If the project starts with one or two people, which is plausible given this repository,
-the plan still works, but the order and scope change:
-
-1. **Keep Phase 0 unchanged.** The spikes are even more important when resources are
-   scarce.
-2. **Cut α scope to a "Minimum Lovable Engine":**
-   - Diorama style only (no Retro 3D);
-   - RPG kit only;
-   - Links, Rules and Sequences, with Brains as templates only;
-   - Sprite Studio covering drawing and animation, with `.aseprite` import as the
-     professional path;
-   - no team features.
-3. **Lean harder on imports at first.** Aseprite and LDtk imports let you defer parts of
-   Sprite Studio and the 2D map editor.
-4. **Pick one strong vertical slice** and build the engine *for* it.
-5. **Expect a much longer timeline.** A full 1.0 as specified is a multi-year effort even
-   for the core team. Re-plan at every gate.
-
 ## 7. First 30 days (concrete next steps)
 
-| Week | Actions |
-|---|---|
-| 1 | Approve this plan and answer the open questions in `09` §5. Choose a working product name (trademark check). Set up the repository structure, CMake, vcpkg and CI. |
-| 2 | Write coding standards and the folder layout. Draft the reflection registry API (it drives everything). Order the reference hardware. |
-| 3 | Start Spike R (rendering) and Spike L (logic) in parallel. Paper-prototype the World and Logic workspaces. |
-| 4 | Start Spike U (Qt vs WebView2). Run the first usability test of the paper prototypes with 5 non-coders. Write up interim spike findings. |
+Order of work for one developer. "Week" is a unit of ordering here, not a promise.
+
+| Step | Actions | Status |
+|---|---|---|
+| 1 | Approve the plan and answer the open questions in `09` | Done (`09` §5) |
+| 1 | Screen candidate product names | Done (`research/05`); final choice open (Q-09) |
+| 1 | Set up the repository structure, licence, CMake, vcpkg and CI | Done (`docs/dev/`) |
+| 2 | Write coding standards and the folder layout | Done (`docs/dev/`) |
+| 2 | Draft the reflection registry API (it drives everything) | Next |
+| 2 | Choose and obtain the reference test hardware (ADR-001) | Open |
+| 3 | Start Spike R (rendering), then Spike L (logic). Paper-prototype the World and Logic workspaces | Open |
+| 4 | Start Spike U (Qt vs WebView2). Run the first usability test of the paper prototypes with 5 non-coders. Write up spike findings | Open |

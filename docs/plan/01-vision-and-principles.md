@@ -51,9 +51,9 @@ path more technical.
    seconds. Nothing needs a "build" to see a change.
 5. **Safe to experiment.** Everything can be undone. Autosave, crash recovery and
    snapshots are on by default, and the project cannot be corrupted by user logic.
-6. **Own your game.** Exported games are standalone executables. Project files use open,
-   documented, text-based formats. The licensing model is an open business decision; see
-   `09` (Q-01).
+6. **Own your game.** Exported games are standalone executables that never owe fees or
+   royalties. Project files use open, documented, text-based formats. The engine itself is
+   open source under the MIT licence (`09` §5, Q-01 and Q-02; ADR-017).
 
 ## 4. Scope
 
@@ -72,6 +72,9 @@ suit the look:
 
 Other genres (roguelikes, shoot-'em-ups, metroidvanias, simulation) must be *buildable*
 with the generic logic layers and shared systems. Dedicated kits for them come after 1.0.
+
+One developer builds the engine for now, so the alpha ships the RPG kit only and the other
+kits follow at 1.0 (`08` §5).
 
 ### 4.2 Non-goals for v1.0
 - Console, mobile or web export. Consoles also need platform-holder agreements.

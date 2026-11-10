@@ -1,4 +1,4 @@
-# Plan 09: Risks, Quality Strategy, Legal and Open Questions
+# Plan 09: Risks, Quality Strategy, Legal and Decisions
 
 ---
 
@@ -11,17 +11,17 @@ every phase gate.
 |---|---|---|---|---|---|
 | R-01 | **Scope explosion.** "All the systems users will ever need" has no natural boundary. | H | H | Genre-focused kits (`01` §4.1); α/1.0/Post tags (`02`); phase gates (`08`); extensibility for everything else. | Gate criteria slipping; features added without removing others |
 | R-02 | **No-code ceiling.** Users hit things they cannot express. | M | H | Layered model, Custom Blocks and a Luau escape hatch (`05`); usability rounds every gate; a no-script vertical slice as proof. | Testers asking "how do I code this?"; kits needing Script blocks |
-| R-03 | **The HD-2D look is hard to tune.** Even professionals invest years in it (Sea of Stars [S15]). | M | H | A dedicated rendering engineer; a technical artist owns Look presets; golden-image tests; Phase 0 reference scene. | Reference scene not reaching the target look or budget by Gate 0 |
-| R-04 | **Editor UX complexity** overwhelms non-coders. | M | H | A UX researcher on the core team; Basic/Advanced split; glossary (`06` §9); measured SUS and task completion. | SUS < 68 at Gate 2 |
+| R-03 | **The HD-2D look is hard to tune.** Even professionals invest years in it (Sea of Stars [S15]). | M | H | Phase 0 reference scene; golden-image tests; Look presets reviewed against the checklist in `research/01` §4. When a team forms, a rendering engineer and a technical artist are the first two roles (`08` §6). | Reference scene not reaching the target look or budget by Gate 0 |
+| R-04 | **Editor UX complexity** overwhelms non-coders. | M | H | Usability tests with non-coders at every gate (§3); Basic/Advanced split; glossary (`06` §9); measured SUS and task completion. | SUS < 68 at Gate 2 |
 | R-05 | **Dependency risk:** SDL GPU API feature gaps, Qt licence compliance, library abandonment. | M | M | Own RHI with a D3D12 fallback (ADR-004); no GPL-only Qt modules (ADR-005); only mature, actively maintained libraries; vendored versions. | Spike R finds missing features; upstream inactivity |
-| R-06 | **Trademark:** "HD-2D" is a Square Enix trademark [S11][S12][S13]. The repository name "2D-HD" is close to it. | M | H | Never use "HD-2D" in product name or marketing; describe the style generically ("pixel diorama", "2.5D pixel art"); professional trademark search before naming. | Any marketing copy using the term |
+| R-06 | **Trademark:** "HD-2D" is a Square Enix trademark [S11][S12][S13]. The repository name "2D-HD" is close to it. | M | H | Never use "HD-2D" in product name or marketing; describe the style generically ("pixel diorama", "2.5D pixel art"); candidate names screened in `research/05`; professional clearance before public launch; rename the repository once a name is chosen (Q-09). | Any marketing copy using the term |
 | R-07 | **IP similarity in templates and kits:** copying specific games' assets, characters or signature mechanics. | L | H | All template art and audio is original; battle systems are configurable and generic; legal review of templates before release. | Template reviews flag resemblance |
 | R-08 | **Data loss** in user projects. | L | H | Command journal, autosave, crash recovery, snapshots, atomic writes, format migrations with backups (`06` §5). | Any data-loss report |
 | R-09 | **Texel and pixel inconsistency** makes user games look "off". | M | M | PPU enforcement, texel-density view, Project Doctor warnings (R-VIS-07). | Template or user scenes failing the density view |
 | R-10 | **Performance cliffs** in user-made content: too many lights, continuous rules. | M | M | Budgets, plain-language performance overlay, Project Doctor lints, quality tiers. | Alpha projects under 60 fps on minimum spec |
-| R-11 | **Funding and team** can't sustain a multi-year effort. | M | H | Phased plan with shippable milestones (free demo at alpha, Early Access at beta); solo or small-team scope cut (`08` §6). | Gates slipping by more than 50% |
+| R-11 | **Sustainability.** One developer, no revenue from the engine (open source, royalty-free), and a multi-year scope. | H | H | The solo alpha scope (`08` §5); gates, not dates; every gate leaves something usable; open development so contributors can join; funding question tracked as Q-13. | No gate passed in a planning period; scope added without removing anything |
 | R-12 | **Platform shifts:** Windows 10 support ended 14 October 2025 [S82]. | L | L | Windows 11 primary; Windows 10 best-effort only. | Testers on Windows 10 reporting issues |
-| R-13 | **AI feature backlash or liability.** | M | M | Opt-in, transparent, edits via undoable commands, no generative art at 1.0 (`06` §8). | Community feedback |
+| R-13 | **AI feature backlash or liability.** | M | M | Not started before Gate 5; opt-in, transparent, edits via undoable commands, no generative art (`06` §8). | Community feedback |
 | R-14 | **Security:** malicious projects or mods. | L | M | Luau sandbox, no native code in projects or mods, fuzzed importers, no network access from user logic. | Fuzzing findings |
 
 ## 2. Quality strategy
@@ -67,26 +67,40 @@ This is not legal advice. Each item should be reviewed by qualified counsel befo
 - [ ] **libgit2:** unmodified, or modifications published (GPLv2 with linking exception
       [S77]).
 - [ ] **FreeType credit** included (FTL [S80]).
-- [ ] **Steamworks agreement** for Steam features (O4–O5).
+- [ ] **Steamworks agreement** for Steam features (O4–O5). The Steamworks SDK is never
+      committed to this repository: its licence allows local use and redistribution of
+      only the `redistributable_bin` folder [S91]. Users supply their own copy (ADR-014).
 - [ ] **Template and sample assets:** all original, or licensed with redistribution rights
       for use inside users' commercial games.
-- [ ] **End-user licence for Diorama itself**, which depends on the business model (Q-01).
+- [x] **Licence for the engine itself:** MIT (`LICENSE`, ADR-017).
+- [ ] **Contributor terms** decided (Q-10) and **brand ownership** decided (Q-12).
 - [ ] **Privacy policy** covering opt-in telemetry and crash reports, and the AI assistant
       if enabled.
 - [ ] **Code signing** of the editor installer (Authenticode).
 
-## 5. Open questions for the project owner
+## 5. Owner decisions
 
-These decisions change the plan. Answers are needed by the end of the first 30 days
-(`08` §7).
+The project owner answered the original open questions on 9 November 2026.
+
+| ID | Question | Decision | Where it is applied |
+|---|---|---|---|
+| Q-01 | Business model | **Royalty-free and open source.** Exported games never owe fees or royalties. | `01` pillar 6; ADR-017 |
+| Q-02 | Open source or proprietary | **Open source, MIT licence.** | ADR-017; `LICENSE` |
+| Q-03 | Team and budget | **Solo for now.** A team is added later. | `08` §1 and §5 (solo baseline); α tags in `02` |
+| Q-04 | First genre | **RPG first.** | `01` §4.1; `02` section F |
+| Q-05 | Optional scripting | **Hidden until 1.0.** Custom Blocks come first. | `02` E8, E11 |
+| Q-06 | AI assistant | **Work starts after the Early Access / beta release (Gate 5).** Opt-in and logic-only. | `06` §8; `02` Q5 |
+| Q-07 | Minimum hardware target | **Decide after the rendering spike** (Spike R) has measurements. | ADR-001; `08` Phase 0 |
+| Q-08 | Product name | **Screen 3–5 candidate names** for trademark and product conflicts, then choose. | `research/05`; R-06 |
+
+## 6. Open questions
+
+These follow from the decisions above. None blocks Phase 0.
 
 | ID | Question | Why it matters | Recommendation |
 |---|---|---|---|
-| Q-01 | **Business model:** free, one-time purchase, subscription, or revenue share? Should exported games ever owe royalties? | Shapes licensing, marketplace, legal and the "own your game" pillar | Royalty-free exported games. Choose between a one-time licence and an open-core model after market research. |
-| Q-02 | **Open source or proprietary?** | Community contributions vs revenue protection; affects ADR choices (all chosen libraries are compatible with either) | Decide before Phase 1; it affects the contributor workflow. |
-| Q-03 | **Team and budget:** core team (6–10) or solo/duo? | Determines the timeline and the α scope (`08` §6) | Plan for the solo or duo scope if unsure, and scale up later. |
-| Q-04 | **First genre focus:** RPG first, as recommended, or something else? | Determines the first kit and the vertical slice | RPG, because it matches where the style is proven (`research/01` §2). |
-| Q-05 | **Optional scripting at launch,** or no scripting until 1.0? | Power-user adoption vs keeping focus | Hidden until 1.0 (E11); Custom Blocks first. |
-| Q-06 | **AI assistant stance:** include after 1.0 (opt-in), never, or earlier? | Community trust, cost, privacy | After 1.0, opt-in, logic-only (`06` §8). |
-| Q-07 | **Minimum hardware target:** how low-end should exported games run? | Renderer budgets and feature tiers | Decide after Spike R measurements. |
-| Q-08 | **Product name.** | Branding, trademark (R-06) | Run a trademark search on 3–5 candidates. |
+| Q-09 | **Final product name.** Pick from the screened candidates in `research/05`, or propose others. | Branding, code and repository naming, trademark (R-06) | Choose one of the lower-risk candidates, then have a professional clear it before any public launch. Rename the GitHub repository afterwards. |
+| Q-10 | **Contributor terms:** plain "contributions are MIT", a sign-off (DCO), or a contributor licence agreement (CLA)? | Decides how easily outside contributions can be accepted, and whether the licence could ever change | Plain MIT contributions for now (what `CONTRIBUTING.md` says). Revisit when outside contributors arrive. |
+| Q-11 | **Licence for bundled template art and audio.** | Users ship these assets inside their own commercial games | CC0, so users owe no attribution. Decide before the first template ships (Phase 3). |
+| Q-12 | **Who owns the name and logo?** MIT covers the code, not the brand. | Stops forks from shipping under the same name | Keep the name and logo with the owner, as GDevelop does [S31]. Decide with Q-09. |
+| Q-13 | **How the project is funded** while it is solo and open source: none, donations, sponsorship, or paid services later. | Sustainability (R-11) | Nothing is needed for Phase 0. Revisit at Gate 2. |

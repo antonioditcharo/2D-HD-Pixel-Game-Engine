@@ -3,7 +3,8 @@
 > The master catalogue of every system and workflow Diorama provides.
 >
 > **Release tags:**
-> - **α** (Alpha): needed for the closed alpha at the end of Phase 4.
+> - **α** (Alpha): needed for the closed alpha at the end of Phase 4. This is the solo
+>   "Minimum Lovable Engine" scope (`08` §5).
 > - **1.0**: needed for the 1.0 release.
 > - **Post**: planned after 1.0.
 >
@@ -61,9 +62,9 @@
 | C1 | **Diorama Builder:** paint tiles onto the faces of 3D geometry, Crocotile-style | α |
 | C2 | **Block brushes:** cubes, slopes, stairs, arches, cylinders; per-face tile assignment; UV auto-fit to PPU | α |
 | C3 | **Prefab kits:** houses, trees, fences, bridges. Prefabs nest and can be overridden | α |
-| C4 | **Auto-tiling rules** for 2D layers and 3D surfaces (LDtk-style rules and biomes) | α |
+| C4 | **Auto-tiling rules** for 2D layers and 3D surfaces (LDtk-style rules and biomes) | α (3D surfaces) / 1.0 (2D layers) |
 | C5 | **Scatter and variation brushes:** foliage, rocks, random tile variants (fights the "lonely sprite" problem, `research/01` §3) | α |
-| C6 | **2D map mode:** tile layers, parallax layers, for Classic 2D and side-view games | α |
+| C6 | **2D map mode:** tile layers, parallax layers, for Classic 2D and side-view games | 1.0 |
 | C7 | **Entities:** place characters, objects and devices. Typed properties and entity-to-entity references | α |
 | C8 | **Regions and zones:** triggers, encounter areas, audio zones, camera zones, Look zones | α |
 | C9 | **Water, sky and weather presets** in pixel style (R-VIS-16) | α |
@@ -79,7 +80,7 @@ Full specification: [`04-rendering-pipeline.md`](04-rendering-pipeline.md).
 
 | ID | Feature | Tag |
 |---|---|---|
-| D1 | **Render Styles:** Diorama, Retro 3D and Classic 2D (R-VIS-01, R-VIS-12) | α (Diorama, Classic 2D) / 1.0 (Retro 3D) |
+| D1 | **Render Styles:** Diorama, Retro 3D and Classic 2D (R-VIS-01, R-VIS-12) | α (Diorama) / 1.0 (Classic 2D, Retro 3D) |
 | D2 | **Billboard sprites:** all modes, depth-correct, alpha-tested (R-VIS-02, R-VIS-09) | α |
 | D3 | **Lights:** point, spot, directional and area; shadows; light cookies; flicker presets (R-VIS-04) | α |
 | D4 | **Sprite lighting and shadows:** silhouette, blob or none (R-VIS-03) | α |
@@ -107,7 +108,7 @@ Full specification: [`05-no-code-logic-system.md`](05-no-code-logic-system.md).
 | E2 | **Links:** device-style event → action wiring, visible in the World view | α |
 | E3 | **Rules:** When / If / Do event sheets with sub-rules, else, for-each and groups | α |
 | E4 | **Sequences:** step lists with waits, branches and loops, plus a timeline view for cutscenes | α |
-| E5 | **Brains:** hierarchical state machines for characters, AI and game flow | α |
+| E5 | **Brains:** hierarchical state machines for characters, AI and game flow | α (ready-made templates, tuned in the inspector) / 1.0 (Brain editor) |
 | E6 | **Variables:** global, scene, object and save-persistent, all typed | α |
 | E7 | **Expressions:** a formula editor with pickers, autocomplete and units | α |
 | E8 | **Custom Blocks:** user-made actions, conditions and behaviors with parameters | 1.0 |
@@ -152,7 +153,7 @@ specific commercial game's signature mechanics (`09`, R-07).
 |---|---|---|
 | H1 | **Character asset:** sprite set + collision + behaviors + stats in one place | α |
 | H2 | **NPC behaviors:** wander, patrol, follow, face the player, daily schedules | α |
-| H3 | **Enemy AI presets:** patrol → chase → attack → flee, as editable Brains | α |
+| H3 | **Enemy AI presets:** patrol → chase → attack → flee, as Brains | α (presets) / 1.0 (editable in the Brain editor) |
 | H4 | **Party followers** (caterpillar or free) | α |
 | H5 | **Pathfinding:** grid A* and navmesh, with dynamic obstacles | α |
 
@@ -162,7 +163,7 @@ specific commercial game's signature mechanics (`09`, R-07).
 |---|---|---|
 | I1 | **Automatic collision** from tiles, blocks and sprite alpha; manual shape editing | α |
 | I2 | **Collision layers and masks** with friendly names | α |
-| I3 | **Character controllers:** a 3D "virtual character" for diorama maps (Jolt) and a 2D mover (Box2D) (ADR-008) | α |
+| I3 | **Character controllers:** a 3D "virtual character" for diorama maps (Jolt) and a 2D mover (Box2D) (ADR-008) | α (3D) / 1.0 (2D mover) |
 | I4 | **Triggers, raycasts and overlap queries** exposed as conditions | α |
 | I5 | **Rigid-body props**: crates, pushable blocks | 1.0 |
 
@@ -219,7 +220,7 @@ specific commercial game's signature mechanics (`09`, R-07).
 | O1 | **One-click Windows build:** a prebuilt runtime plus cooked content pack. No compiler needed on the user's machine | α |
 | O2 | **Build profiles:** development, demo and release; content filtering for demos | α |
 | O3 | **Executable branding:** icon, version info, splash, window title | α |
-| O4 | **Steamworks forms:** achievements, stats, leaderboards, rich presence, cloud, overlay [S58] | 1.0 |
+| O4 | **Steamworks forms:** achievements, stats, leaderboards, rich presence, cloud, overlay [S58]. An optional module that uses the creator's own copy of the Steamworks SDK (ADR-014) | 1.0 |
 | O5 | **Steam upload helper** (steamcmd) and depot configuration guide | 1.0 |
 | O6 | **Code-signing guide and integration** (user-supplied certificate) | 1.0 |
 | O7 | **Opt-in crash reporting** for shipped games (minidumps) | 1.0 |
@@ -244,7 +245,7 @@ specific commercial game's signature mechanics (`09`, R-07).
 | Q2 | **Contextual help:** every field has a tooltip and a link to its docs page (generated from reflection) | α |
 | Q3 | **Example projects**, with every piece of logic annotated | 1.0 |
 | Q4 | **Searchable offline docs** inside the editor | α |
-| Q5 | **Optional AI assistant**, off by default. It edits only through undoable commands and shows a reviewable diff (`06` §8) | Post |
+| Q5 | **Optional AI assistant**, off by default. It edits only through undoable commands and shows a reviewable diff (`06` §8) | Work starts after Gate 5 (`09` §5, Q-06) |
 
 ## R. Editor accessibility and localization
 
@@ -298,5 +299,7 @@ Full specification: [`05-no-code-logic-system.md`](05-no-code-logic-system.md) �
 | 14 Release | O1–O7, O10 |
 | 15 Post-launch | O8, O9, M3 |
 
-Stages 1–14 all have α coverage. Stage 15 (post-launch: patches, save migration, DLC) is
-covered at 1.0, and mod support comes after 1.0.
+Stages 1–14 all have α coverage for a Diorama-style RPG, which is the solo alpha scope.
+Classic 2D games, the other genre kits and the full Brain editor arrive at 1.0. Stage 15
+(post-launch: patches, save migration, DLC) is covered at 1.0, and mod support comes after
+1.0.

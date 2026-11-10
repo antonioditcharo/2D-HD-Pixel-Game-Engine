@@ -52,6 +52,7 @@ the ID (for example `S41`).
 | S22 | Godot Engine, "Maintenance release: Godot 4.7.1" (14 Jul 2026): https://godotengine.org/article/maintenance-release-godot-4-7-1/ | Godot 4.7 stable in mid-June 2026 | Fetched |
 | S23 | Godot Engine, "Godot 4 will discontinue visual scripting": https://godotengine.org/article/godot-4-will-discontinue-visual-scripting | 0.5% usage; lack of high-level building blocks | Fetched |
 | S24 | Godot Engine, 4.5 release page: https://godotengine.org/releases/4.5/ | AccessKit screen-reader support (partial in editor); i18n live preview | Indexed |
+| S93 | Godot Engine licence: https://github.com/godotengine/godot/blob/master/LICENSE.txt | Godot is MIT-licensed | Fetched |
 | S25 | Unity, "Unity is canceling the Runtime Fee": https://unity.com/blog/unity-is-canceling-the-runtime-fee | Fee cancelled 12 Sep 2024; Personal cap US$200k; Pro US$2,200 from 1 Jan 2025 | Fetched |
 | S26 | Unity 6 Manual, URP 2D (Renderer 2D, lights, Shadow Caster 2D, Pixel Perfect Camera): https://docs.unity3d.com/6/Documentation/Manual/2d-urp-landing.html · https://docs.unity3d.com/Manual/urp/create-light-2d.html · https://docs.unity3d.com/Manual/urp/ShadowCaster2D.html | 2D lights with normal and mask maps; Shadow Caster 2D; Pixel Perfect Camera | Indexed |
 | S27 | Epic Games, Unreal Engine licensing options: https://www.unrealengine.com/license | 5% royalty above US$1M lifetime gross; Epic Games Store revenue exempt; 3.5% "Launch Everywhere with Epic" rate | Indexed (direct fetch returned 403) |
@@ -97,6 +98,8 @@ the ID (for example `S41`).
 | S56 | ink repository: https://github.com/inkle/ink | MIT; C# runtime; inkjs | Fetched |
 | S57 | Yarn Spinner repository: https://github.com/YarnSpinnerTool/YarnSpinner | MIT; engine-agnostic core; Unity package | Fetched |
 | S58 | Steamworks SDK documentation: https://partner.steamgames.com/doc/sdk | Feature list; SDK required only for uploading | Fetched |
+| S91 | Valve, Steamworks SDK Access Agreement: https://partner.steamgames.com/documentation/sdk_access_agreement | Licence to "use and locally reproduce the SDK"; distribution limited to the `redistributable_bin` folder | Fetched |
+| S92 | Steamworks Documentation, "Distributing Open Source Applications on Steam": https://partner.steamgames.com/doc/sdk/uploading/distributing_opensource | MIT, BSD and Apache 2.0 listed as compatible with the SDK; copyleft licences such as the GPL are problematic | Fetched |
 
 ## No-code paradigms
 
@@ -105,6 +108,23 @@ the ID (for example `S41`).
 | S59 | Epic Developer Community, "Direct Event Binding in Unreal Editor for Fortnite": https://dev.epicgames.com/documentation/en-us/uefn/direct-event-binding-in-unreal-editor-for-fortnite | Event → function wiring between devices | Fetched |
 | S60 | Fortnite, "The transition to Direct Event Binding to occur in Fortnite v25.00": https://www.fortnite.com/news/the-transition-to-direct-event-binding-to-occur-in-fortnite-v25-00 | Replacement of channels; default for Creative islands | Indexed |
 | S61 | Wikipedia, "Game Builder Garage": https://en.wikipedia.org/wiki/Game_Builder_Garage | Nodon visual programming (2021) | Indexed |
+
+## Name screening (queried 10 November 2026)
+
+"Fetched (live query)" means the search was run against the site itself on the day, in a
+browser, and the results were read directly.
+
+| ID | Source | Used for | Verification |
+|---|---|---|---|
+| S94 | USPTO Trademark Search: https://tmsearch.uspto.gov/search/search-information | US wordmark searches for the five candidate names, one-word and two-word forms | Fetched (live query) |
+| S95 | EUIPO eSearch plus: https://euipo.europa.eu/eSearch/ | EU trade mark searches for the five candidate names, one-word and two-word forms | Fetched (live query) |
+| S96 | WIPO Global Brand Database: https://branddb.wipo.int/ | International marks | **Not queried:** an automated-access check sits in front of the search |
+| S97 | Steam store search: https://store.steampowered.com/search/ | Games and software named like each candidate | Fetched (live query) |
+| S98 | GitHub repository search (name matches) | Code projects named like each candidate | Fetched (live query) |
+| S99 | Product Hunt, "Pixelwright": https://www.producthunt.com/products/pixelwright | Existing pixel-art studio for game art at pixelwright.app, launched 2026 | Fetched |
+| S100 | David Steeman, "Building a TiltBox": https://www.steeman.be/posts/building-a-tiltbox/ · Cromwell Tools, bott "Perfo Tilt Box": https://cromwell.co.uk/shop/storage-handling-and-packaging/small-parts-storage-cabinet/perfo-tilt-box-polypropylene-grey-transparent-600x68x78mm-27-compartments/p/BOT4051034P | A hobby handheld console and storage boxes named TiltBox | Indexed |
+| S101 | Lantern Studio: https://lantern-studio.com/about | A game studio using "Lantern" | Indexed |
+| S102 | Justia Trademarks, GLIMMER STUDIOS: https://trademark.justia.com/976/37/glimmer-97637759.html · Glimmerjam LLC: https://trademark.justia.com/owners/glimmerjam-llc-3383077 | Nearby "Glimmer" marks for game and app software | Indexed; third-party directory |
 
 ## Technology stack
 

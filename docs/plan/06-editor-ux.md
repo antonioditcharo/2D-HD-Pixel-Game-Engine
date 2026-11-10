@@ -213,10 +213,12 @@ a gamepad.
 | Viewport frame rate while editing a template scene | ≥ 60 fps on reference hardware |
 | Undo / redo | < 100 ms |
 
-## 8. AI assistant policy (Q5, after 1.0)
+## 8. AI assistant policy (Q5, after Gate 5)
 
-AI help is now expected in no-code tools; GDevelop ships an AI agent [S33]. Trust matters
-more than novelty, so Diorama's assistant follows strict rules:
+AI help is now expected in no-code tools; GDevelop ships an AI agent [S33]. The owner
+decided that work on the assistant starts after the Early Access / beta release, which is
+Gate 5 (`09` §5, Q-06). Trust matters more than novelty, so the assistant follows strict
+rules:
 
 1. **Off by default,** with explicit opt-in. It never runs on project content without
    consent.
@@ -229,14 +231,15 @@ more than novelty, so Diorama's assistant follows strict rules:
 5. **Explains:** it can answer "why didn't this fire?" in natural language, using the
    debugger's data.
 6. **No bundled generative art.** This is a recommendation, not a sourced fact. The
-   assistant does not generate sprites or tiles at 1.0. The reasons:
+   assistant does not generate sprites or tiles. The reasons:
    - The product's promise is great tools *for* artists.
    - Licensing and provenance of generated art are unsettled.
    - Pixel-art communities are a core audience whose trust matters.
 
    This can be revisited later with a clear licensing position.
-7. **Provider-agnostic** behind an interface. The business model is decided in `09`
-   (Q-06).
+7. **Provider-agnostic** behind an interface. The engine is open source and free, so
+   users bring their own AI provider account or a local model. The engine does not resell
+   AI usage.
 
 ## 9. Glossary: plain language in the UI
 

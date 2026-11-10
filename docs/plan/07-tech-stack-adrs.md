@@ -13,7 +13,7 @@
 
 - **Context:** the user asked for a *new custom engine*. Three realistic paths exist:
   - **(A)** A custom engine assembled from permissively licensed libraries.
-  - **(B)** A product built on top of an open-source engine such as Godot (MIT). ACTION
+  - **(B)** A product built on top of an open-source engine such as Godot (MIT [S93]). ACTION
     GAME MAKER (built on Godot) [S40][S41] and RPG in a Box [S43] took this path.
   - **(C)** A layer on top of Unity or Unreal, as RPG Maker Unite did on Unity [S38].
 - **Decision: (A).** "Custom engine, not custom everything." Build in-house what makes the
@@ -61,6 +61,9 @@
   - **C++20** for the runtime and editor.
   - **MSVC** as the primary compiler, with **clang-cl** in CI for diagnostics.
   - **CMake + Ninja**, with **vcpkg** manifests for dependencies.
+  - A `linux-dev` CMake preset (GCC or Clang) builds and tests the platform-independent
+    modules. It exists for development and CI convenience and keeps the runtime portable.
+    Windows remains the only product target (ADR-001).
 - **Rules:**
   - The runtime is built without RTTI. It uses explicit error results, not exceptions,
     in hot paths.
@@ -236,6 +239,16 @@
   interface, so games run without Steam (DRM-free builds) and other stores can be added
   later.
 - The Steamworks SDK is required only to upload content. Everything else is optional [S58].
+- **The SDK is never part of this repository.** Valve's SDK licence lets a licensee use
+  and locally reproduce the SDK to develop their software, and distribute only the part
+  inside the `redistributable_bin` folder [S91]. So:
+  - Steam support is an **optional module** that is off by default.
+  - A game creator who wants it downloads the SDK from Valve under their own Steamworks
+    account and points the editor at it.
+  - The open-source engine builds, runs and exports games without it.
+- **Licence fit:** Valve lists MIT among the open-source licences that are generally
+  compatible with the Steamworks SDK, and warns that copyleft licences such as the GPL are
+  a problem [S92].
 
 ## ADR-015: Shader pipeline
 
@@ -258,6 +271,35 @@
   - CI builds every commit for Windows. Nightly runs cover the full rendering and
     performance suite.
 
+## ADR-017: MIT licence and open development
+
+- **Context:** the owner decided the engine is open source and royalty-free (`09` §5,
+  Q-01 and Q-02) and chose the **MIT licence**.
+- **Decision:**
+  - The engine, editor and tools in this repository are MIT-licensed (`LICENSE`).
+  - Games exported with the engine owe nothing: no fees, no royalties, no attribution
+    beyond the third-party notices the export pipeline generates.
+  - Development happens in the open in this repository.
+- **Why MIT:**
+  - It is the licence of comparable open engines and tools: Godot [S93] and GDevelop
+    [S31].
+  - It is compatible with every dependency in the table below.
+  - Valve lists it as compatible with the Steamworks SDK [S92].
+- **Compatibility notes:**
+  - Every library that ships inside exported games is permissively licensed (zlib, MIT,
+    public domain, FTL, "Old MIT").
+  - Qt (LGPLv3) and Qt Advanced Docking System (LGPL-2.1) are used only by the editor and
+    are linked dynamically. Their licences still apply to those libraries; MIT applies to
+    our code.
+  - libgit2's linking exception allows linking from any program [S77].
+  - Proprietary SDKs (Steamworks, and later FMOD or Wwise) are optional modules whose SDK
+    files are supplied by the user and are never committed here (ADR-014).
+- **Consequences:**
+  - Anyone may fork, modify and sell the engine, including as a closed product.
+  - The licence does not cover the product name or logo (`09` §6, Q-12).
+  - Contributions are accepted under MIT (`CONTRIBUTING.md`; `09` §6, Q-10).
+  - Bundled template assets need their own licence decision (`09` §6, Q-11).
+
 ---
 
 ## Dependency licence summary
@@ -272,7 +314,7 @@
 | miniaudio | Public domain or MIT-0 [S72] | Yes | None |
 | FreeType | FTL (BSD-style with credit) or GPLv2 [S80]; we use FTL | Yes | Credit in documentation |
 | HarfBuzz | "Old MIT" [S79] | Yes | Include the licence notice |
-| Steamworks SDK | Valve SDK terms (not reviewed here) | Optional | Steamworks agreement |
+| Steamworks SDK | Valve Steamworks SDK Access Agreement [S91] | Optional; only `redistributable_bin`, supplied by the creator | Never committed to this repository; the creator accepts Valve's agreement |
 | Qt 6 (non-GPL modules) | LGPLv3 [S74] | **No (editor only)** | Dynamic linking, notices, allow relinking |
 | Qt Advanced Docking System | LGPL-2.1 [S76] | **No (editor only)** | As above |
 | libgit2 | GPLv2 with linking exception [S77] | **No (editor only)** | Publish modifications to libgit2 itself |
