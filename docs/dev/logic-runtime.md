@@ -3,7 +3,7 @@
 > **Status: v0.2.** The script host (a sandboxed Luau VM with tasks, waits, events and
 > budgets) and the compiler from the Logic IR (Rules and Sequences) to Luau, with a debug
 > map from lines to blocks and live tracing. Every behaviour below is covered by tests.
-> See §8 for what comes next.
+> §8 has the measured scale, §9 what comes next.
 >
 > Code: [`vm.h`](../../engine/logic/include/engine/logic/vm.h),
 > [`ir.h`](../../engine/logic/include/engine/logic/ir.h) and
@@ -216,14 +216,41 @@ levels). An asset with any error produces no source, so it cannot be run by mist
   trace handler receives the line, and the debug map gives the block: this is the
   editor's live highlight (`plan/05` §6).
 
-## 8. Next increments
+## 8. Measured scale
+
+The stress test from ADR-007 ([`stress_test.cpp`](../../tests/logic/stress_test.cpp)): 50
+objects, 5,000 rules (100 per object event) and 200 sequences that each act once per frame
+for 60 frames. The test checks that every rule and step ran exactly once, and prints the
+timings. Ranges over four runs of the `RelWithDebInfo` build on a shared 4-core 2.1 GHz
+Xeon server VM, which is slower and noisier than a gaming PC:
+
+| Step | Time |
+|---|---|
+| Compile the asset (31,201 lines of Luau) | 10–22 ms |
+| Load it (Luau compiles, then the top level registers 5,000 rules) | 35–55 ms |
+| Fire all 5,000 rules once | 2.5–4.5 ms |
+| One frame of 200 sequences resuming | 0.04–0.14 ms (worst frame) |
+| VM memory afterwards | about 6.3 MiB |
+
+- **Sequences are cheap:** 200 concurrent ones cost under 1% of a 60 fps frame.
+- **Rules cost about 0.5–0.9 µs each** when fired, because each runs as its own task. A
+  game rarely fires more than a few hundred in one frame. If profiling of real projects
+  shows otherwise, rules that never wait can run without a coroutine (§9).
+- **Loading is the slowest step**, and it happens once per map. Bytecode caching (§9)
+  removes the compile part.
+
+The test does not assert timings, because CI machines vary; it fails only on wrong
+results.
+
+## 9. Next increments
 
 In order:
 
 1. **Object handles:** GUID-based references from the world instead of names bound by
    hand, and IR serialization in the project's JSON format.
-2. **Stress test** from ADR-007: 5,000 rules and 200 concurrent sequences, with timings.
-3. **More blocks:** parallel steps, "wait until", For each, and text joining.
-4. **Brain runner** (state machines) and **"why didn't this fire?"** support, which
+2. **More blocks:** parallel steps, "wait until", For each, and text joining.
+3. **Brain runner** (state machines) and **"why didn't this fire?"** support, which
    re-evaluates a rule's conditions one by one using their block ids.
-5. **Bytecode caching** per asset, so exported games skip compilation.
+4. **Bytecode caching** per asset, so exported games skip compilation.
+5. **Faster rules:** run rules that cannot wait without creating a coroutine, if
+   profiling shows the need.

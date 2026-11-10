@@ -172,6 +172,12 @@
   - map blocks for highlighting;
   - enforce per-frame budgets via interrupts;
   - measure a stress scene of 5,000 rules and 200 concurrent sequences.
+- **Validation status (November 2026):** Rules and Sequences compile through the Logic IR
+  to Luau, blocks map to lines for highlighting, and interrupt budgets stop runaway loops.
+  The stress scene runs correctly: firing all 5,000 rules takes 2.5–4.5 ms, and 200
+  sequences resume in 0.04–0.14 ms per frame, on a shared 4-core 2.1 GHz server VM
+  (`docs/dev/logic-runtime.md` §8). Brains are not built yet, so the decision stands but
+  the spike is not complete.
 
 ## ADR-008: Physics, Jolt (3D) and Box2D v3 (2D)
 

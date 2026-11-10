@@ -265,5 +265,5 @@ Order of work for one developer. "Week" is a unit of ordering here, not a promis
 | 2 | Write coding standards and the folder layout | Done (`docs/dev/`) |
 | 2 | Draft the reflection registry API (it drives everything) | v0.2 done: types, properties, choice lists, actions, conditions, getters and events (`docs/dev/reflection.md`) |
 | 2 | Choose and obtain the reference test hardware (ADR-001) | Open |
-| 3 | Start Spike R (rendering), then Spike L (logic). Paper-prototype the World and Logic workspaces | Spike L started first, because it needs no GPU. Done: the VM host with interrupt budgets, and Rules and Sequences compiled from the Logic IR to Luau with block mapping and highlighting (`docs/dev/logic-runtime.md`). Open: the stress test and Brains. Spike R and the paper prototypes are open |
+| 3 | Start Spike R (rendering), then Spike L (logic). Paper-prototype the World and Logic workspaces | Spike L started first, because it needs no GPU. Done: the VM host with interrupt budgets, and Rules and Sequences compiled from the Logic IR to Luau with block mapping and highlighting (`docs/dev/logic-runtime.md`). Stress test passed (ADR-007). Open: Brains. Spike R and the paper prototypes are open |
 | 4 | Start Spike U (Qt vs WebView2). Run the first usability test of the paper prototypes with 5 non-coders. Write up spike findings | Open |
