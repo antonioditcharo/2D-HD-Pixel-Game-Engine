@@ -24,3 +24,16 @@ target_compile_definitions(engine_foundation_tests PRIVATE
 engine_configure_test_target(engine_foundation_tests)
 
 add_test(NAME foundation COMMAND engine_foundation_tests)
+
+add_executable(engine_logic_tests
+    test_main.cpp
+    logic/vm_test.cpp
+)
+target_link_libraries(engine_logic_tests PRIVATE
+    engine::logic
+    doctest::doctest
+)
+target_compile_definitions(engine_logic_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+engine_configure_test_target(engine_logic_tests)
+
+add_test(NAME logic COMMAND engine_logic_tests)

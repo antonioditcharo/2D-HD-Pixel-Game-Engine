@@ -1,0 +1,939 @@
+#include "engine/logic/vm.h"
+
+#include <lua.h>
+#include <luacode.h>
+#include <lualib.h>
+
+#include <algorithm>
+#include <array>
+#include <charconv>
+#include <cmath>
+#include <cstdlib>
+#include <map>
+#include <system_error>
+#include <utility>
+
+namespace engine::logic {
+
+namespace {
+
+namespace reflect = engine::reflect;
+
+/// A wait shorter than this counts as over. It absorbs rounding when many small frame
+/// times are subtracted from a wait, so that "wait 1 second" at 10 updates of 0.1 s
+/// resumes on the 10th update and not the 11th.
+constexpr double wait_epsilon = 1e-9;
+
+/// The text the interrupt raises. It is replaced by a plain-language message when the
+/// error is reported.
+constexpr const char* budget_message = "ran too long without waiting";
+
+struct Script {
+    ScriptId id;
+    std::string name;
+    lua_State* thread{nullptr}; ///< Holds the script's own globals.
+    int ref{LUA_NOREF};
+};
+
+struct Task {
+    TaskId id;
+    const Script* script{nullptr};
+    lua_State* thread{nullptr};
+    int ref{LUA_NOREF};
+    double wait_left = 0.0;
+    bool finished = false;
+};
+
+struct Binding {
+    reflect::ObjectRef object;
+    const reflect::TypeInfo* type{nullptr};
+};
+
+[[nodiscard]] bool is_valid_script_name(std::string_view name) noexcept {
+    if (name.empty() || name.size() > 128) {
+        return false;
+    }
+    return std::all_of(name.begin(), name.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               c == '_' || c == '-' || c == '.' || c == '/';
+    });
+}
+
+/// Formats a number for messages: whole numbers without a decimal point, others in the
+/// shortest form that reads back exactly.
+[[nodiscard]] std::string format_number(double value) {
+    if (std::isnan(value)) {
+        return "not a number";
+    }
+    if (std::isinf(value)) {
+        return value > 0 ? "infinity" : "minus infinity";
+    }
+    std::array<char, 64> buffer{};
+    std::to_chars_result result{};
+    if (std::trunc(value) == value && std::fabs(value) < 1e15) {
+        result = std::to_chars(buffer.data(), buffer.data() + buffer.size(),
+                               static_cast<long long>(value));
+    } else {
+        result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+    }
+    if (result.ec != std::errc{}) {
+        return "?";
+    }
+    return {buffer.data(), result.ptr};
+}
+
+[[nodiscard]] std::string quoted(std::string_view text) {
+    return "'" + std::string(text) + "'";
+}
+
+/// "yes or no", "a whole number", "one of: north, east", for messages.
+[[nodiscard]] std::string expected_text(reflect::ValueKind kind,
+                                        const reflect::ChoiceInfo* choice) {
+    switch (kind) {
+    case reflect::ValueKind::Bool:
+        return "yes or no (true or false)";
+    case reflect::ValueKind::Int:
+        return "a whole number";
+    case reflect::ValueKind::Float:
+        return "a number";
+    case reflect::ValueKind::Text:
+        return "text";
+    case reflect::ValueKind::Choice: {
+        std::string text = "one of: ";
+        if (choice != nullptr) {
+            for (std::size_t i = 0; i < choice->entries.size(); ++i) {
+                text += (i == 0 ? "" : ", ") + choice->entries[i].id;
+            }
+        }
+        return text;
+    }
+    }
+    return "a value";
+}
+
+/// A short description of the script value at `index`, for messages.
+[[nodiscard]] std::string given_text(lua_State* state, int index) {
+    switch (lua_type(state, index)) {
+    case LUA_TNONE:
+    case LUA_TNIL:
+        return "nothing";
+    case LUA_TBOOLEAN:
+        return lua_toboolean(state, index) != 0 ? "true" : "false";
+    case LUA_TNUMBER:
+        return format_number(lua_tonumber(state, index));
+    case LUA_TINTEGER:
+        return std::to_string(lua_tointeger64(state, index, nullptr));
+    case LUA_TSTRING: {
+        std::size_t length = 0;
+        const char* text = lua_tolstring(state, index, &length);
+        constexpr std::size_t max_shown = 40;
+        const std::string shown(text, std::min(length, max_shown));
+        return quoted(length > max_shown ? shown + "..." : shown);
+    }
+    case LUA_TTABLE:
+        return "a table";
+    case LUA_TFUNCTION:
+        return "a function";
+    default:
+        return lua_typename(state, lua_type(state, index));
+    }
+}
+
+/// Raises a script error with `message`. The current line is added by Luau.
+[[noreturn]] void raise(lua_State* state, const std::string& message) {
+    luaL_error(state, "%s", message.c_str());
+}
+
+[[nodiscard]] std::string_view string_at(lua_State* state, int index) {
+    std::size_t length = 0;
+    const char* text = lua_tolstring(state, index, &length);
+    return {text, length};
+}
+
+/// Pushes a reflected value. Choices are pushed as their entry id.
+void push_value(lua_State* state, const reflect::Value& value, const reflect::ChoiceInfo* choice) {
+    if (const bool* flag = std::get_if<bool>(&value)) {
+        lua_pushboolean(state, *flag ? 1 : 0);
+    } else if (const std::int64_t* number = std::get_if<std::int64_t>(&value)) {
+        const reflect::ChoiceEntry* entry =
+            choice != nullptr ? choice->find_entry(*number) : nullptr;
+        if (entry != nullptr) {
+            lua_pushlstring(state, entry->id.data(), entry->id.size());
+        } else {
+            lua_pushnumber(state, static_cast<double>(*number));
+        }
+    } else if (const double* real = std::get_if<double>(&value)) {
+        lua_pushnumber(state, *real);
+    } else if (const std::string* text = std::get_if<std::string>(&value)) {
+        lua_pushlstring(state, text->data(), text->size());
+    }
+}
+
+enum class Conversion : std::uint8_t { Ok, WrongKind, UnknownChoice, NotWhole };
+
+/// Converts the script value at `index` to the given kind.
+[[nodiscard]] Conversion to_value(lua_State* state, int index, reflect::ValueKind kind,
+                                  const reflect::ChoiceInfo* choice, reflect::Value& out) {
+    const int type = lua_type(state, index);
+    switch (kind) {
+    case reflect::ValueKind::Bool:
+        if (type != LUA_TBOOLEAN) {
+            return Conversion::WrongKind;
+        }
+        out = lua_toboolean(state, index) != 0;
+        return Conversion::Ok;
+    case reflect::ValueKind::Float:
+        if (type == LUA_TINTEGER) {
+            out = static_cast<double>(lua_tointeger64(state, index, nullptr));
+            return Conversion::Ok;
+        }
+        if (type != LUA_TNUMBER) {
+            return Conversion::WrongKind;
+        }
+        out = lua_tonumber(state, index);
+        return Conversion::Ok;
+    case reflect::ValueKind::Text:
+        if (type != LUA_TSTRING) {
+            return Conversion::WrongKind;
+        }
+        out = std::string(string_at(state, index));
+        return Conversion::Ok;
+    case reflect::ValueKind::Choice:
+        if (type == LUA_TSTRING) {
+            const reflect::ChoiceEntry* entry =
+                choice != nullptr ? choice->find_entry(string_at(state, index)) : nullptr;
+            if (entry == nullptr) {
+                return Conversion::UnknownChoice;
+            }
+            out = entry->value;
+            return Conversion::Ok;
+        }
+        [[fallthrough]];
+    case reflect::ValueKind::Int: {
+        if (type == LUA_TINTEGER) {
+            out = lua_tointeger64(state, index, nullptr);
+            return Conversion::Ok;
+        }
+        if (type != LUA_TNUMBER) {
+            return Conversion::WrongKind;
+        }
+        const double number = lua_tonumber(state, index);
+        // The int64 range is [-2^63, 2^63); both bounds are exact doubles.
+        constexpr double limit = 9223372036854775808.0;
+        if (!std::isfinite(number) || std::trunc(number) != number || number < -limit ||
+            number >= limit) {
+            return Conversion::NotWhole;
+        }
+        out = static_cast<std::int64_t>(number);
+        return Conversion::Ok;
+    }
+    }
+    return Conversion::WrongKind;
+}
+
+/// "must be between 1 and 999", "must be at least 0".
+[[nodiscard]] std::string range_text(const reflect::NumericLimits& limits) {
+    if (limits.min && limits.max) {
+        return "must be between " + format_number(*limits.min) + " and " +
+               format_number(*limits.max);
+    }
+    if (limits.min) {
+        return "must be at least " + format_number(*limits.min);
+    }
+    if (limits.max) {
+        return "must be at most " + format_number(*limits.max);
+    }
+    return "is out of range";
+}
+
+/// The message for a value that does not fit a parameter or property. `what` names it, for
+/// example "'Amount' of 'Heal'".
+[[nodiscard]] std::string misfit_message(const std::string& what, reflect::ValueKind kind,
+                                         const reflect::NumericLimits& limits,
+                                         const reflect::ChoiceInfo* choice,
+                                         reflect::SetResult result, const std::string& given) {
+    switch (result) {
+    case reflect::SetResult::OutOfRange:
+        return what + " " + range_text(limits) + ", but was given " + given + ".";
+    case reflect::SetResult::UnknownChoice:
+        return what + " must be " + expected_text(kind, choice) + ", but was given " + given + ".";
+    case reflect::SetResult::NotRepresentable:
+        return what + " cannot hold " + given + ": it is too large or too small.";
+    case reflect::SetResult::ReadOnly:
+        return what + " cannot be changed.";
+    default:
+        return what + " must be " + expected_text(kind, choice) + ", but was given " + given + ".";
+    }
+}
+
+[[nodiscard]] reflect::SetResult to_set_result(Conversion conversion) noexcept {
+    switch (conversion) {
+    case Conversion::Ok:
+        return reflect::SetResult::Ok;
+    case Conversion::UnknownChoice:
+        return reflect::SetResult::UnknownChoice;
+    case Conversion::NotWhole:
+    case Conversion::WrongKind:
+        return reflect::SetResult::WrongKind;
+    }
+    return reflect::SetResult::WrongKind;
+}
+
+[[nodiscard]] reflect::SetResult to_set_result(reflect::CallError error) noexcept {
+    switch (error) {
+    case reflect::CallError::OutOfRange:
+        return reflect::SetResult::OutOfRange;
+    case reflect::CallError::UnknownChoice:
+        return reflect::SetResult::UnknownChoice;
+    case reflect::CallError::NotRepresentable:
+        return reflect::SetResult::NotRepresentable;
+    default:
+        return reflect::SetResult::WrongKind;
+    }
+}
+
+/// Splits "name:12: message" into the line and the message. Leaves the line at 0 if the
+/// text does not start with the script's name.
+void split_location(std::string_view text, std::string_view script, int& line,
+                    std::string& message) {
+    line = 0;
+    message = std::string(text);
+    if (text.size() <= script.size() + 1 || text.substr(0, script.size()) != script ||
+        text[script.size()] != ':') {
+        return;
+    }
+    const std::string_view rest = text.substr(script.size() + 1);
+    int value = 0;
+    const auto [end, ec] = std::from_chars(rest.data(), rest.data() + rest.size(), value);
+    if (ec != std::errc{} || end == rest.data()) {
+        return;
+    }
+    std::string_view after(end, static_cast<std::size_t>(rest.data() + rest.size() - end));
+    if (after.empty() || after.front() != ':') {
+        return;
+    }
+    after.remove_prefix(1);
+    if (!after.empty() && after.front() == ' ') {
+        after.remove_prefix(1);
+    }
+    line = value;
+    message = std::string(after);
+}
+
+/// The current line of the innermost script function on `thread`'s stack, or 0.
+[[nodiscard]] int current_line(lua_State* thread) {
+    lua_Debug info{};
+    for (int level = 0; lua_getinfo(thread, level, "l", &info) != 0; ++level) {
+        if (info.currentline > 0) {
+            return info.currentline;
+        }
+    }
+    return 0;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------------------
+// Internal state
+// ---------------------------------------------------------------------------------------
+
+struct Vm::Impl {
+    Impl(const reflect::Registry& registry_in, VmLimits limits_in)
+        : registry(registry_in), limits(limits_in) {}
+
+    const reflect::Registry& registry;
+    VmLimits limits;
+    lua_State* state{nullptr};
+
+    std::size_t memory_used = 0;
+    bool enforce_memory = false; ///< Only script execution is limited, not host calls.
+
+    std::uint64_t steps_left = 0; ///< In the current run.
+    bool budget_hit = false;      ///< The current run used up its steps.
+    std::uint64_t frame_steps = 0;
+    std::uint64_t steps_last_update = 0;
+
+    bool busy = false;    ///< A script is running; the Vm refuses re-entrant calls.
+    bool collect = false; ///< A task ran out of memory: collect garbage once it is released.
+    Task* current{nullptr};
+
+    std::vector<std::unique_ptr<Script>> scripts;
+    std::vector<std::unique_ptr<Task>> tasks; ///< In start order.
+    std::map<std::string, Binding, std::less<>> bindings;
+    std::vector<ScriptError> errors;
+    std::function<void(std::string_view, std::string_view)> log;
+    std::uint32_t next_script = 1;
+    std::uint32_t next_task = 1;
+
+    void report(ScriptErrorKind kind, std::string script, int line, std::string message) {
+        errors.push_back(ScriptError{kind, std::move(script), line, std::move(message)});
+    }
+
+    /// Creates a task on a new thread of `script`, taking the function on top of the
+    /// script thread's stack.
+    Task& create_task(const Script& script) {
+        lua_State* thread = lua_newthread(script.thread);
+        const int ref = lua_ref(script.thread, -1);
+        lua_pop(script.thread, 1);
+        lua_xmove(script.thread, thread, 1);
+        auto task = std::make_unique<Task>();
+        task->id = TaskId{next_task++};
+        task->script = &script;
+        task->thread = thread;
+        task->ref = ref;
+        tasks.push_back(std::move(task));
+        return *tasks.back();
+    }
+
+    /// Resumes `task` with `arguments` values on its stack. Returns true if it is waiting.
+    bool resume(Task& task, int arguments) {
+        busy = true;
+        current = &task;
+        steps_left = limits.steps_per_run;
+        budget_hit = false;
+        enforce_memory = true;
+        const int status = lua_resume(task.thread, nullptr, arguments);
+        enforce_memory = false;
+        current = nullptr;
+        busy = false;
+
+        if (budget_hit) {
+            report_budget(task, status);
+            return false;
+        }
+        if (status == LUA_YIELD) {
+            lua_settop(task.thread, 0);
+            return true;
+        }
+        if (status == LUA_OK) {
+            return false;
+        }
+        report_failure(task, status);
+        return false;
+    }
+
+    void report_budget(const Task& task, int status) {
+        int line = 0;
+        if (status != LUA_OK && status != LUA_YIELD && lua_type(task.thread, -1) == LUA_TSTRING) {
+            std::string ignored;
+            split_location(string_at(task.thread, -1), task.script->name, line, ignored);
+        }
+        if (line == 0) {
+            line = current_line(task.thread);
+        }
+        report(ScriptErrorKind::Budget, task.script->name, line,
+               "Stopped because it ran too long without waiting. Check for a loop that never "
+               "ends, or add a wait inside it.");
+    }
+
+    void report_failure(const Task& task, int status) {
+        const std::string& name = task.script->name;
+        if (status == LUA_ERRMEM) {
+            collect = true;
+            report(ScriptErrorKind::Memory, name, current_line(task.thread),
+                   "Stopped because the scripts used more than " +
+                       format_number(static_cast<double>(limits.memory_bytes) / (1024.0 * 1024.0)) +
+                       " MB of memory.");
+            return;
+        }
+        int line = 0;
+        std::string message;
+        if (lua_type(task.thread, -1) == LUA_TSTRING) {
+            split_location(string_at(task.thread, -1), name, line, message);
+        } else {
+            message = "The script raised an error that is not text.";
+        }
+        if (line == 0) {
+            line = current_line(task.thread);
+        }
+        report(ScriptErrorKind::Runtime, name, line, std::move(message));
+    }
+
+    void release(Task& task) {
+        lua_unref(state, task.ref);
+        task.ref = LUA_NOREF;
+        task.finished = true;
+    }
+
+    /// Removes finished tasks. After a memory error, also frees the memory the failed task
+    /// held, so that other scripts have room again: scripts cannot collect garbage
+    /// themselves, because Luau has no collectgarbage().
+    void remove_finished() {
+        std::erase_if(tasks, [](const std::unique_ptr<Task>& task) { return task->finished; });
+        if (collect) {
+            collect = false;
+            lua_gc(state, LUA_GCCOLLECT, 0);
+        }
+    }
+
+    [[nodiscard]] Task* find_task(TaskId id) const noexcept {
+        for (const auto& task : tasks) {
+            if (task->id == id && !task->finished) {
+                return task.get();
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] const Script* find_script(ScriptId id) const noexcept {
+        for (const auto& script : scripts) {
+            if (script->id == id) {
+                return script.get();
+            }
+        }
+        return nullptr;
+    }
+};
+
+namespace {
+
+[[nodiscard]] Vm::Impl& impl_of(lua_State* state) {
+    return *static_cast<Vm::Impl*>(lua_callbacks(state)->userdata);
+}
+
+/// Memory for the VM, counted against VmLimits::memory_bytes while scripts run.
+void* allocate(void* user, void* block, std::size_t old_size, std::size_t new_size) {
+    auto& impl = *static_cast<Vm::Impl*>(user);
+    const std::size_t old_counted = block != nullptr ? old_size : 0;
+    if (new_size == 0) {
+        std::free(block); // NOLINT(cppcoreguidelines-no-malloc): Luau's allocator contract
+        impl.memory_used -= old_counted;
+        return nullptr;
+    }
+    if (impl.enforce_memory && new_size > old_counted &&
+        impl.memory_used - old_counted + new_size > impl.limits.memory_bytes) {
+        return nullptr;
+    }
+    void* grown = std::realloc(block, new_size); // NOLINT(cppcoreguidelines-no-malloc)
+    if (grown == nullptr) {
+        return nullptr;
+    }
+    impl.memory_used = impl.memory_used - old_counted + new_size;
+    return grown;
+}
+
+/// Called by Luau at safepoints: loop back edges, calls and returns (gc < 0), and during
+/// garbage collection (gc >= 0). Counts steps and stops runs that use up their budget.
+void interrupt(lua_State* state, int gc) {
+    if (gc >= 0) {
+        return;
+    }
+    Vm::Impl& impl = impl_of(state);
+    ++impl.frame_steps;
+    if (impl.steps_left > 0) {
+        --impl.steps_left;
+        return;
+    }
+    // Keep raising at every later safepoint, so that a pcall in the script cannot swallow
+    // the stop.
+    impl.budget_hit = true;
+    lua_rawcheckstack(state, 1);
+    luaL_error(state, "%s", budget_message);
+}
+
+[[nodiscard]] const Binding& object_argument(lua_State* state, const char* function) {
+    if (lua_type(state, 1) != LUA_TSTRING) {
+        raise(state, std::string(function) +
+                         " needs an object name as its first value, but was given " +
+                         given_text(state, 1) + ".");
+    }
+    Vm::Impl& impl = impl_of(state);
+    const std::string_view name = string_at(state, 1);
+    const auto found = impl.bindings.find(name);
+    if (found == impl.bindings.end()) {
+        raise(state, "There is no object called " + quoted(name) + ".");
+    }
+    return found->second;
+}
+
+[[nodiscard]] std::string_view name_argument(lua_State* state, int index, const char* function,
+                                             const char* what) {
+    if (lua_type(state, index) != LUA_TSTRING) {
+        raise(state, std::string(function) + " needs " + what + " name, but was given " +
+                         given_text(state, index) + ".");
+    }
+    return string_at(state, index);
+}
+
+/// sx.call(object, function, ...): runs an action, condition or value getter.
+int script_call(lua_State* state) {
+    const Binding& binding = object_argument(state, "sx.call");
+    const std::string_view object_name = string_at(state, 1);
+    const std::string_view function_id = name_argument(state, 2, "sx.call", "a function");
+    const reflect::FunctionInfo* function = binding.type->find_function(function_id);
+    if (function == nullptr) {
+        raise(state, quoted(object_name) + " has no action, condition or value called " +
+                         quoted(function_id) + ".");
+    }
+    const std::string function_name = quoted(function->meta.display_name);
+    const std::size_t given = static_cast<std::size_t>(lua_gettop(state) - 2);
+    const std::size_t needed = function->parameters.size();
+    if (given != needed) {
+        raise(state, function_name + " needs " + std::to_string(needed) +
+                         (needed == 1 ? " value" : " values") + ", but was given " +
+                         std::to_string(given) + ".");
+    }
+
+    std::vector<reflect::Value> arguments(needed);
+    for (std::size_t i = 0; i < needed; ++i) {
+        const reflect::ParameterInfo& parameter = function->parameters[i];
+        const int index = static_cast<int>(i) + 3;
+        const Conversion converted =
+            to_value(state, index, parameter.kind, parameter.choice, arguments[i]);
+        if (converted != Conversion::Ok) {
+            raise(state,
+                  misfit_message(quoted(parameter.meta.display_name) + " of " + function_name,
+                                 parameter.kind, parameter.limits, parameter.choice,
+                                 to_set_result(converted), given_text(state, index)));
+        }
+    }
+
+    const reflect::CallResult result = reflect::call(binding.object, *function, arguments);
+    if (!result.ok()) {
+        if (result.error == reflect::CallError::WrongType ||
+            result.error == reflect::CallError::WrongArgumentCount) {
+            raise(state, function_name + " could not be run on " + quoted(object_name) + ".");
+        }
+        const reflect::ParameterInfo& parameter = function->parameters[result.argument];
+        raise(state, misfit_message(quoted(parameter.meta.display_name) + " of " + function_name,
+                                    parameter.kind, parameter.limits, parameter.choice,
+                                    to_set_result(result.error),
+                                    given_text(state, static_cast<int>(result.argument) + 3)));
+    }
+    if (result.value) {
+        push_value(state, *result.value, function->result_choice);
+        return 1;
+    }
+    return 0;
+}
+
+[[nodiscard]] const reflect::PropertyInfo&
+property_argument(lua_State* state, const Binding& binding, const char* function) {
+    const std::string_view property_id = name_argument(state, 2, function, "a property");
+    const reflect::PropertyInfo* property = binding.type->find_property(property_id);
+    if (property == nullptr) {
+        raise(state,
+              quoted(string_at(state, 1)) + " has no property called " + quoted(property_id) + ".");
+    }
+    return *property;
+}
+
+/// sx.get(object, property): reads a property.
+int script_get(lua_State* state) {
+    const Binding& binding = object_argument(state, "sx.get");
+    const reflect::PropertyInfo& property = property_argument(state, binding, "sx.get");
+    const std::optional<reflect::Value> value = reflect::get_property(binding.object, property);
+    if (!value) {
+        raise(state, quoted(property.meta.display_name) + " could not be read.");
+    }
+    push_value(state, *value, property.choice);
+    return 1;
+}
+
+/// sx.set(object, property, value): writes a property.
+int script_set(lua_State* state) {
+    const Binding& binding = object_argument(state, "sx.set");
+    const reflect::PropertyInfo& property = property_argument(state, binding, "sx.set");
+    const std::string what =
+        quoted(property.meta.display_name) + " of " + quoted(string_at(state, 1));
+    if (lua_gettop(state) != 3) {
+        raise(state, "sx.set needs an object, a property and one value.");
+    }
+    reflect::Value value;
+    const Conversion converted = to_value(state, 3, property.kind, property.choice, value);
+    reflect::SetResult result = to_set_result(converted);
+    if (result == reflect::SetResult::Ok) {
+        result = reflect::set_property(binding.object, property, value);
+    }
+    if (result != reflect::SetResult::Ok) {
+        raise(state, misfit_message(what, property.kind, property.limits, property.choice, result,
+                                    given_text(state, 3)));
+    }
+    return 0;
+}
+
+/// sx.wait(seconds): pauses the task.
+int script_wait(lua_State* state) {
+    const Vm::Impl& impl = impl_of(state);
+    const double seconds = lua_type(state, 1) == LUA_TNUMBER ? lua_tonumber(state, 1) : -1.0;
+    if (lua_gettop(state) != 1 || !std::isfinite(seconds) || seconds < 0.0) {
+        raise(state, "sx.wait needs one number of seconds, 0 or more, but was given " +
+                         given_text(state, 1) + ".");
+    }
+    Task* task = impl.current;
+    if (task == nullptr || task->thread != state || lua_isyieldable(state) == 0) {
+        raise(state, "sx.wait can only be used directly in a sequence, not inside a "
+                     "coroutine or a callback.");
+    }
+    task->wait_left = seconds;
+    return lua_yield(state, 0);
+}
+
+/// sx.log(...) and print(...): sends the values, separated by spaces, to the log handler.
+int script_log(lua_State* state) {
+    const Vm::Impl& impl = impl_of(state);
+    std::string text;
+    const int count = lua_gettop(state);
+    for (int i = 1; i <= count; ++i) {
+        std::size_t length = 0;
+        const char* piece = luaL_tolstring(state, i, &length);
+        if (i > 1) {
+            text += ' ';
+        }
+        text.append(piece, length);
+        lua_pop(state, 1);
+    }
+    if (impl.log) {
+        const std::string_view script =
+            impl.current != nullptr ? std::string_view(impl.current->script->name) : "";
+        impl.log(script, text);
+    }
+    return 0;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------------------
+// Vm
+// ---------------------------------------------------------------------------------------
+
+Vm::Vm(const reflect::Registry& registry, VmLimits limits)
+    : impl_(std::make_unique<Impl>(registry, limits)) {
+    lua_State* state = lua_newstate(&allocate, impl_.get());
+    if (state == nullptr) {
+        return;
+    }
+    impl_->state = state;
+    lua_callbacks(state)->userdata = impl_.get();
+
+    luaL_openlibs(state);
+    lua_pushcfunction(state, &script_log, "print");
+    lua_setglobal(state, "print");
+
+    constexpr std::array<std::pair<const char*, lua_CFunction>, 5> api{{
+        {"call", &script_call},
+        {"get", &script_get},
+        {"set", &script_set},
+        {"wait", &script_wait},
+        {"log", &script_log},
+    }};
+    lua_createtable(state, 0, static_cast<int>(api.size()));
+    for (const auto& [name, function] : api) {
+        lua_pushcfunction(state, function, name);
+        lua_setfield(state, -2, name);
+    }
+    lua_setglobal(state, "sx");
+
+    // Makes every library table, including sx, read-only.
+    luaL_sandbox(state);
+    lua_callbacks(state)->interrupt = &interrupt;
+}
+
+Vm::~Vm() {
+    if (impl_->state != nullptr) {
+        lua_close(impl_->state);
+    }
+}
+
+bool Vm::bind(std::string_view name, reflect::ObjectRef object) {
+    if (impl_->busy || !reflect::is_valid_id(name) || object.is_null()) {
+        return false;
+    }
+    const reflect::TypeInfo* type = impl_->registry.find_type(object);
+    if (type == nullptr || impl_->bindings.contains(name)) {
+        return false;
+    }
+    impl_->bindings.emplace(std::string(name), Binding{object, type});
+    return true;
+}
+
+bool Vm::unbind(std::string_view name) {
+    if (impl_->busy) {
+        return false;
+    }
+    const auto found = impl_->bindings.find(name);
+    if (found == impl_->bindings.end()) {
+        return false;
+    }
+    impl_->bindings.erase(found);
+    return true;
+}
+
+std::optional<ScriptId> Vm::load(std::string_view name, std::string_view source) {
+    Impl& impl = *impl_;
+    if (impl.busy || impl.state == nullptr) {
+        return std::nullopt;
+    }
+    if (!is_valid_script_name(name)) {
+        impl.report(ScriptErrorKind::Compile, std::string(name), 0,
+                    "A script name must be 1 to 128 letters, digits, '_', '-', '.' or '/'.");
+        return std::nullopt;
+    }
+
+    lua_CompileOptions options{};
+    options.optimizationLevel = 1;
+    options.debugLevel = 1; // Line numbers, for errors and the block debug map.
+    std::size_t size = 0;
+    const std::unique_ptr<char, decltype(&std::free)> bytecode(
+        luau_compile(source.data(), source.size(), &options, &size), &std::free);
+    if (bytecode == nullptr) {
+        impl.report(ScriptErrorKind::Compile, std::string(name), 0,
+                    "The script could not be compiled.");
+        return std::nullopt;
+    }
+
+    auto script = std::make_unique<Script>();
+    script->name = std::string(name);
+    script->thread = lua_newthread(impl.state);
+    script->ref = lua_ref(impl.state, -1);
+    lua_pop(impl.state, 1);
+    luaL_sandboxthread(script->thread);
+
+    const std::string chunk_name = "=" + script->name;
+    if (luau_load(script->thread, chunk_name.c_str(), bytecode.get(), size, 0) != 0) {
+        int line = 0;
+        std::string message;
+        split_location(string_at(script->thread, -1), script->name, line, message);
+        impl.report(ScriptErrorKind::Compile, script->name, line, std::move(message));
+        lua_unref(impl.state, script->ref);
+        return std::nullopt;
+    }
+
+    Task& task = impl.create_task(*script);
+    const std::size_t errors_before = impl.errors.size();
+    const bool waiting = impl.resume(task, 0);
+    const bool failed = impl.errors.size() != errors_before;
+    if (failed) {
+        // The top level failed. No other task of this script can exist yet, so the script
+        // is dropped.
+        lua_unref(impl.state, script->ref);
+    }
+    if (!waiting) {
+        impl.release(task);
+        impl.remove_finished();
+    }
+    if (failed) {
+        return std::nullopt;
+    }
+    script->id = ScriptId{impl.next_script++};
+    const ScriptId id = script->id;
+    impl.scripts.push_back(std::move(script));
+    return id;
+}
+
+std::optional<TaskId> Vm::start(ScriptId script_id, std::string_view function,
+                                std::span<const reflect::Value> arguments) {
+    Impl& impl = *impl_;
+    if (impl.busy || impl.state == nullptr) {
+        return std::nullopt;
+    }
+    const Script* script = impl.find_script(script_id);
+    if (script == nullptr) {
+        return std::nullopt;
+    }
+    const std::string function_name(function);
+    lua_getfield(script->thread, LUA_GLOBALSINDEX, function_name.c_str());
+    if (lua_type(script->thread, -1) != LUA_TFUNCTION) {
+        lua_pop(script->thread, 1);
+        impl.report(ScriptErrorKind::Runtime, script->name, 0,
+                    "The script has no function called " + quoted(function) + ".");
+        return std::nullopt;
+    }
+    Task& task = impl.create_task(*script);
+    if (arguments.size() > 200 ||
+        lua_checkstack(task.thread, static_cast<int>(arguments.size())) == 0) {
+        impl.release(task);
+        impl.remove_finished();
+        impl.report(ScriptErrorKind::Runtime, script->name, 0,
+                    "Too many values were given to " + quoted(function) + ".");
+        return std::nullopt;
+    }
+    for (const reflect::Value& argument : arguments) {
+        push_value(task.thread, argument, nullptr);
+    }
+    const TaskId id = task.id;
+    const std::size_t errors_before = impl.errors.size();
+    const bool waiting = impl.resume(task, static_cast<int>(arguments.size()));
+    if (!waiting) {
+        impl.release(task);
+        impl.remove_finished();
+    }
+    if (impl.errors.size() != errors_before) {
+        return std::nullopt;
+    }
+    return id;
+}
+
+void Vm::update(double seconds) {
+    Impl& impl = *impl_;
+    if (impl.busy || impl.state == nullptr) {
+        return;
+    }
+    if (!std::isfinite(seconds) || seconds < 0.0) {
+        seconds = 0.0;
+    }
+    impl.frame_steps = 0;
+    // Tasks cannot be added while this runs: bound functions cannot call start().
+    for (const auto& task : impl.tasks) {
+        task->wait_left -= seconds;
+    }
+    for (const auto& task : impl.tasks) {
+        if (task->finished || task->wait_left > wait_epsilon) {
+            continue;
+        }
+        if (impl.frame_steps >= impl.limits.steps_per_frame) {
+            break; // The rest resume in the next update, still in order.
+        }
+        if (!impl.resume(*task, 0)) {
+            impl.release(*task);
+        }
+    }
+    impl.steps_last_update = impl.frame_steps;
+    impl.remove_finished();
+}
+
+bool Vm::is_running(TaskId task) const noexcept {
+    return impl_->find_task(task) != nullptr;
+}
+
+bool Vm::stop(TaskId task_id) {
+    Impl& impl = *impl_;
+    if (impl.busy) {
+        return false;
+    }
+    Task* task = impl.find_task(task_id);
+    if (task == nullptr) {
+        return false;
+    }
+    impl.release(*task);
+    impl.remove_finished();
+    return true;
+}
+
+std::size_t Vm::task_count() const noexcept {
+    return static_cast<std::size_t>(
+        std::count_if(impl_->tasks.begin(), impl_->tasks.end(),
+                      [](const std::unique_ptr<Task>& task) { return !task->finished; }));
+}
+
+void Vm::set_log_handler(std::function<void(std::string_view, std::string_view)> handler) {
+    impl_->log = std::move(handler);
+}
+
+const std::vector<ScriptError>& Vm::errors() const noexcept {
+    return impl_->errors;
+}
+
+void Vm::clear_errors() noexcept {
+    impl_->errors.clear();
+}
+
+std::size_t Vm::memory_used() const noexcept {
+    return impl_->memory_used;
+}
+
+std::uint64_t Vm::steps_last_update() const noexcept {
+    return impl_->steps_last_update;
+}
+
+} // namespace engine::logic

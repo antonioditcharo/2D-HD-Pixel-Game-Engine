@@ -19,7 +19,7 @@ place. There is no engine to use yet.
 | Owner decisions (licence, scope, team) | Recorded: [`docs/plan/09`](docs/plan/09-risks-quality-legal.md) §5 |
 | Product name | **Sparxel**, chosen after a preliminary screening ([`docs/research/05`](docs/research/05-name-screening.md) §7). Professional trademark clearance still needed |
 | Build system, tests and CI | In place: [`docs/dev/building.md`](docs/dev/building.md) |
-| Engine | Started: the reflection registry, with settings, choice lists and the no-code building parts (actions, conditions, values, events) ([`docs/dev/reflection.md`](docs/dev/reflection.md)). Next: the Phase 0 prototypes ([`docs/plan/08`](docs/plan/08-roadmap.md)) |
+| Engine | Started. The reflection registry: settings, choice lists and the no-code building parts (actions, conditions, values, events) ([`docs/dev/reflection.md`](docs/dev/reflection.md)). The logic runtime's script host: a sandboxed Luau VM with waits and budgets ([`docs/dev/logic-runtime.md`](docs/dev/logic-runtime.md)). Next: the rest of the Phase 0 prototypes ([`docs/plan/08`](docs/plan/08-roadmap.md)) |
 | Editor | Not started |
 
 Start with the [executive summary](docs/README.md#executive-summary).

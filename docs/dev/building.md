@@ -1,7 +1,8 @@
 # Building
 
-The repository currently builds one small library (`engine_foundation`) and its unit
-tests. This proves the build, test and CI pipeline before engine work starts.
+The repository builds the engine modules under `engine/` (see
+[repo-layout.md](repo-layout.md)) and one unit-test executable per module. Third-party
+libraries come from vcpkg, as listed in `vcpkg.json`: today Luau and, for tests, doctest.
 
 ## What you need
 

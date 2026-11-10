@@ -62,9 +62,10 @@ This is not legal advice. Each item should be reviewed by qualified counsel befo
 - [x] **Product name** chosen: Sparxel, after a preliminary screening (`research/05` §7).
 - [ ] **Professional trademark clearance** of Sparxel, and a decision on filing it in the
       software classes (`research/05` §7.3). Before any public launch.
-- [ ] **Repository renamed** to "Sparxel-Game-Engine-2DHD". Owner action in GitHub settings.
+- [x] **Repository renamed** to "Sparxel-Game-Engine-2DHD" by the owner.
 - [ ] **Third-party licences:** an automated notices file for the editor and per exported
-      game (`07`, dependency table).
+      game (`07`, dependency table). Until then, `THIRD_PARTY_NOTICES.md` in the repository
+      root is kept by hand.
 - [ ] **LGPL compliance** for Qt and Qt Advanced Docking System: dynamic linking,
       licence texts, relinking instructions (editor only).
 - [ ] **libgit2:** unmodified, or modifications published (GPLv2 with linking exception

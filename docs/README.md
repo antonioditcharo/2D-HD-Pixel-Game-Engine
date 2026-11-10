@@ -130,6 +130,7 @@ Details and the questions that remain open are in
 | [Coding standards](dev/coding-standards.md) | Language rules, naming, formatting |
 | [Repository layout](dev/repo-layout.md) | What lives where |
 | [Reflection registry](dev/reflection.md) | How engine features describe their data for the editor and no-code blocks |
+| [Logic runtime](dev/logic-runtime.md) | The sandboxed Luau VM that runs no-code logic: tasks, waits, budgets, the script API |
 
 ### Sources
 [sources.md](sources.md) lists 104 sources, each with an ID (`[S#]`) and a note on how it was

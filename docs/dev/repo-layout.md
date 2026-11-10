@@ -3,8 +3,9 @@
 ```
 .
 ├── engine/            Runtime code. Everything here can ship inside an exported game.
-│   └── foundation/    Lowest layer: version info and the reflection registry today;
-│                      memory, jobs and logging later.
+│   ├── foundation/    Lowest layer: version info and the reflection registry today;
+│   │                  memory, jobs and logging later.
+│   └── logic/         The logic runtime: the sandboxed Luau VM that runs no-code logic.
 ├── editor/            The editor application (not started). May use engine/, never the
 │                      other way round.
 ├── tests/             Unit tests, one folder per engine module.
