@@ -1,11 +1,11 @@
-# Glimmerbox: Research and Plan
+# Sparxel: Research and Plan
 
 > An analysis of the best existing systems, engines and workflows for making HD-2D-style
 > pixel games. It ends in a plan for a new **Windows-native, all-in-one, no-code** engine
 > that covers every stage of making a game, from first sketch to Steam release.
 >
-> **Glimmerbox** is the product name, chosen on 10 November 2026 after the screening in
-> [`research/05`](research/05-name-screening.md). It still needs professional trademark
+> **Sparxel** is the product name, chosen on 10 November 2026. Its screening is in
+> [`research/05`](research/05-name-screening.md) §7. It still needs professional trademark
 > clearance before any public launch. "Diorama" now names only the HD-2D-style render
 > style and the Diorama Builder tool.
 
@@ -20,7 +20,7 @@
 | Optional scripting | Hidden until 1.0; Custom Blocks first |
 | AI assistant | Work starts after the Early Access / beta release |
 | Minimum hardware | Decided after the rendering prototype is measured |
-| Product name | **Glimmerbox** (chosen 10 November 2026; professional clearance still needed) |
+| Product name | **Sparxel** (chosen 10 November 2026, replacing Glimmerbox; professional clearance still needed) |
 
 Details and the questions that remain open are in
 [`plan/09`](plan/09-risks-quality-legal.md) §5 and §6.
@@ -131,7 +131,7 @@ Details and the questions that remain open are in
 | [Repository layout](dev/repo-layout.md) | What lives where |
 
 ### Sources
-[sources.md](sources.md) lists 103 sources, each with an ID (`[S#]`) and a note on how it was
+[sources.md](sources.md) lists 104 sources, each with an ID (`[S#]`) and a note on how it was
 verified.
 
 ---

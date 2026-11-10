@@ -143,7 +143,7 @@
   - C99 and C++17 APIs;
   - a web-based explorer for debugging.
 
-  Prefabs, relationships and reflection map directly onto Glimmerbox's prefabs, links and
+  Prefabs, relationships and reflection map directly onto Sparxel's prefabs, links and
   generated inspectors.
 - **Alternatives:** EnTT, a widely used C++ ECS that is a viable option but was not evaluated
   in depth here, and a custom ECS (cost). flecs is preferred because its documented
@@ -192,7 +192,7 @@
   with a WASAPI backend, a node graph for mixing and effects, and optional 3D
   spatialization. It decodes WAV, FLAC and MP3. Vorbis/OGG needs an added, permissively
   licensed decoder, to be selected later.
-- **Glimmerbox builds on top of it:** buses, snapshots, ducking, adaptive music, zones and
+- **Sparxel builds on top of it:** buses, snapshots, ducking, adaptive music, zones and
   footstep surfaces.
 - **Alternatives:** FMOD or Wwise as the core engine. Those add licence tiers (Wwise is
   free under a US$250K budget [S55]) and an external authoring tool. They are planned as
@@ -204,7 +204,7 @@
   - **FreeType** under its FreeType License: BSD-style with a credit clause [S80].
   - **HarfBuzz** under the "Old MIT" licence [S79].
   - First-class **bitmap pixel fonts**.
-- **Obligation:** FreeType's credit clause. Glimmerbox auto-adds a credits entry in exported
+- **Obligation:** FreeType's credit clause. Sparxel auto-adds a credits entry in exported
   games' credits template and documentation.
 
 ## ADR-011: Project and asset formats

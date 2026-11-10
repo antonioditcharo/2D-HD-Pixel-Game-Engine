@@ -1,6 +1,6 @@
 # Plan 08: Roadmap, Milestones and Team
 
-> A phased plan from an empty repository to Glimmerbox 1.0. Each phase ends at a **gate** with
+> A phased plan from an empty repository to Sparxel 1.0. Each phase ends at a **gate** with
 > explicit exit criteria. Work does not move on until the gate passes, which is how scope
 > and quality stay under control (`09`, risk R-01).
 >
@@ -260,7 +260,7 @@ Order of work for one developer. "Week" is a unit of ordering here, not a promis
 | Step | Actions | Status |
 |---|---|---|
 | 1 | Approve the plan and answer the open questions in `09` | Done (`09` §5) |
-| 1 | Screen candidate product names and choose one | Done: **Glimmerbox** (`research/05` §6) |
+| 1 | Screen candidate product names and choose one | Done: **Sparxel** (`research/05` §7) |
 | 1 | Set up the repository structure, licence, CMake, vcpkg and CI | Done (`docs/dev/`) |
 | 2 | Write coding standards and the folder layout | Done (`docs/dev/`) |
 | 2 | Draft the reflection registry API (it drives everything) | Next |

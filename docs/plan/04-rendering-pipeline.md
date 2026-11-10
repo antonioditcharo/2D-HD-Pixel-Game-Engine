@@ -172,7 +172,7 @@ Ground surfaces use anisotropic filtering at grazing angles.
 ### 8.2 Looks (R-VIS-06)
 - A **Look** asset bundles post settings, fog, ambient light, sky and grading.
 - Looks **blend** by zone (walking into a cave) and by time of day (dusk → night).
-- Glimmerbox ships with tuned presets, for example: *Golden Hour Village*, *Moonlit Forest*,
+- Sparxel ships with tuned presets, for example: *Golden Hour Village*, *Moonlit Forest*,
   *Torch-lit Dungeon*, *Overcast Coast*, *Desert Noon*, *Snowfield*, *Interior Warm*,
   *Battle Dramatic*. Each was created by an artist to keep the pixel-art balance
   (`research/01` §4).

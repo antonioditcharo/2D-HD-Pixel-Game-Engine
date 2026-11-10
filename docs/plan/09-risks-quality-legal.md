@@ -14,7 +14,7 @@ every phase gate.
 | R-03 | **The HD-2D look is hard to tune.** Even professionals invest years in it (Sea of Stars [S15]). | M | H | Phase 0 reference scene; golden-image tests; Look presets reviewed against the checklist in `research/01` §4. When a team forms, a rendering engineer and a technical artist are the first two roles (`08` §6). | Reference scene not reaching the target look or budget by Gate 0 |
 | R-04 | **Editor UX complexity** overwhelms non-coders. | M | H | Usability tests with non-coders at every gate (§3); Basic/Advanced split; glossary (`06` §9); measured SUS and task completion. | SUS < 68 at Gate 2 |
 | R-05 | **Dependency risk:** SDL GPU API feature gaps, Qt licence compliance, library abandonment. | M | M | Own RHI with a D3D12 fallback (ADR-004); no GPL-only Qt modules (ADR-005); only mature, actively maintained libraries; vendored versions. | Spike R finds missing features; upstream inactivity |
-| R-06 | **Trademark:** "HD-2D" is a Square Enix trademark [S11][S12][S13]. The repository name "2D-HD" is close to it. | M | H | Never use "HD-2D" in product name or marketing; describe the style generically ("pixel diorama", "2.5D pixel art"); the product name Glimmerbox was screened (`research/05`); professional clearance before public launch; rename the repository to the product name (owner action). | Any marketing copy using the term |
+| R-06 | **Trademark:** "HD-2D" is a Square Enix trademark [S11][S12][S13]. The repository name contains "2D-HD" (planned rename: "Sparxel-Game-Engine-2DHD", which contains "2DHD"), close to that mark. | M | H | Never use "HD-2D" in product name or marketing; describe the style generically ("pixel diorama", "2.5D pixel art"); the product name Sparxel was screened (`research/05` §7); professional clearance before public launch; the owner chose to keep "2DHD" in the repository name, so never use it in marketing copy. | Any marketing copy using the term |
 | R-07 | **IP similarity in templates and kits:** copying specific games' assets, characters or signature mechanics. | L | H | All template art and audio is original; battle systems are configurable and generic; legal review of templates before release. | Template reviews flag resemblance |
 | R-08 | **Data loss** in user projects. | L | H | Command journal, autosave, crash recovery, snapshots, atomic writes, format migrations with backups (`06` §5). | Any data-loss report |
 | R-09 | **Texel and pixel inconsistency** makes user games look "off". | M | M | PPU enforcement, texel-density view, Project Doctor warnings (R-VIS-07). | Template or user scenes failing the density view |
@@ -59,10 +59,10 @@ every phase gate.
 
 This is not legal advice. Each item should be reviewed by qualified counsel before release.
 
-- [x] **Product name** chosen: Glimmerbox, after a preliminary screening (`research/05`).
-- [ ] **Professional trademark clearance** of Glimmerbox, and a decision on filing it in
-      the software classes (`research/05` §6). Before any public launch.
-- [ ] **Repository renamed** away from "2D-HD" (R-06). Owner action in GitHub settings.
+- [x] **Product name** chosen: Sparxel, after a preliminary screening (`research/05` §7).
+- [ ] **Professional trademark clearance** of Sparxel, and a decision on filing it in the
+      software classes (`research/05` §7.3). Before any public launch.
+- [ ] **Repository renamed** to "Sparxel-Game-Engine-2DHD". Owner action in GitHub settings.
 - [ ] **Third-party licences:** an automated notices file for the editor and per exported
       game (`07`, dependency table).
 - [ ] **LGPL compliance** for Qt and Qt Advanced Docking System: dynamic linking,
@@ -95,7 +95,7 @@ The project owner answered the original open questions on 9 November 2026.
 | Q-06 | AI assistant | **Work starts after the Early Access / beta release (Gate 5).** Opt-in and logic-only. | `06` §8; `02` Q5 |
 | Q-07 | Minimum hardware target | **Decide after the rendering spike** (Spike R) has measurements. | ADR-001; `08` Phase 0 |
 | Q-08 | Product name | **Screen 3–5 candidate names** for trademark and product conflicts, then choose. | `research/05`; R-06 |
-| Q-09 | Final product name (decided 10 November 2026) | **Glimmerbox.** Chosen knowing the screening rated it moderate risk. | `research/05` §6; R-06 |
+| Q-09 | Final product name (decided 10 November 2026) | **Sparxel.** It replaced Glimmerbox, chosen earlier the same day. | `research/05` §7; R-06 |
 
 ## 6. Open questions
 

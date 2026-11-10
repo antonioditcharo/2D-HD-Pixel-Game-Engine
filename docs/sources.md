@@ -125,7 +125,8 @@ browser, and the results were read directly.
 | S100 | David Steeman, "Building a TiltBox": https://www.steeman.be/posts/building-a-tiltbox/ · Cromwell Tools, bott "Perfo Tilt Box": https://cromwell.co.uk/shop/storage-handling-and-packaging/small-parts-storage-cabinet/perfo-tilt-box-polypropylene-grey-transparent-600x68x78mm-27-compartments/p/BOT4051034P | A hobby handheld console and storage boxes named TiltBox | Indexed |
 | S101 | Lantern Studio: https://lantern-studio.com/about | A game studio using "Lantern" | Indexed |
 | S102 | Justia Trademarks, GLIMMER STUDIOS: https://trademark.justia.com/976/37/glimmer-97637759.html · Glimmerjam LLC: https://trademark.justia.com/owners/glimmerjam-llc-3383077 | Nearby "Glimmer" marks for game and app software | Indexed; third-party directory |
-| S103 | Registry RDAP lookups: Verisign (`.com`) https://rdap.verisign.com/com/v1/domain/glimmerbox.com · Public Interest Registry (`.org`) https://rdap.publicinterestregistry.org/rdap/domain/glimmerbox.org · Google Registry (`.dev`, `.app`) https://pubapi.registry.google/rdap/domain/glimmerbox.dev | Registration status of glimmerbox domains | Fetched (live query) |
+| S103 | Registry RDAP lookups: Verisign (`.com`, `.net`) https://rdap.verisign.com/com/v1/domain/sparxel.com · Public Interest Registry (`.org`) https://rdap.publicinterestregistry.org/rdap/domain/sparxel.org · Google Registry (`.dev`, `.app`) https://pubapi.registry.google/rdap/domain/sparxel.dev · Identity Digital (`.io`) https://rdap.identitydigital.services/rdap/domain/sparxel.io | Registration status of glimmerbox and sparxel domains | Fetched (live query) |
+| S104 | Wikipedia, "Sparx Systems": https://en.wikipedia.org/wiki/Sparx_Systems · Wikipedia, "Sparx* Studios": https://en.wikipedia.org/wiki/Sparx*_Studios | Similar names in software and games | Indexed |
 
 ## Technology stack
 

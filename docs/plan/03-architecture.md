@@ -1,6 +1,6 @@
 # Plan 03: Architecture
 
-> How Glimmerbox is structured: runtime vs editor, modules, data flow, project format, asset
+> How Sparxel is structured: runtime vs editor, modules, data flow, project format, asset
 > pipeline, logic pipeline, threading, play-in-editor and export.
 >
 > Technology choices are justified in [`07-tech-stack-adrs.md`](07-tech-stack-adrs.md).
@@ -108,7 +108,7 @@ flowchart TB
 
 ```
 MyGame/
-├── project.glimmerbox.json      # project settings: name, PPU, render style, palette, version
+├── project.sparxel.json         # project settings: name, PPU, render style, palette, version
 ├── assets/
 │   ├── sprites/hero.dsprite      # layered pixel document (layers, frames, tags, slices, maps)
 │   ├── sprites/hero.dsprite.meta # GUID, import settings, cached hashes
@@ -124,7 +124,7 @@ MyGame/
 │   ├── ui/pause_menu.dui
 │   └── looks/golden_hour.dlook
 ├── localization/strings.en.csv ...
-├── .glimmerbox/                  # local caches; never committed (cooked data, thumbnails)
+├── .sparxel/                     # local caches; never committed (cooked data, thumbnails)
 └── .git/ (optional)              # snapshots and history (ADR-012)
 ```
 

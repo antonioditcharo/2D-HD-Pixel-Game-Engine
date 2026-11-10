@@ -1,6 +1,6 @@
 # Plan 05: The No-Code Logic System
 
-> How non-coders build complete game logic in Glimmerbox. This implements the conclusions of
+> How non-coders build complete game logic in Sparxel. This implements the conclusions of
 > [`../research/04-no-code-paradigms.md`](../research/04-no-code-paradigms.md):
 > lessons L1–L10.
 >

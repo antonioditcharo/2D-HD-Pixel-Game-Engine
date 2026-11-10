@@ -143,10 +143,12 @@ obstacle.
 4. **After choosing:** rename the GitHub repository (its current name is close to
    "HD-2D"), and check that a matching domain name is available. Neither was checked here.
 
-## 6. Decision (10 November 2026)
+## 6. First decision: Glimmerbox (superseded)
 
-The owner chose **Glimmerbox**, knowing this screening rated it moderate risk. It is now
-the product name throughout the plan (`plan/09` §5, Q-09).
+> Superseded the same day: the owner then chose **Sparxel** instead (§7). This section is
+> kept as a record.
+
+The owner first chose **Glimmerbox**, knowing this screening rated it moderate risk.
 
 ### 6.1 Domain names (checked 10 November 2026)
 
@@ -177,3 +179,46 @@ unrelated, but it is worth watching. If a domain matters, register `glimmerbox.d
 3. **Keep branding away from puzzles and toys** to reduce overlap with the class 28 mark.
 4. **Rename the GitHub repository**, for example to `glimmerbox`. Only the owner can do
    this, in the repository settings. GitHub redirects the old URL afterwards.
+
+## 7. Final decision: Sparxel (10 November 2026)
+
+The owner chose **Sparxel**, a new candidate, and asked for the repository to be renamed
+"Sparxel-Game-Engine-2DHD". Sparxel was screened the same way as the first five names, on
+the same day (`plan/09` §5, Q-09).
+
+### 7.1 Screening results
+
+| Where | What was found |
+|---|---|
+| **US register** [S94] | No result for "sparxel", "sparxels", "sparkxel" or "sparxl". The nearest live marks start with **SPARX**: SPARX FORGE (pending, class 42, software platforms), SPARX by Sparx Technologies (pending, classes 9 and 42, chemical sensing), and SPARX by Sparx Limited (registered, classes 38 and 41, telecommunications) |
+| **EU register** [S95] | No result for "sparxel". **SPARXELL** (an international registration designating the EU, Sparxell UK Limited) covers classes 1 and 2, which are chemicals and paints, not software. **Sparxly** is registered in classes 9 and 45 |
+| **Games on Steam** [S97] | No results |
+| **GitHub** [S98] | 6 repositories, none with stars, none a game tool. A personal GitHub account named **Sparxel** exists, so `github.com/sparxel` is taken |
+| **Web** [S104] | No product called Sparxel was found. Similar names in software and games: **Sparx Systems**, maker of the Enterprise Architect modelling tool, and **Sparx\* Studios**, an animation, VFX and game-art studio owned by Virtuos |
+
+### 7.2 Domain names (checked 10 November 2026) [S103]
+
+| Domain | Status found |
+|---|---|
+| sparxel.com | **Registered** since 23 October 2009, through the registrar Namescout. Its name servers point to a "your domain has expired" holding service, so it is parked, not in active use. It is **not** free to register today |
+| sparxel.dev | Not registered |
+| sparxel.app | Not registered |
+| sparxel.org | Not registered |
+| sparxel.net | Not registered |
+| sparxel.io | Not registered |
+| sparxel.gg | Not checked: the registry's lookup service did not respond |
+
+### 7.3 Assessment and remaining steps (Analysis)
+
+- **Risk found: low to moderate.** No identical mark exists on either register and no
+  product uses the name, which is better than Glimmerbox. The open question for a
+  professional is how close "Sparxel" is to the existing **SPARX** marks and names in
+  software and games (Sparx Systems, Sparx\* Studios, SPARX FORGE).
+- **Domain:** if a domain matters, register `sparxel.dev`, `sparxel.app` or `sparxel.io`
+  now. The `.com` would have to be bought from its current holder, or registered only if
+  it lapses.
+- **Professional clearance** for classes 9, 41 and 42 before any public launch, then
+  consider filing, which also settles Q-12 (`plan/09` §6).
+- **Repository name:** "Sparxel-Game-Engine-2DHD" still contains "2DHD", which is close to
+  Square Enix's "HD-2D" mark (R-06). That is a reasonable descriptive choice for a
+  repository, but the term should stay out of the product name and marketing.

@@ -1,9 +1,9 @@
 # Plan 01: Vision, Users and Principles
 
-> Product name: **Glimmerbox**, chosen by the owner on 10 November 2026 from the screened
-> candidates in `research/05`. It still needs professional trademark clearance before any
-> public launch, and the product must never be called "HD-2D" (see `research/01` §1 and
-> `09-risks-quality-legal.md`, R-06).
+> Product name: **Sparxel**, chosen by the owner on 10 November 2026 (`research/05` §7). It
+> replaced the earlier choice, Sparxel. It still needs professional trademark clearance
+> before any public launch, and the product must never be called "HD-2D" (see
+> `research/01` §1 and `09-risks-quality-legal.md`, R-06).
 >
 > "Diorama" in these documents now names only the HD-2D-style **render style** and the
 > **Diorama Builder** tool, never the product.
@@ -12,7 +12,7 @@
 
 ## 1. Vision
 
-> **Glimmerbox is a Windows-native, all-in-one, no-code game engine for making beautiful
+> **Sparxel is a Windows-native, all-in-one, no-code game engine for making beautiful
 > HD-2D-style pixel games. Every step from the first sketch to a shipped game on Steam
 > happens in one app, and none of it requires writing code.**
 
@@ -96,7 +96,7 @@ kits follow at 1.0 (`08` §5).
 The engine must cover every stage below. Each stage maps to a workspace in `06` and to
 systems in `02`.
 
-| # | Stage | Glimmerbox workspace(s) |
+| # | Stage | Sparxel workspace(s) |
 |---|---|---|
 | 1 | Start a project (genre, style, resolution, palette) | **Home** (project wizard, templates) |
 | 2 | Define the art direction | **Home → Style Guide**, **Look** |
@@ -127,7 +127,7 @@ systems in `02`.
 | Iteration | Edit → visible in the running game | < 1 s for logic, data and art changes |
 | Stability | Editor sessions without a crash (opt-in telemetry) | ≥ 99.5% |
 | Safety | User-reported data-loss incidents after beta | 0 |
-| Shipping | A game made only with Glimmerbox released publicly before 1.0 | Yes (the vertical slice, as a free demo on itch.io or Steam) |
+| Shipping | A game made only with Sparxel released publicly before 1.0 | Yes (the vertical slice, as a free demo on itch.io or Steam) |
 
 All targets are initial proposals. Each is validated or adjusted at the Phase 0 and Phase 2
 gates (`08-roadmap.md`).
