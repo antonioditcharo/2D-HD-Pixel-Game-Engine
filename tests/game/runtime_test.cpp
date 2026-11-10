@@ -370,6 +370,95 @@ TEST_CASE("Walls stop the hero, who slides along them") {
     CHECK(box.bottom == 2.0);
 }
 
+TEST_CASE("Characters face the way they walk") {
+    using game::Facing;
+    using game::facing_for;
+    CHECK(facing_for(Facing::Down, 0.0, 0.0) == Facing::Down); // standing: unchanged
+    CHECK(facing_for(Facing::Down, 1.0, 0.0) == Facing::Right);
+    CHECK(facing_for(Facing::Down, -1.0, 0.0) == Facing::Left);
+    CHECK(facing_for(Facing::Left, 0.0, -1.0) == Facing::Up);
+    CHECK(facing_for(Facing::Up, 0.0, 1.0) == Facing::Down);
+    // Diagonals keep a matching facing, else turn horizontally.
+    CHECK(facing_for(Facing::Up, 1.0, -1.0) == Facing::Up);
+    CHECK(facing_for(Facing::Right, 1.0, -1.0) == Facing::Right);
+    CHECK(facing_for(Facing::Down, 1.0, -1.0) == Facing::Right);
+    CHECK(facing_for(Facing::Left, 1.0, 1.0) == Facing::Right);
+}
+
+TEST_CASE("Walk animations cycle the facing row and stand still on the standing frame") {
+    game::TopDownMover mover;
+    game::WalkAnimation walk; // 3 frames per direction, 6 per second, back and forth
+    scene2d::Sprite sprite;
+    const auto frames = [&](int steps) {
+        std::vector<std::uint32_t> seen;
+        for (int i = 0; i < steps; ++i) {
+            game::update_walk(mover, walk, sprite, 1.0 / 60.0);
+            seen.push_back(sprite.frame);
+        }
+        return seen;
+    };
+    // Standing, facing down (row 0): the middle frame.
+    CHECK(frames(1) == std::vector<std::uint32_t>{1});
+    // Walking right (row 2, frames 6 to 8): a new frame every 10 steps, 6, 7, 8, 7, 6, ...
+    mover.facing = game::Facing::Right;
+    mover.moving = true;
+    std::vector<std::uint32_t> walked = frames(50);
+    CHECK(walked[0] == 6);
+    CHECK(walked[8] == 6);
+    CHECK(walked[9] == 7);
+    CHECK(walked[19] == 8);
+    CHECK(walked[29] == 7);
+    CHECK(walked[39] == 6);
+    CHECK(walked[49] == 7);
+    // Stopping shows the standing frame of the same row and resets the cycle.
+    mover.moving = false;
+    CHECK(frames(1) == std::vector<std::uint32_t>{7});
+    CHECK(walk.elapsed == 0.0);
+    // Starting over instead of back and forth; up is row 3.
+    walk.ping_pong = false;
+    mover.facing = game::Facing::Up;
+    mover.moving = true;
+    walked = frames(40);
+    CHECK(walked[9] == 10);
+    CHECK(walked[19] == 11);
+    CHECK(walked[29] == 9);
+    // Out-of-range settings are clamped.
+    walk.standing_frame = 99;
+    walk.frames_per_direction = 0;
+    mover.moving = false;
+    CHECK(frames(1) == std::vector<std::uint32_t>{3}); // one frame per row: row 3, frame 0
+}
+
+TEST_CASE("The runtime turns and animates a walking hero") {
+    const Project project;
+    input::Recording replay;
+    replay.record(0, key(input::Key::Left), true);
+    replay.record(40, key(input::Key::Left), false);
+    const auto runtime = project.open(no_graphics(&replay));
+    world::World& w = runtime->world();
+    const world::Entity hero = w.find_named("hero").at(0);
+    REQUIRE(w.add<game::WalkAnimation>(hero) != nullptr);
+
+    for (int i = 0; i < 25; ++i) {
+        runtime->step();
+    }
+    const game::TopDownMover* mover = w.get<game::TopDownMover>(hero);
+    CHECK(mover->facing == game::Facing::Left);
+    CHECK(mover->moving);
+    CHECK(w.get<scene2d::Sprite>(hero)->frame == 5); // row 1, third frame (steps 20-29)
+    for (int i = 0; i < 20; ++i) {
+        runtime->step();
+    }
+    CHECK_FALSE(w.get<game::TopDownMover>(hero)->moving);
+    CHECK(w.get<game::TopDownMover>(hero)->facing == game::Facing::Left);
+    CHECK(w.get<scene2d::Sprite>(hero)->frame == 4); // standing frame of row 1
+
+    // A disabled mover stops walking in place.
+    w.get<game::TopDownMover>(hero)->enabled = false;
+    runtime->step();
+    CHECK_FALSE(w.get<game::TopDownMover>(hero)->moving);
+}
+
 TEST_CASE("Problems are reported with the file they are in") {
     const Project project;
     std::vector<serialize::Issue> issues;

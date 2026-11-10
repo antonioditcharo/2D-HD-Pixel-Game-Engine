@@ -55,6 +55,9 @@ struct ProjectSettings {
 // Behaviours
 // ---------------------------------------------------------------------------------------
 
+/// The four directions a character can face, in the row order of a character sheet.
+enum class Facing : std::uint8_t { Down, Left, Right, Up };
+
 /// "Top-down Mover" (plan/05 §3.1): moves the entity with the move_up, move_down,
 /// move_left and move_right actions. Diagonals are as fast as straight lines. Solid
 /// tilemaps stop it: its hitbox, centred on the bottom of its position (the feet), slides
@@ -64,7 +67,31 @@ struct TopDownMover {
     bool enabled = true;
     double hitbox_width = 0.75; ///< In tiles.
     double hitbox_height = 0.5; ///< In tiles, upwards from the position.
+    Facing facing = Facing::Down;
+    bool moving = false; ///< A move action was held in the last step (read-only).
 };
+
+/// The direction to face when moving by (dx, dy), from `current`: unchanged when not
+/// moving; on a diagonal, unchanged if `current` is one of its two directions, otherwise
+/// the horizontal one.
+[[nodiscard]] Facing facing_for(Facing current, double dx, double dy) noexcept;
+
+/// "Walk Animation": shows a character sheet's row for the mover's facing (down, left,
+/// right, up, from the top), cycling through its frames while moving and showing the
+/// standing frame when not. The Sprite's frame size must be set to one cell of the sheet.
+/// Do not combine it with an Animation on the same entity: the Animation would win.
+struct WalkAnimation {
+    std::uint32_t frames_per_direction = 3;
+    double frames_per_second = 6.0;
+    std::uint32_t standing_frame = 1; ///< Counted from 0 within the row.
+    /// Back and forth (0, 1, 2, 1, 0, …) rather than starting over (0, 1, 2, 0, …).
+    bool ping_pong = true;
+    double elapsed = 0.0; ///< Seconds walked since the last stop (hidden).
+};
+
+/// Advances `walk` by `seconds` for a mover and sets `sprite`'s frame.
+void update_walk(const TopDownMover& mover, WalkAnimation& walk, scene2d::Sprite& sprite,
+                 double seconds);
 
 /// The box an entity with `mover` at (x, y) occupies, for collisions.
 [[nodiscard]] scene2d::Box hitbox(const TopDownMover& mover, double x, double y);

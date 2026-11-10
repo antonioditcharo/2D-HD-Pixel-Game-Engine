@@ -128,6 +128,8 @@ Behaviours are components that give an entity a capability with no logic to writ
 | `speed` | Tiles per second, 0 to 64 (default 4) |
 | `enabled` | Turn off to stop the player moving, for example in a cutscene |
 | `hitbox_width`, `hitbox_height` (advanced) | The feet, in tiles: 0.75 wide and 0.5 deep by default, centred on the bottom of the position |
+| `facing` | Down, left, right or up. Set by walking; logic can set it too, to turn a character |
+| `moving` (read-only) | Whether a move action was held in the last step |
 
 It walks with the `move_up`, `move_down`, `move_left` and `move_right` actions, so the
 arrow keys, WASD and the gamepad's d-pad all work. **Diagonals are as fast as straight
@@ -136,6 +138,27 @@ lines** (the direction is normalised; tested).
 **Walls.** Solid tilemaps ([scene2d.md](scene2d.md) §4) stop the hitbox exactly at their
 edge. Movement is resolved along x, then along y, so walking diagonally into a wall
 slides along it at the diagonal speed (tested).
+
+**Facing.** Walking straight faces that way. Walking diagonally keeps the current facing
+if it is one of the two directions (so walking up-right while facing up still faces up),
+and otherwise faces left or right.
+
+### Walk Animation
+
+The **Walk Animation** component (`walk_animation`) shows a character sheet: one row per
+facing, in the order down, left, right, up from the top, each with the frames of a walk
+cycle. Set the Sprite's frame size to one cell of the sheet.
+
+| Property | Meaning |
+|---|---|
+| `frames_per_direction` | Frames in each row (default 3) |
+| `frames_per_second` | Speed of the cycle while walking (default 6) |
+| `standing_frame` | The frame shown when standing still, counted from 0 (default 1, the middle) |
+| `ping_pong` (advanced) | Back and forth, 0-1-2-1, rather than starting over, 0-1-2-0 (default on) |
+
+While walking, the row's frames cycle in fixed steps; on stopping, the standing frame of
+the row shows and the cycle starts again next time. Do not combine it with an Animation
+on the same entity: the Animation runs later in the step and would win.
 
 ## 5. Logic meets the world
 
@@ -205,6 +228,7 @@ drawing (`plan/03` §7).
 | Recorded input | A temporary project on disk. Right held for 30 steps, in frames of one and two steps, walks the hero exactly 2 tiles; the game-start Rule logs once; Cancel does not trigger the Interact Rule, Interact does; the torch's one-shot animation runs its "finished" Rule once, at 0.3 s |
 | Diagonals | Right and down for one second move 4/√2 tiles on each axis; a disabled mover stays put |
 | Walls | Walking right stops with the hitbox on the wall (x = 2.625 for a wall at 3); adding down slides along it at the diagonal speed |
+| Facing and walking | Every facing rule; exact frames of the cycle, back and forth and starting over, at 6 frames per second; the standing frame; clamped settings; the runtime turning the hero left and animating it |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
 | Logic and world | Names and GUIDs resolve; an entity's event reaches Rules written with its name and with its GUID, once each; Rules act through several components; logic survives storage moves |
@@ -212,8 +236,8 @@ drawing (`plan/03` §7).
 
 ## 9. Next increments
 
-1. **Walk animations** that follow the Top-down Mover's direction, and touching other
-   characters and triggers, so the hero can explore a village and talk to people.
+1. **Touching other characters and trigger areas,** with "When touched" and "When the
+   player talks to" events, so the hero can explore a village and talk to people.
 2. **Hot reload while playing:** pass asset changes to the texture cache and reload
    changed logic.
 3. **Spawning and destroying from logic,** with entities created by Rules addressable by
