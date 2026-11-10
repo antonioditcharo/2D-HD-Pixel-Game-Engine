@@ -2,19 +2,23 @@
 // by the runtime and played with recorded input. The drawing test needs a GPU; the others
 // run without graphics, as servers and tools do.
 
+#include "engine/game/logic_world.h"
 #include "engine/game/runtime.h"
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "support/gpu.h"
@@ -136,6 +140,24 @@ struct Project {
 
         logic::LogicAsset rules;
         rules.name = "main";
+        rules.variables.push_back(logic::Variable{"visits", reflect::ValueKind::Int, "",
+                                                  reflect::Value{std::int64_t{0}}});
+        // Cancel saves in slot 2 and Menu loads it, as a pause menu would.
+        const auto pressed = [](const char* action) {
+            return ir::compare(logic::CompareOp::Equal, ir::event_value("action"), text(action));
+        };
+        rules.rules.push_back(logic::Rule{logic::BlockId{20},
+                                          "input",
+                                          "pressed",
+                                          {pressed("cancel")},
+                                          {ir::do_action(21, "game", "save", {whole(2)})},
+                                          {}});
+        rules.rules.push_back(logic::Rule{logic::BlockId{22},
+                                          "input",
+                                          "pressed",
+                                          {pressed("menu")},
+                                          {ir::do_action(23, "game", "load", {whole(2)})},
+                                          {}});
         rules.rules.push_back(
             logic::Rule{logic::BlockId{1}, "", "game_start", {}, {ir::log(2, text("start"))}, {}});
         rules.rules.push_back(logic::Rule{
@@ -147,8 +169,16 @@ struct Project {
             {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{5}, "torch", "finished", {}, {ir::log(6, text("torch done"))}, {}});
-        rules.rules.push_back(logic::Rule{
-            logic::BlockId{7}, "elder", "interacted", {}, {ir::log(8, text("talk"))}, {}});
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{7},
+                        "elder",
+                        "interacted",
+                        {},
+                        {ir::log(8, text("talk")),
+                         ir::set_variable(13, "visits",
+                                          ir::arithmetic(logic::ArithmeticOp::Add,
+                                                         ir::variable("visits"), whole(1)))},
+                        {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{9}, "door", "entered", {}, {ir::log(10, ir::event_value("who"))}, {}});
         rules.rules.push_back(
@@ -159,6 +189,8 @@ struct Project {
     static logic::Expr text(const char* value) {
         return ir::literal(reflect::Value{std::string(value)});
     }
+
+    static logic::Expr whole(std::int64_t value) { return ir::literal(reflect::Value{value}); }
 
     /// Writes a solid-colour 2 x 2 PNG.
     static void write_png(const fs::path& file, render::Color c) {
@@ -173,7 +205,11 @@ struct Project {
         write_bytes(file, std::string_view(reinterpret_cast<const char*>(png.data()), png.size()));
     }
 
-    [[nodiscard]] std::unique_ptr<game::Runtime> open(const game::RuntimeOptions& options) const {
+    /// Opens the project; saves go to a "saves" folder inside it unless the options say.
+    [[nodiscard]] std::unique_ptr<game::Runtime> open(game::RuntimeOptions options) const {
+        if (options.save_folder.empty()) {
+            options.save_folder = folder.path / "saves";
+        }
         std::vector<serialize::Issue> issues;
         std::unique_ptr<game::Runtime> runtime = game::Runtime::open(folder.path, options, issues);
         INFO(issues_text(issues));
@@ -507,6 +543,140 @@ TEST_CASE("Talking to people and walking through doorways runs their Rules") {
     CHECK(runtime->log() ==
           std::vector<std::string>{"start", "hello", "talk", "torch done", "hero", "bye"});
     CHECK(runtime->vm().errors().empty());
+}
+
+TEST_CASE("Save files are written whole or not at all") {
+    const TempFolder folder;
+    CHECK(game::save_slot_file(folder.path, 7) == folder.path / "slot-07.sparxel-save");
+    CHECK(game::save_slot_file(folder.path, 99).filename() == "slot-99.sparxel-save");
+    CHECK(game::save_slot_file(folder.path, 0).empty());
+    CHECK(game::save_slot_file(folder.path, 100).empty());
+
+    std::string error;
+    const fs::path file = folder.path / "deep" / "er" / "slot.json";
+    REQUIRE(game::write_file_atomically(file, "first", error));  // creates the folders
+    REQUIRE(game::write_file_atomically(file, "second", error)); // replaces the file
+    std::ifstream in(file, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(text == "second");
+    CHECK_FALSE(fs::exists(folder.path / "deep" / "er" / "slot.json.tmp"));
+    // A folder that cannot be made (a file is in the way) fails with a message.
+    CHECK_FALSE(game::write_file_atomically(file / "inside.json", "x", error));
+    CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("A saved game restores the world, the variables and the step") {
+    const Project project;
+    const auto runtime = project.open(no_graphics(nullptr));
+    world::World& w = runtime->world();
+    const auto hero = [&w] { return w.get<scene2d::Transform2D>(w.find_named("hero").at(0)); };
+    for (int i = 0; i < 3; ++i) {
+        runtime->step();
+    }
+    hero()->x = 3.0;
+    REQUIRE(runtime->vm().set_variable("main", "visits", reflect::Value{std::int64_t{2}}));
+    const serialize::Json saved = runtime->save();
+    CHECK(saved["format"] == "sparxel.save");
+    CHECK(saved["game"] == "Test");
+    CHECK(saved["step"] == 3);
+    CHECK(saved["variables"]["main"]["visits"] == 2);
+
+    // Change everything, then load.
+    hero()->x = 7.0;
+    w.destroy(w.find_named("rock").at(0));
+    REQUIRE(runtime->vm().set_variable("main", "visits", reflect::Value{std::int64_t{9}}));
+    runtime->step();
+    std::vector<serialize::Issue> issues;
+    REQUIRE(runtime->load(saved, issues));
+    INFO(issues_text(issues));
+    CHECK(issues.empty());
+    CHECK(hero()->x == 3.0);
+    CHECK(w.find_named("rock").size() == 1);
+    CHECK(runtime->step_count() == 3);
+    CHECK(runtime->vm().variables("main") == std::vector<std::pair<std::string, reflect::Value>>{
+                                                 {"visits", reflect::Value{std::int64_t{2}}}});
+    CHECK(runtime->save() == saved); // an exact round trip
+
+    // Logic reaches the loaded entities: talking to the elder runs its Rule, which counts
+    // a visit from the restored value.
+    const std::array<reflect::Value, 1> by{reflect::Value{std::string("hero")}};
+    CHECK(game::emit(runtime->vm(), w, w.find_named("elder").at(0), "interacted", by));
+    CHECK(runtime->log().back() == "talk");
+    CHECK(runtime->vm().variables("main")[0].second == reflect::Value{std::int64_t{3}});
+
+    // Unusable saves change nothing.
+    const auto refused = [&](const serialize::Json& bad, const char* path) {
+        std::vector<serialize::Issue> problems;
+        hero()->x = 5.0;
+        CHECK_FALSE(runtime->load(bad, problems));
+        REQUIRE(problems.size() == 1);
+        CHECK(problems[0].path == path);
+        CHECK(hero()->x == 5.0);
+    };
+    serialize::Json bad = saved;
+    bad["format"] = "sparxel.scene";
+    refused(bad, "/format");
+    bad = saved;
+    bad["version"] = game::save_version + 1;
+    refused(bad, "/version");
+    bad = saved;
+    bad["game"] = "Another Game";
+    refused(bad, "/game");
+    bad = saved;
+    bad["world"] = serialize::Json::array();
+    hero()->x = 5.0;
+    issues.clear();
+    CHECK_FALSE(runtime->load(bad, issues));
+    CHECK_FALSE(issues.empty());
+    CHECK(hero()->x == 5.0);
+
+    // A variable that no longer exists is reported; the rest still loads.
+    bad = saved;
+    bad["variables"]["main"]["ghost"] = 1;
+    issues.clear();
+    CHECK(runtime->load(bad, issues));
+    REQUIRE(issues.size() == 1);
+    CHECK(issues[0].path == "/variables/main/ghost");
+    CHECK(hero()->x == 3.0);
+}
+
+TEST_CASE("Logic saves and loads slots at the end of the step") {
+    const Project project;
+    input::Recording replay;
+    replay.record(1, key(input::Key::X), true); // Cancel: save in slot 2
+    replay.record(2, key(input::Key::X), false);
+    replay.record(5, key(input::Key::Right), true);
+    replay.record(35, key(input::Key::Right), false);
+    replay.record(40, key(input::Key::Escape), true); // Menu: load slot 2
+    const auto runtime = project.open(no_graphics(&replay));
+    const fs::path slot = game::save_slot_file(runtime->save_folder(), 2);
+    CHECK(runtime->save_folder() == project.folder.path / "saves");
+
+    for (int i = 0; i < 2; ++i) {
+        runtime->step();
+    }
+    CHECK(fs::is_regular_file(slot));
+    for (int i = 0; i < 38; ++i) {
+        runtime->step(); // walks right 2 tiles
+    }
+    CHECK(transform_of(*runtime, "hero").x == doctest::Approx(2.0));
+    runtime->step(); // step 40: Menu loads slot 2
+    CHECK(transform_of(*runtime, "hero").x == 0.0);
+    CHECK(runtime->step_count() == 2); // the step count when it was saved
+    CHECK(runtime->save_problems().empty());
+
+    // Problems are collected, not thrown: loading an empty slot, saving to slot 0.
+    std::vector<serialize::Issue> issues;
+    CHECK_FALSE(runtime->load_from_slot(5, issues));
+    REQUIRE(issues.size() == 1);
+    CHECK(issues[0].message == "Slot 5 has no save.");
+    std::string error;
+    CHECK_FALSE(runtime->save_to_slot(0, error));
+    CHECK(error == "There is no save slot 0; slots go from 1 to 99.");
+    CHECK(runtime->save_to_slot(99, error));
+    issues.clear();
+    CHECK(runtime->load_from_slot(99, issues));
+    CHECK(issues.empty());
 }
 
 TEST_CASE("Problems are reported with the file they are in") {

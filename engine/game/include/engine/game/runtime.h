@@ -11,6 +11,7 @@
 #include "engine/foundation/reflect.h"
 #include "engine/game/behaviours.h"
 #include "engine/game/clock.h"
+#include "engine/game/save.h"
 #include "engine/input/input.h"
 #include "engine/logic/vm.h"
 #include "engine/render/render.h"
@@ -67,6 +68,9 @@ struct RuntimeOptions {
     bool headless = false;
     /// Replays this recording instead of reading the keyboard and gamepads.
     const input::Recording* replay = nullptr;
+    /// Where save slots are kept. Empty: the player's own folder for this game, as the
+    /// operating system suggests (on Windows, under AppData\Roaming\Sparxel).
+    std::filesystem::path save_folder;
     std::string window_title = "Sparxel";
 };
 
@@ -104,6 +108,24 @@ public:
     [[nodiscard]] render::RenderTarget* target() noexcept;
     /// Every line logic wrote with Log blocks, oldest first.
     [[nodiscard]] const std::vector<std::string>& log() const noexcept;
+
+    /// The game's state as a save (format "sparxel.save"): the world, every logic asset's
+    /// variables, and the step count.
+    [[nodiscard]] serialize::Json save() const;
+    /// Goes back to a saved state. Checks the whole save first and changes nothing if it
+    /// cannot be used (another game's, a newer version, a broken world). Waiting Sequences
+    /// stop, as a save does not hold them. Variables that no longer exist, or changed
+    /// kind, keep their current values and are reported. Must not be called while logic
+    /// runs; from logic, use the "game" object, which loads at the end of the step.
+    bool load(const serialize::Json& save, std::vector<serialize::Issue>& issues);
+    /// save() written to a slot of save_folder(), atomically.
+    bool save_to_slot(std::int64_t slot, std::string& error) const;
+    /// load() from a slot of save_folder().
+    bool load_from_slot(std::int64_t slot, std::vector<serialize::Issue>& issues);
+    /// Where save slots go (see RuntimeOptions::save_folder).
+    [[nodiscard]] std::filesystem::path save_folder() const;
+    /// Problems with saving or loading that logic asked for, oldest first.
+    [[nodiscard]] const std::vector<std::string>& save_problems() const noexcept;
 
     struct Impl;
 

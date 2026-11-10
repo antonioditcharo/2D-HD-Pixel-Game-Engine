@@ -16,6 +16,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace engine::logic {
@@ -150,6 +151,10 @@ public:
     [[nodiscard]] bool is_running(TaskId task) const noexcept;
     /// Stops a waiting task. Returns false if it is not running.
     bool stop(TaskId task);
+    /// Stops every waiting task and drops the events waiting to be delivered, for example
+    /// when a saved game is loaded. Rules stay registered. Returns false, doing nothing,
+    /// while a script is running.
+    bool stop_all();
     /// The number of tasks that are waiting.
     [[nodiscard]] std::size_t task_count() const noexcept;
 
@@ -159,6 +164,18 @@ public:
     /// Receives each `sx.trace()` call with the line it was made on. Map the line to a
     /// block with CompiledLogic::block_at_line().
     void set_trace_handler(std::function<void(std::string_view script, int line)> handler);
+
+    /// The names of the loaded scripts, in load order.
+    [[nodiscard]] std::vector<std::string> scripts() const;
+    /// The variables of a script compiled from a logic asset, sorted by name, for saved
+    /// games. Yes/no values come back as Bool, text and choices (their entry id) as Text,
+    /// whole numbers as Int and other numbers as Float. Empty for an unknown script.
+    [[nodiscard]] std::vector<std::pair<std::string, reflect::Value>>
+    variables(std::string_view script) const;
+    /// Sets an existing variable of a script, as variables() reported it. Fails, changing
+    /// nothing, for an unknown script or variable, a value of another kind than the one
+    /// it holds (Int and Float count as one), or while a script is running.
+    bool set_variable(std::string_view script, std::string_view name, const reflect::Value& value);
 
     /// Every problem reported since the last clear_errors(), oldest first.
     [[nodiscard]] const std::vector<ScriptError>& errors() const noexcept;

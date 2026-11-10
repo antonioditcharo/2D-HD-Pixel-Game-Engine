@@ -79,6 +79,28 @@ ctest --preset linux-dev
 
 Add them to the `cmake --preset <name>` line.
 
+## Sanitizers (Linux)
+
+A Debug build with AddressSanitizer and UndefinedBehaviorSanitizer catches memory and
+undefined-behaviour bugs that tests alone miss. CI does not run it yet; run it before
+larger changes:
+
+```sh
+cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize=vptr -fno-omit-frame-pointer -fno-sanitize-recover=all"
+cmake --build build-asan
+ctest --test-dir build-asan --output-on-failure
+```
+
+- **`-fno-sanitize=vptr` is required.** The engine's runtime libraries build without
+  RTTI (exported games stay smaller), while tests build with it. The `vptr` check needs
+  RTTI on both sides: a template instantiated without RTTI (for example a `shared_ptr`
+  control block inside nlohmann/json) has no type information, so the check reports a
+  false "does not point to an object of type" error. Every other check stays on.
+- For the GPU tests on lavapipe, preload the driver as
+  [rendering.md](rendering.md) §6 explains.
+
 ## Checks that CI runs
 
 | Check | Command |

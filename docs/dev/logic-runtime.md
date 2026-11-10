@@ -98,6 +98,17 @@ was added to the reflection registry for this module (`reflect.h`), together wit
   callback such as a `table.sort` comparison: there would be no task to pause.
 - **A task never resumes in the update that started it,** whatever started it. So
   `wait(0)` always means "the next update".
+- **`stop_all()`** stops every waiting task and drops undelivered events, keeping Rules
+  registered: what loading a saved game needs.
+
+### Variables for saved games
+
+A logic asset's variables live in one table per script. Compiled code also keeps it as a
+script-private global, `_VARS` (on the first line, so no line numbers move), so the host
+can read and restore it: `scripts()` lists the loaded scripts, `variables(script)` gives
+each variable's value sorted by name (choices as their entry id; whole numbers as Int),
+and `set_variable(script, name, value)` restores one. It refuses unknown variables and
+values of another kind, so a save cannot add variables a script never declared.
 
 ### Events
 

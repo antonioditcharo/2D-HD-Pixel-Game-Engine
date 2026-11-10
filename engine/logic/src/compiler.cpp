@@ -366,7 +366,9 @@ public:
 
     CompiledLogic run() {
         check_names_and_ids();
-        emit(BlockId{}, "local vars = {}");
+        // The variables are also a script-private global, so saved games can read and
+        // restore them (Vm::variables()). On one line, so line numbers stay put.
+        emit(BlockId{}, "local vars = {}; _VARS = vars");
         variables();
         for (const Sequence& sequence : asset_.sequences) {
             compile_sequence(sequence);

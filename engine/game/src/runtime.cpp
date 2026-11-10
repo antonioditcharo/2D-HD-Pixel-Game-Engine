@@ -3,12 +3,16 @@
 #include "engine/game/logic_world.h"
 #include "engine/logic/compiler.h"
 
+#include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_stdinc.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
 #include <iterator>
 #include <utility>
+#include <variant>
 
 namespace engine::game {
 
@@ -210,6 +214,7 @@ void register_types(reflect::Registry& registry) {
     scene2d::register_types(registry);
     input::register_types(registry);
     register_behaviours(registry);
+    register_save_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -229,6 +234,8 @@ struct Runtime::Impl {
     std::unique_ptr<world::World> world;
     input::InputState state;
     input::InputObject input_object;
+    SaveObject save_object;
+    std::vector<std::string> save_problems;
     std::unique_ptr<logic::Vm> vm;
     FixedStepClock clock;
     const input::Recording* replay{nullptr};
@@ -300,6 +307,25 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         // still run; only logic that reads input is affected.
         issues.push_back(
             serialize::Issue{"", "The input object could not be made available to logic."});
+    }
+    // Saves go where asked, or else to the player's own folder for this game, found (and
+    // created) only when a save is first used.
+    r.save_object = SaveObject([folder = options.save_folder, name = r.settings.name,
+                                root = fs::path(root)]() -> fs::path {
+        if (!folder.empty()) {
+            return folder;
+        }
+        char* pref = SDL_GetPrefPath("Sparxel", name.c_str());
+        if (pref == nullptr) {
+            return root / "saves";
+        }
+        fs::path path(std::u8string(reinterpret_cast<const char8_t*>(pref)));
+        SDL_free(pref);
+        return path;
+    });
+    if (!r.vm->bind("game", reflect::ObjectRef::of(r.save_object))) {
+        issues.push_back(
+            serialize::Issue{"", "The game object could not be made available to logic."});
     }
     r.vm->set_log_handler(
         [&r](std::string_view, std::string_view text) { r.log.emplace_back(text); });
@@ -427,6 +453,23 @@ void Runtime::step() {
         emit(*r.vm, *r.world, entity, "finished");
     }
     ++r.steps;
+
+    // 6. Saving and loading that logic asked for, now that no script is running.
+    for (const SaveObject::Request& request : r.save_object.take_requests()) {
+        if (request.load) {
+            std::vector<serialize::Issue> issues;
+            if (!load_from_slot(request.slot, issues) || !issues.empty()) {
+                for (const serialize::Issue& issue : issues) {
+                    r.save_problems.push_back(issue.path + ": " + issue.message);
+                }
+            }
+        } else {
+            std::string error;
+            if (!save_to_slot(request.slot, error)) {
+                r.save_problems.push_back(error);
+            }
+        }
+    }
 }
 
 bool Runtime::frame(double seconds) {
@@ -491,6 +534,168 @@ render::RenderTarget* Runtime::target() noexcept {
 
 const std::vector<std::string>& Runtime::log() const noexcept {
     return impl_->log;
+}
+
+// ---------------------------------------------------------------------------------------
+// Saved games
+// ---------------------------------------------------------------------------------------
+
+serialize::Json Runtime::save() const {
+    const Impl& r = *impl_;
+    serialize::Json json = serialize::Json::object();
+    json["format"] = save_format;
+    json["version"] = save_version;
+    json["game"] = r.settings.name;
+    json["step"] = r.steps;
+    json["world"] = serialize::scene_to_json(*r.world);
+    serialize::Json variables = serialize::Json::object();
+    for (const std::string& script : r.vm->scripts()) {
+        serialize::Json values = serialize::Json::object();
+        for (const auto& [name, value] : r.vm->variables(script)) {
+            std::visit([&values, &name](const auto& v) { values[name] = v; }, value);
+        }
+        variables[script] = std::move(values);
+    }
+    json["variables"] = std::move(variables);
+    return json;
+}
+
+bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& issues) {
+    Impl& r = *impl_;
+    const auto refuse = [&issues](const char* path, std::string message) {
+        issues.push_back(serialize::Issue{path, std::move(message)});
+        return false;
+    };
+    if (!json.is_object()) {
+        return refuse("", "A save must be a group of named values.");
+    }
+    const auto format = json.find("format");
+    if (format == json.end() || !format->is_string() ||
+        format->get_ref<const std::string&>() != save_format) {
+        return refuse("/format", "This is not a Sparxel save.");
+    }
+    const auto version = json.find("version");
+    if (version == json.end() || !version->is_number_integer() ||
+        version->get<std::int64_t>() < 1) {
+        return refuse("/version", "The format version is missing or not a whole number above 0.");
+    }
+    if (version->get<std::int64_t>() > save_version) {
+        return refuse("/version",
+                      "This save was made by a newer version of the game. Update it to load it.");
+    }
+    const auto game = json.find("game");
+    if (game == json.end() || !game->is_string() ||
+        game->get_ref<const std::string&>() != r.settings.name) {
+        return refuse("/game", "This save belongs to another game.");
+    }
+    const auto step = json.find("step");
+    if (step == json.end() || !step->is_number_unsigned()) {
+        return refuse("/step", "The step count is missing or not a whole number.");
+    }
+    const auto saved_world = json.find("world");
+    if (saved_world == json.end()) {
+        return refuse("/world", "The saved world is missing.");
+    }
+    const auto variables = json.find("variables");
+    if (variables == json.end() || !variables->is_object()) {
+        return refuse("/variables", "The saved variables are missing.");
+    }
+
+    // Check the world in a scratch world first, so a broken save changes nothing.
+    {
+        world::World scratch(r.registry);
+        scene2d::register_components(scratch);
+        register_behaviour_components(scratch);
+        serialize::SceneLoad trial = serialize::scene_from_json(*saved_world, scratch);
+        if (trial.entities.empty() && !trial.issues.empty()) {
+            for (serialize::Issue& issue : trial.issues) {
+                issue.path = "/world" + issue.path;
+                issues.push_back(std::move(issue));
+            }
+            return false;
+        }
+    }
+
+    // Replace the world, stop what was running, and restore the variables.
+    r.vm->stop_all();
+    for (const world::Entity root : r.world->roots()) {
+        r.world->destroy(root);
+    }
+    serialize::SceneLoad loaded = serialize::scene_from_json(*saved_world, *r.world);
+    for (serialize::Issue& issue : loaded.issues) {
+        issue.path = "/world" + issue.path;
+        issues.push_back(std::move(issue));
+    }
+    for (const auto& [script, values] : variables->items()) {
+        if (!values.is_object()) {
+            issues.push_back(
+                serialize::Issue{"/variables/" + script, "This must be a group of named values."});
+            continue;
+        }
+        for (const auto& [name, value] : values.items()) {
+            std::optional<reflect::Value> restored;
+            if (value.is_boolean()) {
+                restored = reflect::Value{value.get<bool>()};
+            } else if (value.is_number_integer()) {
+                restored = reflect::Value{value.get<std::int64_t>()};
+            } else if (value.is_number_float()) {
+                restored = reflect::Value{value.get<double>()};
+            } else if (value.is_string()) {
+                restored = reflect::Value{value.get<std::string>()};
+            }
+            if (!restored || !r.vm->set_variable(script, name, *restored)) {
+                std::string where = "/variables/";
+                where += script;
+                where += '/';
+                where += name;
+                issues.push_back(serialize::Issue{
+                    std::move(where),
+                    "This variable no longer exists or holds another kind of value. It "
+                    "keeps its current value."});
+            }
+        }
+    }
+    r.steps = step->get<std::uint64_t>();
+    // Movers already standing in trigger areas are inside, not walking in.
+    static_cast<void>(update_triggers(*r.world));
+    return true;
+}
+
+bool Runtime::save_to_slot(std::int64_t slot, std::string& error) const {
+    const fs::path folder = impl_->save_object.folder();
+    const fs::path file = save_slot_file(folder, slot);
+    if (file.empty()) {
+        error = "There is no save slot " + std::to_string(slot) + "; slots go from 1 to " +
+                std::to_string(max_save_slot) + ".";
+        return false;
+    }
+    return write_file_atomically(file, serialize::to_text(save()), error);
+}
+
+bool Runtime::load_from_slot(std::int64_t slot, std::vector<serialize::Issue>& issues) {
+    const fs::path file = save_slot_file(impl_->save_object.folder(), slot);
+    std::error_code ec;
+    if (file.empty() || !fs::is_regular_file(file, ec)) {
+        issues.push_back(serialize::Issue{"", "Slot " + std::to_string(slot) + " has no save."});
+        return false;
+    }
+    std::ifstream in(file, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<serialize::Issue> found;
+    const std::optional<serialize::Json> json = serialize::parse(text, found);
+    if (!json) {
+        add_issues(issues, file.filename().generic_string(), std::move(found));
+        return false;
+    }
+    return load(*json, issues);
+}
+
+std::filesystem::path Runtime::save_folder() const {
+    return impl_->save_object.folder();
+}
+
+const std::vector<std::string>& Runtime::save_problems() const noexcept {
+    return impl_->save_problems;
 }
 
 } // namespace engine::game

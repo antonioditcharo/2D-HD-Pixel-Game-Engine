@@ -1015,6 +1015,109 @@ bool Vm::emit(std::string_view object, std::string_view event,
     return true;
 }
 
+std::vector<std::string> Vm::scripts() const {
+    std::vector<std::string> names;
+    names.reserve(impl_->scripts.size());
+    for (const std::unique_ptr<Script>& script : impl_->scripts) {
+        names.push_back(script->name);
+    }
+    return names;
+}
+
+namespace {
+
+const Script* script_named(const std::vector<std::unique_ptr<Script>>& scripts,
+                           std::string_view name) {
+    for (const std::unique_ptr<Script>& script : scripts) {
+        if (script->name == name) {
+            return script.get();
+        }
+    }
+    return nullptr;
+}
+
+/// A script value as a reflected value, if it is one a variable can hold.
+std::optional<reflect::Value> variable_value(lua_State* state, int index) {
+    switch (lua_type(state, index)) {
+    case LUA_TBOOLEAN:
+        return reflect::Value{lua_toboolean(state, index) != 0};
+    case LUA_TINTEGER:
+        return reflect::Value{static_cast<std::int64_t>(lua_tointeger64(state, index, nullptr))};
+    case LUA_TNUMBER: {
+        const double number = lua_tonumber(state, index);
+        // Whole numbers that a double holds exactly come back as whole numbers.
+        constexpr double exact = 9007199254740992.0; // 2^53
+        if (std::isfinite(number) && std::floor(number) == number && std::abs(number) <= exact) {
+            return reflect::Value{static_cast<std::int64_t>(number)};
+        }
+        return reflect::Value{number};
+    }
+    case LUA_TSTRING:
+        return reflect::Value{std::string(string_at(state, index))};
+    default:
+        return std::nullopt;
+    }
+}
+
+} // namespace
+
+std::vector<std::pair<std::string, reflect::Value>> Vm::variables(std::string_view script) const {
+    std::vector<std::pair<std::string, reflect::Value>> found;
+    const Script* owner = script_named(impl_->scripts, script);
+    if (owner == nullptr) {
+        return found;
+    }
+    lua_State* state = owner->thread;
+    lua_getfield(state, LUA_GLOBALSINDEX, "_VARS");
+    if (lua_type(state, -1) == LUA_TTABLE) {
+        lua_pushnil(state);
+        while (lua_next(state, -2) != 0) {
+            if (lua_type(state, -2) == LUA_TSTRING) {
+                if (std::optional<reflect::Value> value = variable_value(state, -1)) {
+                    found.emplace_back(std::string(string_at(state, -2)), std::move(*value));
+                }
+            }
+            lua_pop(state, 1);
+        }
+    }
+    lua_pop(state, 1);
+    std::sort(found.begin(), found.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    return found;
+}
+
+bool Vm::set_variable(std::string_view script, std::string_view name, const reflect::Value& value) {
+    if (impl_->busy) {
+        return false;
+    }
+    const Script* owner = script_named(impl_->scripts, script);
+    if (owner == nullptr) {
+        return false;
+    }
+    lua_State* state = owner->thread;
+    lua_getfield(state, LUA_GLOBALSINDEX, "_VARS");
+    if (lua_type(state, -1) != LUA_TTABLE) {
+        lua_pop(state, 1);
+        return false;
+    }
+    lua_pushlstring(state, name.data(), name.size());
+    lua_rawget(state, -2);
+    const std::optional<reflect::Value> current = variable_value(state, -1);
+    lua_pop(state, 1);
+    const auto numeric = [](const reflect::Value& v) {
+        return std::holds_alternative<std::int64_t>(v) || std::holds_alternative<double>(v);
+    };
+    const bool fits = current.has_value() &&
+                      (current->index() == value.index() || (numeric(*current) && numeric(value)));
+    if (fits) {
+        lua_pushlstring(state, name.data(), name.size());
+        push_value(state, value, nullptr);
+        lua_rawset(state, -3);
+    }
+    lua_pop(state, 1);
+    return fits;
+}
+
 bool Vm::is_running(TaskId task) const noexcept {
     return impl_->find_task(task) != nullptr;
 }
@@ -1030,6 +1133,21 @@ bool Vm::stop(TaskId task_id) {
     }
     impl.release(*task);
     impl.remove_finished();
+    return true;
+}
+
+bool Vm::stop_all() {
+    Impl& impl = *impl_;
+    if (impl.busy) {
+        return false;
+    }
+    for (const std::unique_ptr<Task>& task : impl.tasks) {
+        if (!task->finished) {
+            impl.release(*task);
+        }
+    }
+    impl.remove_finished();
+    impl.pending_events.clear();
     return true;
 }
 

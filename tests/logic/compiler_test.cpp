@@ -169,7 +169,7 @@ TEST_CASE("The compiler emits readable Luau with one block per line") {
 
     const logic::CompiledLogic compiled = world.compile(asset);
     REQUIRE(compiled.ok());
-    CHECK(compiled.source == "local vars = {}\n"
+    CHECK(compiled.source == "local vars = {}; _VARS = vars\n"
                              "vars[\"count\"] = 0\n"
                              "function seq_greet()\n"
                              "  sx.log(\"hi\")\n"
@@ -567,4 +567,65 @@ TEST_CASE("Names for the host") {
     CHECK(logic::sequence_entry("elder_intro") == "seq_elder_intro");
     CHECK(logic::event_key("chest", "opened") == "chest.opened");
     CHECK(logic::event_key("", "game_start") == "game_start");
+}
+
+TEST_CASE("A script's variables can be read and restored, as saved games need") {
+    World world;
+    logic::LogicAsset asset;
+    asset.name = "story";
+    asset.variables.push_back(
+        logic::Variable{"stage", reflect::ValueKind::Int, "", reflect::Value{std::int64_t{2}}});
+    asset.variables.push_back(
+        logic::Variable{"met_elder", reflect::ValueKind::Bool, "", reflect::Value{true}});
+    asset.variables.push_back(
+        logic::Variable{"speed", reflect::ValueKind::Float, "", reflect::Value{1.5}});
+    asset.variables.push_back(logic::Variable{"hero_name", reflect::ValueKind::Text, "",
+                                              reflect::Value{std::string("Ari")}});
+    asset.variables.push_back(logic::Variable{"heading", reflect::ValueKind::Choice, "facing",
+                                              reflect::Value{std::string("east")}});
+    asset.sequences.push_back(
+        logic::Sequence{logic::BlockId{1}, "report", {ir::log(2, ir::variable("stage"))}});
+    const logic::ScriptId script = world.load(asset);
+
+    CHECK(world.vm.scripts() == std::vector<std::string>{"story"});
+    using Pair = std::pair<std::string, reflect::Value>;
+    CHECK(world.vm.variables("story") ==
+          std::vector<Pair>{{"heading", reflect::Value{std::string("east")}},
+                            {"hero_name", reflect::Value{std::string("Ari")}},
+                            {"met_elder", reflect::Value{true}},
+                            {"speed", reflect::Value{1.5}},
+                            {"stage", reflect::Value{std::int64_t{2}}}});
+    CHECK(world.vm.variables("nothing").empty());
+
+    // Restoring: same kinds only, existing variables only.
+    CHECK(world.vm.set_variable("story", "stage", reflect::Value{std::int64_t{5}}));
+    CHECK(world.vm.set_variable("story", "speed", reflect::Value{std::int64_t{3}}));
+    CHECK(world.vm.set_variable("story", "heading", reflect::Value{std::string("west")}));
+    CHECK_FALSE(world.vm.set_variable("story", "stage", reflect::Value{std::string("five")}));
+    CHECK_FALSE(world.vm.set_variable("story", "met_elder", reflect::Value{std::int64_t{1}}));
+    CHECK_FALSE(world.vm.set_variable("story", "gold", reflect::Value{std::int64_t{1}}));
+    CHECK_FALSE(world.vm.set_variable("nothing", "stage", reflect::Value{std::int64_t{1}}));
+    REQUIRE(world.vm.start(script, logic::sequence_entry("report")));
+    CHECK(world.log == std::vector<std::string>{"5"});
+    CHECK(world.vm.variables("story")[0].second == reflect::Value{std::string("west")});
+    CHECK(world.vm.variables("story")[3].second == reflect::Value{std::int64_t{3}});
+}
+
+TEST_CASE("stop_all() ends waiting sequences but keeps Rules") {
+    World world;
+    logic::LogicAsset asset;
+    asset.name = "cutscene";
+    asset.sequences.push_back(logic::Sequence{
+        logic::BlockId{1}, "walk", {ir::wait(2, number(1.0)), ir::log(3, text("late"))}});
+    asset.rules.push_back(
+        logic::Rule{logic::BlockId{4}, "", "game_start", {}, {ir::log(5, text("rule"))}, {}});
+    const logic::ScriptId script = world.load(asset);
+    REQUIRE(world.vm.start(script, logic::sequence_entry("walk")));
+    CHECK(world.vm.task_count() == 1);
+    CHECK(world.vm.stop_all());
+    CHECK(world.vm.task_count() == 0);
+    world.vm.update(2.0);
+    CHECK(world.log.empty()); // the stopped sequence never logs
+    CHECK(world.vm.emit("", "game_start"));
+    CHECK(world.log == std::vector<std::string>{"rule"});
 }

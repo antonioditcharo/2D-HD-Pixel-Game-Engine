@@ -4,14 +4,15 @@
 > images, a scene and Rules) opens and runs: a hero walks with the keyboard or a gamepad,
 > turning and animating as it goes, stopped by walls and people; Rules react to the game
 > starting, to buttons, to talking to people, to walking through doorways and to
-> animations finishing; and the game draws pixel-perfect into a window that follows the
-> hero. No-code logic reaches the world's entities by name or GUID, through all their
+> animations finishing; the player's progress saves to slots and loads back exactly; and
+> the game draws pixel-perfect into a window that follows the hero. No-code logic reaches the world's entities by name or GUID, through all their
 > components. Every behaviour below is covered by tests.
 >
 > Code: [`engine/game/include/engine/game/`](../../engine/game/include/engine/game/):
 > [`runtime.h`](../../engine/game/include/engine/game/runtime.h),
 > [`behaviours.h`](../../engine/game/include/engine/game/behaviours.h),
-> [`logic_world.h`](../../engine/game/include/engine/game/logic_world.h) and
+> [`logic_world.h`](../../engine/game/include/engine/game/logic_world.h),
+> [`save.h`](../../engine/game/include/engine/game/save.h) and
 > [`clock.h`](../../engine/game/include/engine/game/clock.h). Tests:
 > [`tests/game/`](../../tests/game/).
 
@@ -113,6 +114,7 @@ draws and presents. It returns false when the player closes the window. Each `st
 5. **Animation.** Sprite animations advance ([scene2d.md](scene2d.md) §3). Each one that
    reached its end sends its entity's **"finished"** event, so *"When the torch's
    animation finishes"* Rules run.
+6. **Saving and loading** that logic asked for during the step (§8).
 
 This follows the order in `plan/05` §5 so far; physics, Brains and "continuously" Rules
 take their places in it as they arrive.
@@ -247,7 +249,40 @@ drawing (`plan/03` §7).
 - The runtime numbers its steps itself (`Runtime::step_count()`), which is the step
   number input recordings use.
 
-## 8. Tests
+## 8. Saved games
+
+A save (`Runtime::save()`, format `"sparxel.save"` version 1, `plan/03` §10) holds:
+
+| Entry | What |
+|---|---|
+| `game` | The project's name: another game's saves are refused |
+| `step` | The step count, so recorded input and timers continue from the same step |
+| `world` | Every entity and component, as a scene with GUIDs ([serialization.md](serialization.md) §5), including hidden state such as an animation's time |
+| `variables` | Every logic asset's variables, by asset and name (`Vm::variables()`) |
+
+**Loading** (`Runtime::load()`) checks the whole save first, loading its world into a
+scratch world. A save from another game or a newer version, or a broken world, is
+refused and **changes nothing** (tested). Otherwise the world is replaced, waiting
+Sequences stop (`Vm::stop_all()`; a save does not hold them, so save where none is
+running, as RPGs do at save points), and the variables are restored. A variable that no
+longer exists, or now holds another kind of value, keeps its current value and is
+reported; the rest still loads. Movers standing in Trigger Areas count as already
+inside, so loading does not set off "entered". Saving straight after loading gives the
+same save (tested).
+
+**Slots.** The **Game** object (`game`) gives logic *"Save the game in slot [n]"*, *"Load
+the game from slot [n]"* and the condition *"Slot [n] has a save"*, for slots 1 to 99.
+Saving and loading happen at the end of the step (step 6), after every script has run,
+so no Rule ever sees a half-loaded world. Problems are collected in `save_problems()`.
+
+- Slot files (`slot-07.sparxel-save`) are JSON, written **atomically**: to a temporary
+  file that then replaces the slot in one step, so a crash or power cut while saving
+  leaves the previous save intact.
+- They go in `RuntimeOptions::save_folder`, or by default the player's own folder for the
+  game that the operating system suggests (`SDL_GetPrefPath`; on Windows under
+  `AppData\Roaming\Sparxel`), found only when a save is first used.
+
+## 9. Tests
 
 | Test | Checks |
 |---|---|
@@ -262,8 +297,11 @@ drawing (`plan/03` §7).
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
 | Logic and world | Names and GUIDs resolve; an entity's event reaches Rules written with its name and with its GUID, once each; Rules act through several components; logic survives storage moves |
 | Clock | Exact stepping, stalls and the step cap |
+| Save files | Slot file names and limits; atomic writes creating folders and replacing files, leaving no temporary file; a failed write reported |
+| Saved games | A save restores a moved hero, a destroyed rock, a variable and the step count; an exact round trip; logic acting on the loaded world and its restored variable; other formats, newer versions, other games and broken worlds refused with nothing changed; a vanished variable reported while the rest loads |
+| Slots from logic | Cancel saves in slot 2 and Menu loads it at the end of their steps, putting the hero back; an empty slot and slot 0 reported |
 
-## 9. Next increments
+## 10. Next increments
 
 1. **Dialogue:** a message box with text and choices, shown by a "Say" action, that pauses
    the player until it is closed, so talking to the elder shows words on screen.
