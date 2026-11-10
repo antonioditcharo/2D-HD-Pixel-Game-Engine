@@ -228,6 +228,23 @@ Entity World::find(Guid guid) const {
     return found == impl_->by_guid.end() ? Entity{} : found->second;
 }
 
+std::vector<Entity> World::find_named(std::string_view name) const {
+    std::vector<std::pair<std::uint64_t, Entity>> found;
+    for (const auto& [id, record] : impl_->records) {
+        if (record.name == name) {
+            found.emplace_back(record.order, Entity{id});
+        }
+    }
+    std::sort(found.begin(), found.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<Entity> entities;
+    entities.reserve(found.size());
+    for (const auto& [order, entity] : found) {
+        entities.push_back(entity);
+    }
+    return entities;
+}
+
 std::string_view World::name(Entity entity) const {
     const Record* record = impl_->record(entity);
     return record == nullptr ? std::string_view() : std::string_view(record->name);

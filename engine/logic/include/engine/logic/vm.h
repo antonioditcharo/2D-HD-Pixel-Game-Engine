@@ -82,8 +82,10 @@ struct VmLimits {
 /// | `sx.on(event, function)` | Runs the function as a new task each time the event is emitted |
 /// | `sx.trace()` | Reports the current line to the trace handler (live highlighting) |
 ///
-/// Objects are named with bind(). Choices are passed and returned as entry ids, for
-/// example "north".
+/// Objects are named with bind(), or found by an object resolver (set_object_resolver), for
+/// example the entities of a world. An object may have several parts, such as an entity's
+/// components: `sx.call`, `sx.get` and `sx.set` use the first part that has the member.
+/// Choices are passed and returned as entry ids, for example "north".
 ///
 /// A Vm is not thread-safe, and bound C++ functions must not call back into the Vm that
 /// is running them: such calls are refused.
@@ -102,8 +104,19 @@ public:
     [[nodiscard]] bool bind(std::string_view name, reflect::ObjectRef object);
     /// Removes a binding. Returns false if there was none.
     bool unbind(std::string_view name);
-    /// The type of the object bound to `name`, or null. Suits the compiler's ObjectTypes.
-    [[nodiscard]] const reflect::TypeInfo* bound_type(std::string_view name) const;
+
+    /// Finds objects that are not bound by name, such as entities in a world: given the name
+    /// a script used, returns the parts that make up that object (for an entity, one per
+    /// component), or nothing if there is no such object. Called at every access, so it may
+    /// return different addresses each time, as world storage moves. Parts of unregistered
+    /// types are ignored.
+    using ObjectResolver = std::function<std::vector<reflect::ObjectRef>(std::string_view name)>;
+    /// Sets the resolver, used for names that bind() does not know.
+    void set_object_resolver(ObjectResolver resolver);
+
+    /// The types an object is made of: its bound type, or the types of the parts the resolver
+    /// returns. Empty if there is no such object. Suits the compiler's ObjectTypes.
+    [[nodiscard]] std::vector<const reflect::TypeInfo*> object_types(std::string_view name) const;
 
     /// Compiles `source` and runs its top level as a task, which may wait. Each script has
     /// its own globals. Returns nothing, and reports an error, if the source does not

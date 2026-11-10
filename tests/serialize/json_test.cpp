@@ -379,7 +379,9 @@ TEST_CASE("A loaded logic asset compiles like the original") {
     const serialize::LogicLoad loaded = serialize::logic_from_json(parse_ok(text));
     REQUIRE(loaded.asset.has_value());
     // No objects exist here, so both fail the same way: the comparison is of the outcome.
-    const auto no_objects = [](std::string_view) -> const reflect::TypeInfo* { return nullptr; };
+    const auto no_objects = [](std::string_view) {
+        return std::vector<const reflect::TypeInfo*>{};
+    };
     const logic::CompiledLogic a = logic::compile(asset, registry, no_objects);
     const logic::CompiledLogic b =
         logic::compile(loaded.asset.value_or(logic::LogicAsset{}), registry, no_objects);

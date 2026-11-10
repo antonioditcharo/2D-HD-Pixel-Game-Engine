@@ -322,6 +322,37 @@ struct Type {
     return "+";
 }
 
+/// An object as the compiler sees it: the types of all its parts (an entity has one per
+/// component). Members are looked up across all of them, in order.
+struct Object {
+    std::vector<const reflect::TypeInfo*> types;
+
+    [[nodiscard]] const reflect::PropertyInfo* find_property(std::string_view id) const {
+        for (const reflect::TypeInfo* type : types) {
+            if (const reflect::PropertyInfo* found = type->find_property(id)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const reflect::FunctionInfo* find_function(std::string_view id) const {
+        for (const reflect::TypeInfo* type : types) {
+            if (const reflect::FunctionInfo* found = type->find_function(id)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const reflect::EventInfo* find_event(std::string_view id) const {
+        for (const reflect::TypeInfo* type : types) {
+            if (const reflect::EventInfo* found = type->find_event(id)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+};
+
 struct VariableInfo {
     const Variable* variable{nullptr};
     const reflect::ChoiceInfo* choice{nullptr};
@@ -372,12 +403,18 @@ private:
 
     // --- Lookups ------------------------------------------------------------------------
 
-    [[nodiscard]] const reflect::TypeInfo* object_type(BlockId block, const std::string& object) {
-        const reflect::TypeInfo* type = objects_ ? objects_(object) : nullptr;
-        if (type == nullptr) {
-            error(block, "There is no object called " + quote(object) + ".");
+    /// The types an object is made of, or nothing after reporting that it does not exist.
+    [[nodiscard]] std::optional<Object> object_type(BlockId block, const std::string& object) {
+        Object found;
+        if (objects_) {
+            found.types = objects_(object);
+            std::erase(found.types, nullptr);
         }
-        return type;
+        if (found.types.empty()) {
+            error(block, "There is no object called " + quote(object) + ".");
+            return std::nullopt;
+        }
+        return found;
     }
 
     // --- Asset-level checks -------------------------------------------------------------
@@ -631,8 +668,8 @@ private:
     }
 
     std::optional<std::string> property_code(BlockId where, const Expr& expr, Type& type) {
-        const reflect::TypeInfo* object = object_type(where, expr.object);
-        if (object == nullptr) {
+        const std::optional<Object> object = object_type(where, expr.object);
+        if (!object) {
             return std::nullopt;
         }
         const reflect::PropertyInfo* property = object->find_property(expr.member);
@@ -673,8 +710,8 @@ private:
     }
 
     std::optional<std::string> call_code(BlockId where, const Expr& expr, Type& type) {
-        const reflect::TypeInfo* object = object_type(where, expr.object);
-        if (object == nullptr) {
+        const std::optional<Object> object = object_type(where, expr.object);
+        if (!object) {
             return std::nullopt;
         }
         const reflect::FunctionInfo* function = object->find_function(expr.member);
@@ -892,8 +929,8 @@ private:
     }
 
     void do_statement(const Stmt& stmt) {
-        const reflect::TypeInfo* object = object_type(stmt.id, stmt.object);
-        if (object == nullptr) {
+        const std::optional<Object> object = object_type(stmt.id, stmt.object);
+        if (!object) {
             return;
         }
         const reflect::FunctionInfo* function = object->find_function(stmt.member);
@@ -920,8 +957,8 @@ private:
     }
 
     void set_statement(const Stmt& stmt) {
-        const reflect::TypeInfo* object = object_type(stmt.id, stmt.object);
-        if (object == nullptr) {
+        const std::optional<Object> object = object_type(stmt.id, stmt.object);
+        if (!object) {
             return;
         }
         const reflect::PropertyInfo* property = object->find_property(stmt.member);
@@ -1026,8 +1063,8 @@ private:
             return;
         }
         if (!rule.object.empty()) {
-            const reflect::TypeInfo* object = object_type(rule.id, rule.object);
-            if (object == nullptr) {
+            const std::optional<Object> object = object_type(rule.id, rule.object);
+            if (!object) {
                 return;
             }
             event_ = object->find_event(rule.event);

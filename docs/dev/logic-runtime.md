@@ -67,7 +67,10 @@ was added to the reflection registry for this module (`reflect.h`), together wit
 | `sx.on(event, function)` | Runs the function as a new task each time the event is emitted, with the event's values as arguments |
 | `sx.trace()` | Reports the line it is called from to the trace handler, for live highlighting |
 
-- **Objects** are named by `Vm::bind()`. Names follow the id rules of the registry.
+- **Objects** are named by `Vm::bind()`, whose names follow the id rules of the registry,
+  or found by an object resolver (`Vm::set_object_resolver()`), such as the world's
+  entities ([game.md](game.md)). An object may have several parts, such as an entity's
+  components: the first part with the member asked for is used.
 - **Values** convert by the parameter's kind:
 
   | Kind | Script value |
@@ -184,8 +187,8 @@ have one, so a single condition can be highlighted and explained.
 ### Checking
 
 `compile(asset, registry, objects)` checks the whole asset against the reflection registry
-before generating anything. `objects` says which type each object name has, for example
-`Vm::bound_type`. Every problem becomes a `Diagnostic` on the block, in the same plain
+before generating anything. `objects` gives the types each object name is made of, for
+example `Vm::object_types` or `game::object_types(world)`. Every problem becomes a `Diagnostic` on the block, in the same plain
 language as runtime errors. Examples from the tests:
 
 - *"'Amount' of 'Add gold' must be between 1 and 999, but is 5000."*
@@ -246,12 +249,9 @@ results.
 
 In order:
 
-1. **Object handles:** GUID-based references from the world instead of names bound by
-   hand. (Logic assets are already saved and loaded as JSON: see
-   [serialization.md](serialization.md).)
-2. **More blocks:** parallel steps, "wait until", For each, and text joining.
-3. **Brain runner** (state machines) and **"why didn't this fire?"** support, which
+1. **More blocks:** parallel steps, "wait until", For each, and text joining.
+2. **Brain runner** (state machines) and **"why didn't this fire?"** support, which
    re-evaluates a rule's conditions one by one using their block ids.
-4. **Bytecode caching** per asset, so exported games skip compilation.
-5. **Faster rules:** run rules that cannot wait without creating a coroutine, if
+3. **Bytecode caching** per asset, so exported games skip compilation.
+4. **Faster rules:** run rules that cannot wait without creating a coroutine, if
    profiling shows the need.

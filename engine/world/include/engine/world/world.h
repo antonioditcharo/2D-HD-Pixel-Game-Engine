@@ -143,6 +143,9 @@ public:
     /// The entity with this GUID, or an invalid handle.
     [[nodiscard]] Entity find(Guid guid) const;
 
+    /// The entities with this exact name, in creation order.
+    [[nodiscard]] std::vector<Entity> find_named(std::string_view name) const;
+
     /// The entity's display name. Names need not be unique: references use GUIDs.
     [[nodiscard]] std::string_view name(Entity entity) const;
     bool set_name(Entity entity, std::string_view name);

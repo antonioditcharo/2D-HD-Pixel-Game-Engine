@@ -15,9 +15,11 @@
 
 namespace engine::logic {
 
-/// Tells the compiler the type of each object a logic asset may name, for example from
-/// the map being edited, or Vm::bound_type(). Returns null for unknown objects.
-using ObjectTypes = std::function<const reflect::TypeInfo*(std::string_view object)>;
+/// Tells the compiler what each object a logic asset names is made of: the types of all its
+/// parts, for example every component of an entity in the map being edited, or
+/// Vm::object_types(). Empty for unknown objects. Members are looked up across the parts in
+/// the order given.
+using ObjectTypes = std::function<std::vector<const reflect::TypeInfo*>(std::string_view object)>;
 
 struct CompileOptions {
     /// Emit a call to `sx.trace()` before every block, so the editor can highlight blocks

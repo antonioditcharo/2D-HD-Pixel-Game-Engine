@@ -308,6 +308,25 @@ struct Vm::Impl {
     std::vector<std::unique_ptr<Script>> scripts;
     std::vector<std::unique_ptr<Task>> tasks; ///< In start order.
     std::map<std::string, Binding, std::less<>> bindings;
+    Vm::ObjectResolver resolver;
+
+    /// The parts of the object called `name`: its binding, or what the resolver finds.
+    /// Empty if there is no such object.
+    [[nodiscard]] std::vector<Binding> resolve(std::string_view name) const {
+        if (const auto found = bindings.find(name); found != bindings.end()) {
+            return {found->second};
+        }
+        std::vector<Binding> parts;
+        if (resolver) {
+            for (const reflect::ObjectRef part : resolver(name)) {
+                const reflect::TypeInfo* type = part.is_null() ? nullptr : registry.find_type(part);
+                if (type != nullptr) {
+                    parts.push_back(Binding{part, type});
+                }
+            }
+        }
+        return parts;
+    }
     std::vector<ScriptError> errors;
     std::function<void(std::string_view, std::string_view)> log;
     std::function<void(std::string_view, int)> trace;
@@ -523,19 +542,20 @@ void interrupt(lua_State* state, int gc) {
     luaL_error(state, "%s", budget_message);
 }
 
-[[nodiscard]] const Binding& object_argument(lua_State* state, const char* function) {
+/// The parts of the object named by the first argument. Raises if there is none.
+[[nodiscard]] std::vector<Binding> object_argument(lua_State* state, const char* function) {
     if (lua_type(state, 1) != LUA_TSTRING) {
         raise(state, std::string(function) +
                          " needs an object name as its first value, but was given " +
                          given_text(state, 1) + ".");
     }
-    Vm::Impl& impl = impl_of(state);
+    const Vm::Impl& impl = impl_of(state);
     const std::string_view name = string_at(state, 1);
-    const auto found = impl.bindings.find(name);
-    if (found == impl.bindings.end()) {
+    std::vector<Binding> parts = impl.resolve(name);
+    if (parts.empty()) {
         raise(state, "There is no object called " + quote(name) + ".");
     }
-    return found->second;
+    return parts;
 }
 
 [[nodiscard]] std::string_view name_argument(lua_State* state, int index, const char* function,
@@ -549,11 +569,19 @@ void interrupt(lua_State* state, int gc) {
 
 /// sx.call(object, function, ...): runs an action, condition or value getter.
 int script_call(lua_State* state) {
-    const Binding& binding = object_argument(state, "sx.call");
+    const std::vector<Binding> parts = object_argument(state, "sx.call");
     const std::string_view object_name = string_at(state, 1);
     const std::string_view function_id = name_argument(state, 2, "sx.call", "a function");
-    const reflect::FunctionInfo* function = binding.type->find_function(function_id);
-    if (function == nullptr) {
+    const Binding* owner = nullptr;
+    const reflect::FunctionInfo* function = nullptr;
+    for (const Binding& part : parts) {
+        function = part.type->find_function(function_id);
+        if (function != nullptr) {
+            owner = &part;
+            break;
+        }
+    }
+    if (function == nullptr || owner == nullptr) {
         raise(state, quote(object_name) + " has no action, condition or value called " +
                          quote(function_id) + ".");
     }
@@ -579,7 +607,7 @@ int script_call(lua_State* state) {
         }
     }
 
-    const reflect::CallResult result = reflect::call(binding.object, *function, arguments);
+    const reflect::CallResult result = reflect::call(owner->object, *function, arguments);
     if (!result.ok()) {
         if (result.error == reflect::CallError::WrongType ||
             result.error == reflect::CallError::WrongArgumentCount) {
@@ -598,21 +626,25 @@ int script_call(lua_State* state) {
     return 0;
 }
 
-[[nodiscard]] const reflect::PropertyInfo&
-property_argument(lua_State* state, const Binding& binding, const char* function) {
+/// The part that has the property named by the second argument, and the property.
+/// Raises if no part has it.
+[[nodiscard]] std::pair<Binding, const reflect::PropertyInfo*>
+property_argument(lua_State* state, const std::vector<Binding>& parts, const char* function) {
     const std::string_view property_id = name_argument(state, 2, function, "a property");
-    const reflect::PropertyInfo* property = binding.type->find_property(property_id);
-    if (property == nullptr) {
-        raise(state,
-              quote(string_at(state, 1)) + " has no property called " + quote(property_id) + ".");
+    for (const Binding& part : parts) {
+        if (const reflect::PropertyInfo* property = part.type->find_property(property_id)) {
+            return {part, property};
+        }
     }
-    return *property;
+    raise(state,
+          quote(string_at(state, 1)) + " has no property called " + quote(property_id) + ".");
 }
 
 /// sx.get(object, property): reads a property.
 int script_get(lua_State* state) {
-    const Binding& binding = object_argument(state, "sx.get");
-    const reflect::PropertyInfo& property = property_argument(state, binding, "sx.get");
+    const std::vector<Binding> parts = object_argument(state, "sx.get");
+    const auto [binding, found] = property_argument(state, parts, "sx.get");
+    const reflect::PropertyInfo& property = *found;
     const std::optional<reflect::Value> value = reflect::get_property(binding.object, property);
     if (!value) {
         raise(state, quote(property.meta.display_name) + " could not be read.");
@@ -623,8 +655,9 @@ int script_get(lua_State* state) {
 
 /// sx.set(object, property, value): writes a property.
 int script_set(lua_State* state) {
-    const Binding& binding = object_argument(state, "sx.set");
-    const reflect::PropertyInfo& property = property_argument(state, binding, "sx.set");
+    const std::vector<Binding> parts = object_argument(state, "sx.set");
+    const auto [binding, found] = property_argument(state, parts, "sx.set");
+    const reflect::PropertyInfo& property = *found;
     const std::string what =
         quote(property.meta.display_name) + " of " + quote(string_at(state, 1));
     if (lua_gettop(state) != 3) {
@@ -777,9 +810,16 @@ bool Vm::unbind(std::string_view name) {
     return true;
 }
 
-const reflect::TypeInfo* Vm::bound_type(std::string_view name) const {
-    const auto found = impl_->bindings.find(name);
-    return found == impl_->bindings.end() ? nullptr : found->second.type;
+void Vm::set_object_resolver(ObjectResolver resolver) {
+    impl_->resolver = std::move(resolver);
+}
+
+std::vector<const reflect::TypeInfo*> Vm::object_types(std::string_view name) const {
+    std::vector<const reflect::TypeInfo*> types;
+    for (const Binding& part : impl_->resolve(name)) {
+        types.push_back(part.type);
+    }
+    return types;
 }
 
 std::optional<ScriptId> Vm::load(std::string_view name, std::string_view source) {
@@ -947,11 +987,13 @@ bool Vm::emit(std::string_view object, std::string_view event,
     PendingEvent pending;
     pending.choices.assign(payload.size(), nullptr);
     if (!object.empty()) {
-        const auto found = impl.bindings.find(object);
-        if (found == impl.bindings.end()) {
-            return false;
+        const reflect::EventInfo* info = nullptr;
+        for (const Binding& part : impl.resolve(object)) {
+            info = part.type->find_event(event);
+            if (info != nullptr) {
+                break;
+            }
         }
-        const reflect::EventInfo* info = found->second.type->find_event(event);
         if (info == nullptr || info->parameters.size() != payload.size()) {
             return false;
         }

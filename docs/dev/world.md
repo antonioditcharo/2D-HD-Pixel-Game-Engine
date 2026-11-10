@@ -44,7 +44,7 @@ reflect::ObjectRef ref = w.get(lamp, *registry.find_type<Lamp>());
 | Feature | Behaviour |
 |---|---|
 | **GUID** | Every entity has a 128-bit GUID, random (version 4) unless given, and unique in the world. References between entities, assets and files use GUIDs, never names or positions (`plan/03` §4) |
-| **Name** | For people. Names need not be unique |
+| **Name** | For people. Names need not be unique; `find_named()` lists the entities with a name. Logic uses a name only while it is unique ([game.md](game.md)) |
 | **Handles** | `Entity` is a small handle. A destroyed entity's handle never becomes valid again, even when its storage is reused: every operation checks it first |
 | **Hierarchy** | Every entity has at most one parent and an **ordered** list of children. `roots()` lists parentless entities in creation order. The order is kept so that saved scenes are deterministic and the editor's outline does not shuffle |
 | **Cycles** | `set_parent` refuses to put an entity under itself or one of its descendants |
@@ -82,9 +82,7 @@ In order:
 1. **Transforms:** a standard transform component with local and world positions, updated
    down the hierarchy.
 2. **Prefabs with overrides** (`plan/03` §4), using flecs prefabs underneath.
-3. **Logic object handles:** logic refers to entities by GUID instead of names bound by
-   hand, so Rules can target anything in a map.
-4. **Queries and systems** over several components, for rendering and physics.
-5. **A custom flecs build without its HTTP and REST addons,** so exported games contain no
+3. **Queries and systems** over several components, for rendering and physics.
+4. **A custom flecs build without its HTTP and REST addons,** so exported games contain no
    web server code at all. Sparxel never starts it, but it is compiled in today
    (`THIRD_PARTY_NOTICES.md`).

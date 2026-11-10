@@ -96,8 +96,8 @@ TEST_CASE("Stress: 5,000 rules and 200 concurrent sequences") {
     }
 
     auto start = Clock::now();
-    const logic::CompiledLogic compiled =
-        logic::compile(asset, registry, [&](std::string_view name) { return vm.bound_type(name); });
+    const logic::CompiledLogic compiled = logic::compile(
+        asset, registry, [&](std::string_view name) { return vm.object_types(name); });
     const double compile_ms = milliseconds_since(start);
     REQUIRE(compiled.ok());
 

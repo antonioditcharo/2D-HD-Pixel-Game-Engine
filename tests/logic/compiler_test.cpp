@@ -98,7 +98,7 @@ struct World {
     }
 
     [[nodiscard]] logic::ObjectTypes types() const {
-        return [this](std::string_view name) { return vm.bound_type(name); };
+        return [this](std::string_view name) { return vm.object_types(name); };
     }
 
     [[nodiscard]] logic::CompiledLogic compile(const logic::LogicAsset& asset,
