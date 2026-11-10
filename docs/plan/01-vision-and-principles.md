@@ -1,7 +1,7 @@
 # Plan 01: Vision, Users and Principles
 
 > Product name: **Sparxel**, chosen by the owner on 10 November 2026 (`research/05` §7). It
-> replaced the earlier choice, Sparxel. It still needs professional trademark clearance
+> replaced the earlier choice, Glimmerbox. It still needs professional trademark clearance
 > before any public launch, and the product must never be called "HD-2D" (see
 > `research/01` §1 and `09-risks-quality-legal.md`, R-06).
 >
