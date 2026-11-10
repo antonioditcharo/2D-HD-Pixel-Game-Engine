@@ -79,6 +79,8 @@ struct VmLimits {
 /// | `sx.set(object, property, value)` | Writes a property |
 /// | `sx.wait(seconds)` | Pauses the task; it resumes in a later update() |
 /// | `sx.log(...)` | Sends text to the log handler, like `print` |
+/// | `sx.on(event, function)` | Runs the function as a new task each time the event is emitted |
+/// | `sx.trace()` | Reports the current line to the trace handler (live highlighting) |
 ///
 /// Objects are named with bind(). Choices are passed and returned as entry ids, for
 /// example "north".
@@ -100,6 +102,8 @@ public:
     [[nodiscard]] bool bind(std::string_view name, reflect::ObjectRef object);
     /// Removes a binding. Returns false if there was none.
     bool unbind(std::string_view name);
+    /// The type of the object bound to `name`, or null. Suits the compiler's ObjectTypes.
+    [[nodiscard]] const reflect::TypeInfo* bound_type(std::string_view name) const;
 
     /// Compiles `source` and runs its top level as a task, which may wait. Each script has
     /// its own globals. Returns nothing, and reports an error, if the source does not
@@ -113,9 +117,21 @@ public:
     [[nodiscard]] std::optional<TaskId> start(ScriptId script, std::string_view function,
                                               std::span<const reflect::Value> arguments = {});
 
-    /// Advances time by `seconds` and resumes the tasks whose wait is over, in the order
-    /// they were started.
+    /// Advances time by `seconds`, delivers the events emitted while scripts were running,
+    /// then resumes the tasks whose wait is over, in the order they were started. A task
+    /// never resumes in the update that started it.
     void update(double seconds);
+
+    /// Emits an event: every function registered for it with `sx.on` starts as a task, in
+    /// registration order, with the payload as its arguments. `object` names a bound
+    /// object whose type has the event; the payload must then match the event's
+    /// parameters. An empty `object` emits a game-wide event, such as "game_start".
+    ///
+    /// Called while a script runs (from a bound C++ function), the event is delivered at
+    /// the start of the next update() instead. Returns false, and does nothing, if the
+    /// object, event or payload is not valid.
+    bool emit(std::string_view object, std::string_view event,
+              std::span<const reflect::Value> payload = {});
 
     /// True while the task is waiting or running.
     [[nodiscard]] bool is_running(TaskId task) const noexcept;
@@ -127,6 +143,9 @@ public:
     /// Receives `print` and `sx.log` output. Without a handler, the output is dropped.
     void
     set_log_handler(std::function<void(std::string_view script, std::string_view text)> handler);
+    /// Receives each `sx.trace()` call with the line it was made on. Map the line to a
+    /// block with CompiledLogic::block_at_line().
+    void set_trace_handler(std::function<void(std::string_view script, int line)> handler);
 
     /// Every problem reported since the last clear_errors(), oldest first.
     [[nodiscard]] const std::vector<ScriptError>& errors() const noexcept;

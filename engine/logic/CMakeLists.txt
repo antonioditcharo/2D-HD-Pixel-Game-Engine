@@ -3,6 +3,8 @@
 find_package(unofficial-luau CONFIG REQUIRED)
 
 add_library(engine_logic STATIC
+    src/common.cpp
+    src/compiler.cpp
     src/vm.cpp
 )
 add_library(engine::logic ALIAS engine_logic)

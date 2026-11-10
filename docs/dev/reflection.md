@@ -173,8 +173,9 @@ CallResult result = call(npc_object, *npc_type->find_function("heal"), arguments
 | `WrongKind`, `OutOfRange`, `UnknownChoice` | As for properties, with `argument` giving the index |
 | `NotRepresentable` | The argument fits the kind but not the C++ parameter type |
 
-Conditions and getters return their result in `CallResult::value`. Events are described
-only for now; firing them belongs to the message bus in the logic runtime (`plan/03` §6).
+Conditions and getters return their result in `CallResult::value`. Events are fired by
+the logic runtime: `Vm::emit()` checks the payload against the event's parameters and runs
+the Rules listening for it ([logic-runtime.md](logic-runtime.md) §4).
 
 ## 5. Rules and design decisions
 
@@ -206,10 +207,9 @@ only for now; firing them belongs to the message bus in the logic runtime (`plan
 
 In order:
 
-1. **Firing events** and the Logic IR integration, decided in the logic spike (ADR-007).
-2. **More value kinds:** Colour, Position (2D and 3D), Direction, Time, object references
+1. **More value kinds:** Colour, Position (2D and 3D), Direction, Time, object references
    and asset references (GUIDs), and lists.
-3. **JSON serialization** of reflected objects, for the project format (`plan/03` §4).
-4. **flecs bridge:** register reflected types as components (ADR-006).
-5. **Docs generation:** produce a reference page per type from the metadata.
-6. **Localization of metadata:** display names and tooltips become string-table keys.
+2. **JSON serialization** of reflected objects, for the project format (`plan/03` §4).
+3. **flecs bridge:** register reflected types as components (ADR-006).
+4. **Docs generation:** produce a reference page per type from the metadata.
+5. **Localization of metadata:** display names and tooltips become string-table keys.

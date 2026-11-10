@@ -1,5 +1,7 @@
 #include "engine/logic/vm.h"
 
+#include "engine/logic/compiler.h"
+
 #include <lua.h>
 #include <luacode.h>
 #include <lualib.h>
@@ -8,16 +10,25 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
+#include <iterator>
 #include <map>
 #include <system_error>
 #include <utility>
+
+#include "common.h"
 
 namespace engine::logic {
 
 namespace {
 
 namespace reflect = engine::reflect;
+using common::expected_text;
+using common::format_number;
+using common::is_valid_script_name;
+using common::quoted;
+using common::range_text;
 
 /// A wait shorter than this counts as over. It absorbs rounding when many small frame
 /// times are subtracted from a wait, so that "wait 1 second" at 10 updates of 0.1 s
@@ -41,75 +52,27 @@ struct Task {
     lua_State* thread{nullptr};
     int ref{LUA_NOREF};
     double wait_left = 0.0;
+    std::uint64_t born = 0; ///< The update count when the task was created.
     bool finished = false;
+};
+
+/// A function registered with sx.on.
+struct Handler {
+    const Script* script{nullptr};
+    int ref{LUA_NOREF};
+};
+
+/// An event emitted while a script was running, delivered in the next update.
+struct PendingEvent {
+    std::string key;
+    std::vector<reflect::Value> payload;
+    std::vector<const reflect::ChoiceInfo*> choices;
 };
 
 struct Binding {
     reflect::ObjectRef object;
     const reflect::TypeInfo* type{nullptr};
 };
-
-[[nodiscard]] bool is_valid_script_name(std::string_view name) noexcept {
-    if (name.empty() || name.size() > 128) {
-        return false;
-    }
-    return std::all_of(name.begin(), name.end(), [](char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-               c == '_' || c == '-' || c == '.' || c == '/';
-    });
-}
-
-/// Formats a number for messages: whole numbers without a decimal point, others in the
-/// shortest form that reads back exactly.
-[[nodiscard]] std::string format_number(double value) {
-    if (std::isnan(value)) {
-        return "not a number";
-    }
-    if (std::isinf(value)) {
-        return value > 0 ? "infinity" : "minus infinity";
-    }
-    std::array<char, 64> buffer{};
-    std::to_chars_result result{};
-    if (std::trunc(value) == value && std::fabs(value) < 1e15) {
-        result = std::to_chars(buffer.data(), buffer.data() + buffer.size(),
-                               static_cast<long long>(value));
-    } else {
-        result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
-    }
-    if (result.ec != std::errc{}) {
-        return "?";
-    }
-    return {buffer.data(), result.ptr};
-}
-
-[[nodiscard]] std::string quoted(std::string_view text) {
-    return "'" + std::string(text) + "'";
-}
-
-/// "yes or no", "a whole number", "one of: north, east", for messages.
-[[nodiscard]] std::string expected_text(reflect::ValueKind kind,
-                                        const reflect::ChoiceInfo* choice) {
-    switch (kind) {
-    case reflect::ValueKind::Bool:
-        return "yes or no (true or false)";
-    case reflect::ValueKind::Int:
-        return "a whole number";
-    case reflect::ValueKind::Float:
-        return "a number";
-    case reflect::ValueKind::Text:
-        return "text";
-    case reflect::ValueKind::Choice: {
-        std::string text = "one of: ";
-        if (choice != nullptr) {
-            for (std::size_t i = 0; i < choice->entries.size(); ++i) {
-                text += (i == 0 ? "" : ", ") + choice->entries[i].id;
-            }
-        }
-        return text;
-    }
-    }
-    return "a value";
-}
 
 /// A short description of the script value at `index`, for messages.
 [[nodiscard]] std::string given_text(lua_State* state, int index) {
@@ -231,21 +194,6 @@ enum class Conversion : std::uint8_t { Ok, WrongKind, UnknownChoice, NotWhole };
     return Conversion::WrongKind;
 }
 
-/// "must be between 1 and 999", "must be at least 0".
-[[nodiscard]] std::string range_text(const reflect::NumericLimits& limits) {
-    if (limits.min && limits.max) {
-        return "must be between " + format_number(*limits.min) + " and " +
-               format_number(*limits.max);
-    }
-    if (limits.min) {
-        return "must be at least " + format_number(*limits.min);
-    }
-    if (limits.max) {
-        return "must be at most " + format_number(*limits.max);
-    }
-    return "is out of range";
-}
-
 /// The message for a value that does not fit a parameter or property. `what` names it, for
 /// example "'Amount' of 'Heal'".
 [[nodiscard]] std::string misfit_message(const std::string& what, reflect::ValueKind kind,
@@ -362,6 +310,10 @@ struct Vm::Impl {
     std::map<std::string, Binding, std::less<>> bindings;
     std::vector<ScriptError> errors;
     std::function<void(std::string_view, std::string_view)> log;
+    std::function<void(std::string_view, int)> trace;
+    std::map<std::string, std::vector<Handler>, std::less<>> handlers; ///< By event key.
+    std::vector<PendingEvent> pending_events;
+    std::uint64_t update_count = 0;
     std::uint32_t next_script = 1;
     std::uint32_t next_task = 1;
 
@@ -378,6 +330,7 @@ struct Vm::Impl {
         lua_xmove(script.thread, thread, 1);
         auto task = std::make_unique<Task>();
         task->id = TaskId{next_task++};
+        task->born = update_count;
         task->script = &script;
         task->thread = thread;
         task->ref = ref;
@@ -463,6 +416,45 @@ struct Vm::Impl {
         if (collect) {
             collect = false;
             lua_gc(state, LUA_GCCOLLECT, 0);
+        }
+    }
+
+    /// Starts every handler of `event` as a task with the payload as arguments.
+    void dispatch(const PendingEvent& event) {
+        const auto found = handlers.find(event.key);
+        if (found == handlers.end()) {
+            return;
+        }
+        // A handler may register more handlers while it runs, so iterate over a copy.
+        const std::vector<Handler> list = found->second;
+        const int count = static_cast<int>(event.payload.size());
+        for (const Handler& handler : list) {
+            lua_getref(handler.script->thread, handler.ref);
+            Task& task = create_task(*handler.script);
+            if (lua_checkstack(task.thread, count) == 0) {
+                release(task);
+                continue;
+            }
+            for (std::size_t i = 0; i < event.payload.size(); ++i) {
+                push_value(task.thread, event.payload[i], event.choices[i]);
+            }
+            if (!resume(task, count)) {
+                release(task);
+            }
+        }
+        remove_finished();
+    }
+
+    /// Drops the handlers a script registered, when its load fails.
+    void remove_handlers(const Script& script) {
+        for (auto& [key, list] : handlers) {
+            std::erase_if(list, [&](const Handler& handler) {
+                if (handler.script != &script) {
+                    return false;
+                }
+                lua_unref(state, handler.ref);
+                return true;
+            });
         }
     }
 
@@ -691,6 +683,31 @@ int script_log(lua_State* state) {
     return 0;
 }
 
+/// sx.on(event, function): runs the function as a new task each time the event is emitted.
+int script_on(lua_State* state) {
+    Vm::Impl& impl = impl_of(state);
+    if (lua_gettop(state) != 2 || lua_type(state, 1) != LUA_TSTRING ||
+        lua_type(state, 2) != LUA_TFUNCTION) {
+        raise(state, "sx.on needs an event name and a function.");
+    }
+    if (impl.current == nullptr) {
+        raise(state, "sx.on can only be used while a script runs.");
+    }
+    const std::string key(string_at(state, 1));
+    const int ref = lua_ref(state, 2);
+    impl.handlers[key].push_back(Handler{impl.current->script, ref});
+    return 0;
+}
+
+/// sx.trace(): reports the line it is called from to the trace handler.
+int script_trace(lua_State* state) {
+    const Vm::Impl& impl = impl_of(state);
+    if (impl.trace && impl.current != nullptr) {
+        impl.trace(impl.current->script->name, current_line(state));
+    }
+    return 0;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------------------
@@ -710,12 +727,14 @@ Vm::Vm(const reflect::Registry& registry, VmLimits limits)
     lua_pushcfunction(state, &script_log, "print");
     lua_setglobal(state, "print");
 
-    constexpr std::array<std::pair<const char*, lua_CFunction>, 5> api{{
+    constexpr std::array<std::pair<const char*, lua_CFunction>, 7> api{{
         {"call", &script_call},
         {"get", &script_get},
         {"set", &script_set},
         {"wait", &script_wait},
         {"log", &script_log},
+        {"on", &script_on},
+        {"trace", &script_trace},
     }};
     lua_createtable(state, 0, static_cast<int>(api.size()));
     for (const auto& [name, function] : api) {
@@ -757,6 +776,11 @@ bool Vm::unbind(std::string_view name) {
     }
     impl_->bindings.erase(found);
     return true;
+}
+
+const reflect::TypeInfo* Vm::bound_type(std::string_view name) const {
+    const auto found = impl_->bindings.find(name);
+    return found == impl_->bindings.end() ? nullptr : found->second.type;
 }
 
 std::optional<ScriptId> Vm::load(std::string_view name, std::string_view source) {
@@ -805,7 +829,8 @@ std::optional<ScriptId> Vm::load(std::string_view name, std::string_view source)
     const bool failed = impl.errors.size() != errors_before;
     if (failed) {
         // The top level failed. No other task of this script can exist yet, so the script
-        // is dropped.
+        // and the handlers it registered are dropped.
+        impl.remove_handlers(*script);
         lua_unref(impl.state, script->ref);
     }
     if (!waiting) {
@@ -873,12 +898,34 @@ void Vm::update(double seconds) {
         seconds = 0.0;
     }
     impl.frame_steps = 0;
-    // Tasks cannot be added while this runs: bound functions cannot call start().
+    ++impl.update_count;
+    // Tasks created from here on are born in this update and wait for the next one.
     for (const auto& task : impl.tasks) {
         task->wait_left -= seconds;
     }
+
+    // Events emitted while scripts ran are delivered first (plan/05 §5, step 3). Events
+    // they emit in turn wait for the next update, so two rules cannot ping-pong forever
+    // within one frame.
+    std::vector<PendingEvent> due = std::move(impl.pending_events);
+    impl.pending_events.clear();
+    std::size_t delivered = 0;
+    for (; delivered < due.size(); ++delivered) {
+        if (impl.frame_steps >= impl.limits.steps_per_frame) {
+            break;
+        }
+        impl.dispatch(due[delivered]);
+    }
+    // Events the frame budget did not reach stay first in line, in order.
+    impl.pending_events.insert(
+        impl.pending_events.begin(),
+        std::make_move_iterator(due.begin() + static_cast<std::ptrdiff_t>(delivered)),
+        std::make_move_iterator(due.end()));
+
+    // Then the tasks whose wait is over (step 5). Bound functions cannot call start(), so
+    // only dispatch() above adds tasks, and those are skipped as born in this update.
     for (const auto& task : impl.tasks) {
-        if (task->finished || task->wait_left > wait_epsilon) {
+        if (task->finished || task->born == impl.update_count || task->wait_left > wait_epsilon) {
             continue;
         }
         if (impl.frame_steps >= impl.limits.steps_per_frame) {
@@ -890,6 +937,41 @@ void Vm::update(double seconds) {
     }
     impl.steps_last_update = impl.frame_steps;
     impl.remove_finished();
+}
+
+bool Vm::emit(std::string_view object, std::string_view event,
+              std::span<const reflect::Value> payload) {
+    Impl& impl = *impl_;
+    if (impl.state == nullptr || !reflect::is_valid_id(event)) {
+        return false;
+    }
+    PendingEvent pending;
+    pending.choices.assign(payload.size(), nullptr);
+    if (!object.empty()) {
+        const auto found = impl.bindings.find(object);
+        if (found == impl.bindings.end()) {
+            return false;
+        }
+        const reflect::EventInfo* info = found->second.type->find_event(event);
+        if (info == nullptr || info->parameters.size() != payload.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < payload.size(); ++i) {
+            if (reflect::check_argument(info->parameters[i], payload[i]) !=
+                reflect::SetResult::Ok) {
+                return false;
+            }
+            pending.choices[i] = info->parameters[i].choice;
+        }
+    }
+    pending.key = event_key(object, event);
+    pending.payload.assign(payload.begin(), payload.end());
+    if (impl.busy) {
+        impl.pending_events.push_back(std::move(pending));
+    } else {
+        impl.dispatch(pending);
+    }
+    return true;
 }
 
 bool Vm::is_running(TaskId task) const noexcept {
@@ -918,6 +1000,10 @@ std::size_t Vm::task_count() const noexcept {
 
 void Vm::set_log_handler(std::function<void(std::string_view, std::string_view)> handler) {
     impl_->log = std::move(handler);
+}
+
+void Vm::set_trace_handler(std::function<void(std::string_view, int)> handler) {
+    impl_->trace = std::move(handler);
 }
 
 const std::vector<ScriptError>& Vm::errors() const noexcept {

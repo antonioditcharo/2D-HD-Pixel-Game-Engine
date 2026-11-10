@@ -1,13 +1,16 @@
 # The Logic Runtime
 
-> **Status: v0.1, the script host.** A sandboxed Luau VM that runs tasks with waits, calls
-> into the reflection registry, and enforces memory and execution budgets. Every behaviour
-> below is covered by tests. The Logic IR and the compiler from no-code blocks come next
-> (§7).
+> **Status: v0.2.** The script host (a sandboxed Luau VM with tasks, waits, events and
+> budgets) and the compiler from the Logic IR (Rules and Sequences) to Luau, with a debug
+> map from lines to blocks and live tracing. Every behaviour below is covered by tests.
+> See §8 for what comes next.
 >
-> Code: [`engine/logic/include/engine/logic/vm.h`](../../engine/logic/include/engine/logic/vm.h)
-> and [`src/vm.cpp`](../../engine/logic/src/vm.cpp). Tests:
-> [`tests/logic/vm_test.cpp`](../../tests/logic/vm_test.cpp).
+> Code: [`vm.h`](../../engine/logic/include/engine/logic/vm.h),
+> [`ir.h`](../../engine/logic/include/engine/logic/ir.h) and
+> [`compiler.h`](../../engine/logic/include/engine/logic/compiler.h) in
+> `engine/logic/include/engine/logic/`. Tests:
+> [`vm_test.cpp`](../../tests/logic/vm_test.cpp) and
+> [`compiler_test.cpp`](../../tests/logic/compiler_test.cpp) in `tests/logic/`.
 
 ## 1. What it is for
 
@@ -17,7 +20,8 @@ runs code, pauses and resumes Sequences, and gives scripts controlled access to 
 engine through the reflection registry ([reflection.md](reflection.md)).
 
 Users never see Luau. They see blocks such as "Heal [20] HP" and "Wait [0.5] seconds". The
-compiler (next increment) turns those into calls to the script API below.
+editor stores those as the Logic IR, and the compiler (§7) turns the IR into calls to the
+script API below.
 
 ## 2. Using it
 
@@ -60,6 +64,8 @@ was added to the reflection registry for this module (`reflect.h`), together wit
 | `sx.set(object, property, value)` | Writes a property, after the same checks as the inspector (kind, range, choices, read-only) |
 | `sx.wait(seconds)` | Pauses the task. It resumes in the first `update()` where the time is over |
 | `sx.log(...)`, `print(...)` | Sends the values, separated by spaces, to the log handler |
+| `sx.on(event, function)` | Runs the function as a new task each time the event is emitted, with the event's values as arguments |
+| `sx.trace()` | Reports the line it is called from to the trace handler, for live highlighting |
 
 - **Objects** are named by `Vm::bind()`. Names follow the id rules of the registry.
 - **Values** convert by the parameter's kind:
@@ -87,6 +93,22 @@ was added to the reflection registry for this module (`reflect.h`), together wit
   variables. Tasks of one script share that script's globals.
 - `sx.wait` works only in the task itself, not in a coroutine the script made or a
   callback such as a `table.sort` comparison: there would be no task to pause.
+- **A task never resumes in the update that started it,** whatever started it. So
+  `wait(0)` always means "the next update".
+
+### Events
+
+- **`Vm::emit(object, event, payload)`** starts every function registered for the event
+  with `sx.on`, in registration order (load order, then order within a script). This is
+  how Rules run (step 3 of `plan/05` §5).
+- For an object's event, the object must be bound and its type must have the event; the
+  payload is checked against the event's parameters like a function's arguments. An empty
+  object means a game-wide event, such as `game_start`, with any payload.
+- **Events emitted while a script runs**, for example by a C++ action such as "Open
+  chest" that announces "opened", are queued. They are delivered at the start of the next
+  `update()`, before waiting tasks resume. Events those deliveries emit wait for the update
+  after, so two rules cannot trigger each other forever within one frame (`plan/05` §5,
+  step 7).
 
 ## 5. Safety
 
@@ -129,15 +151,79 @@ Messages use display names from the registry, so they read like the blocks.
 | **The VM is not thread-safe.** | Logic runs on the game thread in a fixed order (`plan/05` §5). |
 | **Luau is linked statically, VM and compiler only.** | Exported games need the compiler only while bytecode is not cached (`plan/03` §6); the analysis and code-generation libraries are not linked. |
 
-## 7. Next increments
+## 7. The Logic IR and the compiler
+
+### The IR (`ir.h`)
+
+A `LogicAsset` is what one logic file in a project holds, and compiles to one script:
+
+| Part | Holds |
+|---|---|
+| `Variable` | An id, a kind (choices name their choice list) and an optional starting value. Shared by everything in the asset |
+| `Sequence` | A name and a list of steps (layer 4 of `plan/05` §3) |
+| `Rule` | When (an object's event, or a game-wide event), If (conditions, all must hold), Do and Otherwise (layer 3) |
+
+| Statement | Does |
+|---|---|
+| `Do` | Runs an action of an object |
+| `Set` | Sets a property of an object |
+| `SetVariable` | Sets a variable |
+| `Wait` | Waits a number of seconds |
+| `If` | Runs one list of steps or the other |
+| `Repeat` | Runs steps a number of times |
+| `Run` | Runs another sequence and waits until it ends |
+| `Log` | Writes a value to the log |
+
+Expressions fill the slots: a constant, a property, a condition or value of an object, a
+variable, a value the rule's event carries, not / all of / any of, comparisons, and
+`+ - × ÷`. Builder functions in `engine::logic::ir` create all of these in code.
+
+Every statement, sequence and rule has a **block id**, unique in the asset; expressions may
+have one, so a single condition can be highlighted and explained.
+
+### Checking
+
+`compile(asset, registry, objects)` checks the whole asset against the reflection registry
+before generating anything. `objects` says which type each object name has, for example
+`Vm::bound_type`. Every problem becomes a `Diagnostic` on the block, in the same plain
+language as runtime errors. Examples from the tests:
+
+- *"'Amount' of 'Add gold' must be between 1 and 999, but is 5000."*
+- *"'Has item' is a condition: it answers yes or no and changes nothing. Use it in an If."*
+- *"These two values cannot be compared: one is one of: north, east, south, west, the other
+  yes or no (true or false)."*
+- *"This rule has no conditions, so its Otherwise actions can never run."*
+
+What is checked: names and ids; objects, properties, functions and events exist; a
+function's role suits its place (actions in Do, conditions and values in slots); argument
+counts; kinds, with whole numbers accepted where numbers are; constants against ranges and
+choice lists; read-only properties; variables and sequences exist; nesting depth (64
+levels). An asset with any error produces no source, so it cannot be run by mistake.
+
+### Code generation
+
+- Calls go through `sx.call`, `sx.get` and `sx.set`, so the VM checks values at run time
+  too: a variable can hold a value that no constant check could catch.
+- **One block per line.** `line_blocks` maps every line of the source to its block, and
+  `block_at_line()` turns the line of a runtime error, or of a trace, into the block to
+  highlight.
+- **Text cannot escape.** Every byte of user text that is not printable ASCII is written as
+  a three-digit escape, so text cannot end its string, start a comment or add a line (a
+  test feeds it `"); print("pwned") --` with a newline).
+- Sequences become global functions named by `sequence_entry()` (`seq_<name>`), for
+  `Vm::start()`. Rules become `sx.on` registrations keyed by `event_key()` ("chest.opened").
+- **Tracing:** with `CompileOptions::trace`, every block first calls `sx.trace()`. The
+  trace handler receives the line, and the debug map gives the block: this is the
+  editor's live highlight (`plan/05` §6).
+
+## 8. Next increments
 
 In order:
 
-1. **Logic IR and compiler** for Rules and Sequences, with the debug map from source lines
-   to block ids (`plan/03` §6). Spike L (`plan/08` Phase 0).
-2. **Events and the message bus:** firing the registry's events and running the Rules
-   whose "When" matches (`plan/05` §5, steps 3 and 7).
-3. **Object handles:** GUID-based references from the world instead of names bound by hand.
-4. **Stress test** from ADR-007: 5,000 rules and 200 concurrent sequences, with timings.
-5. **Brain runner** (state machines) and **"why didn't this fire?"** support.
-6. **Bytecode caching** per asset, so exported games skip compilation.
+1. **Object handles:** GUID-based references from the world instead of names bound by
+   hand, and IR serialization in the project's JSON format.
+2. **Stress test** from ADR-007: 5,000 rules and 200 concurrent sequences, with timings.
+3. **More blocks:** parallel steps, "wait until", For each, and text joining.
+4. **Brain runner** (state machines) and **"why didn't this fire?"** support, which
+   re-evaluates a rule's conditions one by one using their block ids.
+5. **Bytecode caching** per asset, so exported games skip compilation.

@@ -27,6 +27,7 @@ add_test(NAME foundation COMMAND engine_foundation_tests)
 
 add_executable(engine_logic_tests
     test_main.cpp
+    logic/compiler_test.cpp
     logic/vm_test.cpp
 )
 target_link_libraries(engine_logic_tests PRIVATE
