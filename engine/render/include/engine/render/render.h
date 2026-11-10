@@ -11,6 +11,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::render {
@@ -94,6 +95,50 @@ private:
     std::uint32_t height_ = 0;
 };
 
+/// Where an image lands in a window when shown pixel-perfect (plan/04 §3): upscaled by the
+/// largest whole number that fits, and centred. If even 1x does not fit, it is shown at 1x,
+/// centred and cropped.
+struct Placement {
+    std::uint32_t scale = 1;
+    std::int64_t x = 0; ///< The image's left edge in the window; negative when cropped.
+    std::int64_t y = 0;
+    std::uint64_t width = 0; ///< The image's size in the window: its size times scale.
+    std::uint64_t height = 0;
+
+    friend bool operator==(const Placement&, const Placement&) = default;
+};
+
+[[nodiscard]] Placement fit_integer(std::uint32_t image_width, std::uint32_t image_height,
+                                    std::uint32_t window_width,
+                                    std::uint32_t window_height) noexcept;
+
+/// A window the game is shown in.
+class Window {
+public:
+    Window(const Window&) = delete;
+    Window& operator=(const Window&) = delete;
+    Window(Window&&) = delete;
+    Window& operator=(Window&&) = delete;
+    ~Window();
+
+    /// The drawable size in pixels (it changes when the player resizes the window).
+    [[nodiscard]] std::uint32_t width() const;
+    [[nodiscard]] std::uint32_t height() const;
+
+    /// Shows `image` pixel-perfect (see fit_integer()), with `letterbox` around it. Returns
+    /// false, with the device's last_error() set, if presenting failed. A minimised window
+    /// shows nothing and returns true.
+    bool present(const RenderTarget& image, Color letterbox);
+
+    struct Native;
+
+private:
+    friend class Device;
+    explicit Window(std::unique_ptr<Native> native);
+
+    std::unique_ptr<Native> native_;
+};
+
 /// The GPU. Every object it creates must be destroyed before it.
 class Device {
 public:
@@ -119,6 +164,10 @@ public:
     [[nodiscard]] std::unique_ptr<RenderTarget> create_render_target(std::uint32_t width,
                                                                      std::uint32_t height);
 
+    /// A resizable window that this device presents to. Null if it cannot be created.
+    [[nodiscard]] std::unique_ptr<Window> create_window(std::string_view title, std::uint32_t width,
+                                                        std::uint32_t height);
+
     /// The last error reported by the GPU layer, in its own words.
     [[nodiscard]] const std::string& last_error() const noexcept { return last_error_; }
 
@@ -133,6 +182,7 @@ private:
 
     friend class RenderTarget;
     friend class SpriteRenderer;
+    friend class Window;
 };
 
 /// Draws textured, tinted rectangles in batches.

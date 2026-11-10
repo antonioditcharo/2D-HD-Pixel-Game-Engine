@@ -1,6 +1,7 @@
 # Game: the runtime that connects the engine's parts. Today: logic reaching the world.
 
 add_library(engine_game STATIC
+    src/clock.cpp
     src/logic_world.cpp
 )
 add_library(engine::game ALIAS engine_game)

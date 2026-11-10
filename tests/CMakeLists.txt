@@ -111,6 +111,7 @@ add_test(NAME scene2d COMMAND engine_scene2d_tests)
 
 add_executable(engine_game_tests
     test_main.cpp
+    game/clock_test.cpp
     game/logic_world_test.cpp
 )
 target_link_libraries(engine_game_tests PRIVATE
@@ -121,3 +122,18 @@ target_compile_definitions(engine_game_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEAD
 engine_configure_test_target(engine_game_tests)
 
 add_test(NAME game COMMAND engine_game_tests)
+
+find_package(SDL3 CONFIG REQUIRED)
+add_executable(engine_input_tests
+    test_main.cpp
+    input/input_test.cpp
+)
+target_link_libraries(engine_input_tests PRIVATE
+    engine::input
+    SDL3::SDL3
+    doctest::doctest
+)
+target_compile_definitions(engine_input_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+engine_configure_test_target(engine_input_tests)
+
+add_test(NAME input COMMAND engine_input_tests)

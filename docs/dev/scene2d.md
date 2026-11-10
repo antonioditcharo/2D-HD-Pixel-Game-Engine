@@ -68,7 +68,7 @@ frame shows green.
 
 ## 5. Tests
 
-They need a GPU and run on lavapipe in CI ([rendering.md](rendering.md) §5):
+They need a GPU and run on lavapipe in CI ([rendering.md](rendering.md) §6):
 
 | Test | Checks |
 |---|---|

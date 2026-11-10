@@ -276,7 +276,7 @@
   - Pipeline caches are pre-warmed during export.
 - **Status (November 2026):** in use. CMake runs SDL_shadercross (a vcpkg host tool) at
   build time to compile each HLSL shader to SPIR-V and DXIL, and embeds both in the engine
-  (`docs/dev/rendering.md` §4).
+  (`docs/dev/rendering.md` §5).
 
 ## ADR-016: Testing and continuous integration
 

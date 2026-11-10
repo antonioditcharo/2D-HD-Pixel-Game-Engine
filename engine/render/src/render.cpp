@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 
@@ -274,6 +275,134 @@ std::unique_ptr<RenderTarget> Device::create_render_target(std::uint32_t width,
     native->owner = this;
     native->texture = texture;
     return std::unique_ptr<RenderTarget>(new RenderTarget(std::move(native), width, height));
+}
+
+// ---------------------------------------------------------------------------------------
+// Window
+// ---------------------------------------------------------------------------------------
+
+Placement fit_integer(std::uint32_t image_width, std::uint32_t image_height,
+                      std::uint32_t window_width, std::uint32_t window_height) noexcept {
+    Placement placement;
+    if (image_width == 0 || image_height == 0) {
+        return placement;
+    }
+    placement.scale = std::max<std::uint32_t>(
+        1, std::min(window_width / image_width, window_height / image_height));
+    placement.width = std::uint64_t{image_width} * placement.scale;
+    placement.height = std::uint64_t{image_height} * placement.scale;
+    placement.x =
+        (static_cast<std::int64_t>(window_width) - static_cast<std::int64_t>(placement.width)) / 2;
+    placement.y =
+        (static_cast<std::int64_t>(window_height) - static_cast<std::int64_t>(placement.height)) /
+        2;
+    return placement;
+}
+
+struct Window::Native {
+    Device* owner{nullptr};
+    SDL_Window* window{nullptr};
+};
+
+Window::Window(std::unique_ptr<Native> native) : native_(std::move(native)) {}
+
+Window::~Window() {
+    SDL_ReleaseWindowFromGPUDevice(native_->owner->native().device, native_->window);
+    SDL_DestroyWindow(native_->window);
+}
+
+std::uint32_t Window::width() const {
+    int w = 0;
+    int h = 0;
+    SDL_GetWindowSizeInPixels(native_->window, &w, &h);
+    return static_cast<std::uint32_t>(std::max(w, 0));
+}
+
+std::uint32_t Window::height() const {
+    int w = 0;
+    int h = 0;
+    SDL_GetWindowSizeInPixels(native_->window, &w, &h);
+    return static_cast<std::uint32_t>(std::max(h, 0));
+}
+
+bool Window::present(const RenderTarget& image, Color letterbox) {
+    Device& owner = *native_->owner;
+    SDL_GPUDevice* device = owner.native().device;
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(device);
+    if (commands == nullptr) {
+        owner.last_error_ = sdl_error("Acquiring a command buffer failed");
+        return false;
+    }
+    SDL_GPUTexture* swapchain = nullptr;
+    std::uint32_t swap_width = 0;
+    std::uint32_t swap_height = 0;
+    if (!SDL_WaitAndAcquireGPUSwapchainTexture(commands, native_->window, &swapchain, &swap_width,
+                                               &swap_height)) {
+        owner.last_error_ = sdl_error("Acquiring the window's image failed");
+        SDL_CancelGPUCommandBuffer(commands);
+        return false;
+    }
+    if (swapchain != nullptr) {
+        const Placement place = fit_integer(image.width(), image.height(), swap_width, swap_height);
+        // The part of the image inside the window, in image pixels, and where it lands.
+        const std::int64_t scale = place.scale;
+        const std::int64_t skip_x = place.x < 0 ? (-place.x + scale - 1) / scale : 0;
+        const std::int64_t skip_y = place.y < 0 ? (-place.y + scale - 1) / scale : 0;
+        const std::int64_t shown_w = std::min<std::int64_t>(
+            image.width() - skip_x, (swap_width - std::max<std::int64_t>(place.x, 0)) / scale);
+        const std::int64_t shown_h = std::min<std::int64_t>(
+            image.height() - skip_y, (swap_height - std::max<std::int64_t>(place.y, 0)) / scale);
+
+        SDL_GPUBlitInfo blit{};
+        blit.source.texture = image.native().texture;
+        blit.source.x = static_cast<std::uint32_t>(skip_x);
+        blit.source.y = static_cast<std::uint32_t>(skip_y);
+        blit.source.w = static_cast<std::uint32_t>(std::max<std::int64_t>(shown_w, 0));
+        blit.source.h = static_cast<std::uint32_t>(std::max<std::int64_t>(shown_h, 0));
+        blit.destination.texture = swapchain;
+        blit.destination.x = static_cast<std::uint32_t>(std::max<std::int64_t>(place.x, 0));
+        blit.destination.y = static_cast<std::uint32_t>(std::max<std::int64_t>(place.y, 0));
+        blit.destination.w = blit.source.w * place.scale;
+        blit.destination.h = blit.source.h * place.scale;
+        blit.load_op = SDL_GPU_LOADOP_CLEAR; // clears the whole window to the letterbox colour
+        blit.clear_color = SDL_FColor{
+            static_cast<float>(letterbox.r) / 255.0F, static_cast<float>(letterbox.g) / 255.0F,
+            static_cast<float>(letterbox.b) / 255.0F, static_cast<float>(letterbox.a) / 255.0F};
+        blit.filter = SDL_GPU_FILTER_NEAREST;
+        if (blit.source.w > 0 && blit.source.h > 0) {
+            SDL_BlitGPUTexture(commands, &blit);
+        }
+    }
+    if (!SDL_SubmitGPUCommandBuffer(commands)) {
+        owner.last_error_ = sdl_error("Presenting failed");
+        return false;
+    }
+    return true;
+}
+
+std::unique_ptr<Window> Device::create_window(std::string_view title, std::uint32_t width,
+                                              std::uint32_t height) {
+    if (width == 0 || height == 0) {
+        last_error_ = "A window needs a size above zero.";
+        return nullptr;
+    }
+    const std::string name(title);
+    SDL_Window* window =
+        SDL_CreateWindow(name.c_str(), static_cast<int>(width), static_cast<int>(height),
+                         SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    if (window == nullptr) {
+        last_error_ = sdl_error("Creating a window failed");
+        return nullptr;
+    }
+    if (!SDL_ClaimWindowForGPUDevice(native_->device, window)) {
+        last_error_ = sdl_error("Connecting the window to the GPU failed");
+        SDL_DestroyWindow(window);
+        return nullptr;
+    }
+    auto native = std::make_unique<Window::Native>();
+    native->owner = this;
+    native->window = window;
+    return std::unique_ptr<Window>(new Window(std::move(native)));
 }
 
 // ---------------------------------------------------------------------------------------

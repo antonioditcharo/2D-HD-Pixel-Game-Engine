@@ -5,7 +5,7 @@ The repository builds the engine modules under `engine/` (see
 libraries come from vcpkg, as listed in `vcpkg.json`: today flecs, Luau, nlohmann/json and SDL3, plus SDL_shadercross as a build-time shader
 compiler and, for tests, doctest. The renderer's tests need a GPU; on Linux without one,
 install Mesa's software Vulkan driver (`sudo apt-get install mesa-vulkan-drivers`). See
-[rendering.md](rendering.md) §5.
+[rendering.md](rendering.md) §6.
 
 ## What you need
 

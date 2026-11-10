@@ -3,7 +3,7 @@
 > **Status: v0.1, the first step of Spike R.** A GPU device on the SDL3 GPU API, textures,
 > offscreen render targets with readback, and a batched sprite renderer, with shaders
 > compiled offline from HLSL. Tested pixel by pixel on a software GPU. The HD-2D features
-> (lit billboards, shadows, depth of field, bloom) come next (§6).
+> (lit billboards, shadows, depth of field, bloom) come next (§7).
 >
 > Code: [`engine/render/include/engine/render/render.h`](../../engine/render/include/engine/render/render.h),
 > [`src/render.cpp`](../../engine/render/src/render.cpp) and the shaders in
@@ -52,7 +52,19 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
   sprites from one texture are one draw call; alternating textures cost a call per run, to
   keep the order. Packing sprites into atlases (the asset pipeline's job) keeps runs long.
 
-## 4. Shaders (ADR-015)
+## 4. Windows and presenting
+
+- `Device::create_window(title, width, height)` opens a resizable window connected to
+  the GPU.
+- `Window::present(image, letterbox)` shows a render target **pixel-perfect**: upscaled
+  by the largest whole number that fits, centred, with the letterbox colour around it
+  (`plan/04` §3). `fit_integer()` computes that placement. For example, 320 × 180 fills
+  1920 × 1080 at exactly 6×, and sits at 4× with a 43-pixel border in 1366 × 768. A
+  window smaller than the image shows it at 1×, centred and cropped.
+- Tests open a real window with a Vulkan swapchain through SDL's offscreen video driver
+  on lavapipe, and present small and cropped images to it.
+
+## 5. Shaders (ADR-015)
 
 - Shaders are written once, in **HLSL**, in `engine/render/shaders/` as
   `<name>.<vert|frag>.hlsl`.
@@ -64,7 +76,7 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
 - Resource bindings follow the SDL GPU rules: vertex-shader uniforms in `(b, space1)`;
   fragment-shader textures and samplers in `(t, space2)` and `(s, space2)`.
 
-## 5. Testing without a graphics card
+## 6. Testing without a graphics card
 
 - The tests render headless and compare pixels exactly, except one blend that allows a
   single step of rounding.
@@ -80,11 +92,11 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
   (`LD_PRELOAD="$(gcc -print-file-name=libasan.so) /usr/lib/x86_64-linux-gnu/libvulkan_lvp.so"`)
   no leak is reported, so it is not Sparxel's.
 
-## 6. Next increments
+## 7. Next increments
 
 Towards the reference scene of Spike R (`plan/08` Phase 0, `plan/04` §4):
 
-1. **Windows and presenting:** a window, a swapchain and frame pacing.
+1. **Frame pacing:** vsync choice and frame-time measurement.
 2. **3D:** a depth buffer, a perspective camera, and meshes for the diorama.
 3. **Lit billboard sprites** with normal maps and shadows (`plan/04` §5).
 4. **Post-processing:** tilt-shift depth of field, bloom and fog (`plan/04` §8).

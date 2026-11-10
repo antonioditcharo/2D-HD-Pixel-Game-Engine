@@ -51,7 +51,19 @@ people, and for logic written by hand while they are unique.
   across them, so Rules are checked against everything the entity really has.
 - Objects bound with `Vm::bind()` still work and take precedence over the resolver.
 
-## 5. Next increments
+## 5. The fixed-step clock
+
+`FixedStepClock` (`clock.h`) turns real frame times into a whole number of simulation
+steps (1/60 s by default), plus `alpha`, how far the next step has come, for interpolated
+drawing (`plan/03` §7).
+
+- Exact frame times give exact steps: 600 frames of 1/60 s are 600 steps (tested), despite
+  rounding in the running sum.
+- After a long stall, at most `max_steps` run in one frame and the rest of the backlog is
+  dropped (reported in `dropped`), so the game recovers instead of spiralling.
+- `step_count()` numbers steps for input recording ([input.md](input.md)).
+
+## 6. Next increments
 
 1. **Spawning and destroying from logic,** with entities created by Rules addressable by
    GUID.

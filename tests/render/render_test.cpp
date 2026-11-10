@@ -202,3 +202,34 @@ TEST_CASE("Invalid requests are refused with a message") {
     REQUIRE(sprites != nullptr);
     CHECK_FALSE(sprites->end()); // end() without begin()
 }
+
+TEST_CASE("Images are placed in windows pixel-perfect") {
+    // 320 x 180 in 1920 x 1080: exactly 6x, no letterbox.
+    CHECK(render::fit_integer(320, 180, 1920, 1080) == render::Placement{6, 0, 0, 1920, 1080});
+    // In 1366 x 768: 4x (1280 x 720), centred.
+    CHECK(render::fit_integer(320, 180, 1366, 768) == render::Placement{4, 43, 24, 1280, 720});
+    // Smaller than the image: 1x, centred and cropped.
+    CHECK(render::fit_integer(320, 180, 200, 100) == render::Placement{1, -60, -40, 320, 180});
+    // A tall window: the width decides.
+    CHECK(render::fit_integer(320, 180, 700, 2000).scale == 2);
+}
+
+TEST_CASE("A window presents a target") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const auto window = device->create_window("Sparxel test", 100, 60);
+    REQUIRE(window != nullptr);
+    CHECK(window->width() == 100);
+    CHECK(window->height() == 60);
+    const auto small = device->create_render_target(32, 18);
+    const auto large = device->create_render_target(400, 300);
+    REQUIRE(small != nullptr);
+    REQUIRE(large != nullptr);
+    for (int frame = 0; frame < 3; ++frame) {
+        CHECK(window->present(*small, render::Color{0, 0, 0, 255}));
+        CHECK(window->present(*large, render::Color{0, 0, 0, 255})); // cropped
+    }
+    CHECK(device->create_window("No size", 0, 10) == nullptr);
+}

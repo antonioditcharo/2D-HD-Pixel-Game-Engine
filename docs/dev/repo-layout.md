@@ -13,7 +13,8 @@
 │   │                  HLSL shaders in render/shaders/.
 │   ├── assets/        The asset database (GUIDs in .meta files) and importers.
 │   ├── scene2d/       Classic 2D scenes: transforms and sprites drawn from the world.
-│   └── game/          The runtime that connects the parts; today, logic reaching the world.
+│   ├── input/         Named actions bound to keys and gamepad buttons; recording and replay.
+│   └── game/          The runtime that connects the parts: logic reaching the world, the clock.
 ├── editor/            The editor application (not started). May use engine/, never the
 │                      other way round.
 ├── tests/             Unit tests, one folder per engine module; shared helpers in
