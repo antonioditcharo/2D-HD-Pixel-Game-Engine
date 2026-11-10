@@ -5,6 +5,23 @@
 > that covers every stage of making a game, from first sketch to Steam release.
 >
 > "Diorama" is a working codename only (see [`plan/01`](plan/01-vision-and-principles.md)).
+> Candidate names are screened in [`research/05`](research/05-name-screening.md).
+
+## Decisions made (9 November 2026)
+
+| Topic | Decision |
+|---|---|
+| Business model | Royalty-free and open source |
+| Licence | MIT |
+| Team | One developer now; a team later |
+| First genre | RPG |
+| Optional scripting | Hidden until 1.0; Custom Blocks first |
+| AI assistant | Work starts after the Early Access / beta release |
+| Minimum hardware | Decided after the rendering prototype is measured |
+| Product name | Candidates screened; final choice still open |
+
+Details and the questions that remain open are in
+[`plan/09`](plan/09-risks-quality-legal.md) §5 and §6.
 
 ---
 
@@ -65,16 +82,17 @@
   - **No compiler needed** on the user's machine to export a game.
 
   ([plan/03](plan/03-architecture.md), [plan/07](plan/07-tech-stack-adrs.md))
-- **Roadmap:** seven gated phases.
+- **Roadmap:** seven gated phases, planned for one developer.
   - Phase 0 de-risks the renderer, editor UI and logic VM with spikes.
   - Phase 3 produces a 30–45 minute JRPG vertical slice built with **zero code**.
-  - Roughly three years to 1.0 for a 6–10-person team, with a reduced-scope path for a
-    solo developer.
+  - The solo alpha is cut to a "Minimum Lovable Engine": the HD-2D style and the RPG kit.
+  - A 6–10 person reference team would need roughly three years to 1.0. One developer
+    will take substantially longer; no solo timeline is given until Phase 0 is measured.
 
   ([plan/08](plan/08-roadmap.md))
 - **Risks and decisions:** a risk register, quality and usability-testing strategy, a legal
-  checklist, and **8 open questions** for the project owner. Among them: "HD-2D" is a
-  Square Enix trademark and must not be used as the product name.
+  checklist, the owner's decisions, and the questions still open. "HD-2D" is a Square Enix
+  trademark and must not be used as the product name.
   ([plan/09](plan/09-risks-quality-legal.md))
 
 ---
@@ -88,6 +106,7 @@
 | 02 | [Engines and no-code tools](research/02-engine-landscape.md) | What do Unreal, Unity, Godot, GameMaker, GDevelop, Construct, RPG Maker and others do well or badly for this? |
 | 03 | [Content tools and workflows](research/03-tools-and-workflows.md) | What does production look like end to end, and where does it hurt? |
 | 04 | [No-code paradigms](research/04-no-code-paradigms.md) | How can non-coders build logic, and what has worked or failed? |
+| 05 | [Name screening](research/05-name-screening.md) | Which candidate product names collide with existing trademarks or products? |
 
 ### Plan (what to build and how)
 | # | Document | Contents |
@@ -98,12 +117,19 @@
 | 04 | [Rendering pipeline](plan/04-rendering-pipeline.md) | Render Styles, sprites in 3D, lighting, post, Looks, budgets |
 | 05 | [No-code logic system](plan/05-no-code-logic-system.md) | The seven logic layers, execution model, debugging, examples |
 | 06 | [Editor UX](plan/06-editor-ux.md) | Workspaces, onboarding, safety, accessibility, AI policy, glossary |
-| 07 | [Tech stack and ADRs](plan/07-tech-stack-adrs.md) | 17 decision records and the licence summary |
-| 08 | [Roadmap](plan/08-roadmap.md) | Phases, gates, critical path, team, solo scenario, first 30 days |
-| 09 | [Risks, quality and legal](plan/09-risks-quality-legal.md) | Risk register, QA strategy, usability protocol, legal checklist, open questions |
+| 07 | [Tech stack and ADRs](plan/07-tech-stack-adrs.md) | 18 decision records and the licence summary |
+| 08 | [Roadmap](plan/08-roadmap.md) | Phases, gates, critical path, the solo baseline, the reference team, first 30 days |
+| 09 | [Risks, quality and legal](plan/09-risks-quality-legal.md) | Risk register, QA strategy, usability protocol, legal checklist, decisions, open questions |
+
+### Developer docs
+| Document | Contents |
+|---|---|
+| [Building](dev/building.md) | How to build and test the code |
+| [Coding standards](dev/coding-standards.md) | Language rules, naming, formatting |
+| [Repository layout](dev/repo-layout.md) | What lives where |
 
 ### Sources
-[sources.md](sources.md) lists 90 sources, each with an ID (`[S#]`) and a note on how it was
+[sources.md](sources.md) lists 102 sources, each with an ID (`[S#]`) and a note on how it was
 verified.
 
 ---

@@ -1,0 +1,27 @@
+# Formatting rules for all C++ code. Checked in CI with clang-format 18.
+# See docs/dev/coding-standards.md.
+BasedOnStyle: LLVM
+Standard: c++20
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+PointerAlignment: Left
+NamespaceIndentation: None
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Attach
+InsertNewlineAtEOF: true
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # 1. Engine headers
+  - Regex: '^"engine/'
+    Priority: 1
+  # 2. Third-party headers
+  - Regex: '^<.*\.h(pp)?>'
+    Priority: 2
+  # 3. Standard library headers
+  - Regex: '^<.*>'
+    Priority: 3

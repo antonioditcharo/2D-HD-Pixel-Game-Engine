@@ -1,0 +1,21 @@
+# Build output
+/build/
+/out/
+vcpkg_installed/
+CMakeUserPresets.json
+compile_commands.json
+
+# Editors and IDEs
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
