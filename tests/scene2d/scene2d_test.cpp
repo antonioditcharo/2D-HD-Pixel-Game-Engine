@@ -11,11 +11,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "support/gpu.h"
@@ -56,6 +58,22 @@ struct TempFolder {
     }
     fs::path path;
 };
+
+/// Writes a PNG of `width` x `height` pixels, given row by row.
+void write_image(const fs::path& file, std::uint32_t width, std::uint32_t height,
+                 const std::vector<Color>& colours) {
+    REQUIRE(colours.size() == std::size_t{width} * height);
+    assets::Image image;
+    image.width = width;
+    image.height = height;
+    for (const Color c : colours) {
+        image.rgba.insert(image.rgba.end(), {c.r, c.g, c.b, c.a});
+    }
+    const std::vector<std::uint8_t> png = assets::encode_png(image);
+    REQUIRE_FALSE(png.empty());
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+}
 
 /// Writes a solid-colour 2 x 2 PNG.
 void write_png(const fs::path& file, Color c) {
@@ -255,4 +273,222 @@ TEST_CASE("The components are described for the editor") {
     REQUIRE(transform != nullptr);
     CHECK(transform->meta.display_name == "Position");
     CHECK(transform->find_property("x")->unit == reflect::Unit::Tiles);
+    CHECK(sprite->find_property("frame_width")->unit == reflect::Unit::Pixels);
+    const reflect::TypeInfo* animation = registry.find_type<scene2d::SpriteAnimation>();
+    REQUIRE(animation != nullptr);
+    CHECK(animation->meta.display_name == "Animation");
+    CHECK(animation->find_function("play") != nullptr);
+    CHECK(animation->find_event("finished") != nullptr);
+    CHECK(reflect::has_flag(animation->find_property("elapsed")->flags,
+                            reflect::property_flag::hidden));
+    const reflect::TypeInfo* tilemap = registry.find_type<scene2d::Tilemap>();
+    REQUIRE(tilemap != nullptr);
+    CHECK(tilemap->meta.display_name == "Tilemap");
+}
+
+TEST_CASE("Tilemap text is parsed strictly and written back unchanged") {
+    std::string error;
+    const std::optional<scene2d::TileGrid> grid = scene2d::parse_tiles("0,1\n,2, 3\r\n-1", error);
+    INFO(error);
+    REQUIRE(grid.has_value());
+    const scene2d::TileGrid g = grid.value_or(scene2d::TileGrid{});
+    CHECK(g.width == 3);
+    CHECK(g.height == 3);
+    CHECK(g.cells == std::vector<std::int32_t>{0, 1, -1, -1, 2, 3, -1, -1, -1});
+    CHECK(g.at(2, 1) == 3);
+    CHECK(g.at(3, 0) == -1); // outside
+    CHECK(scene2d::format_tiles(g) == "0,1,\n,2,3\n,,");
+    CHECK(scene2d::parse_tiles(scene2d::format_tiles(g), error) == grid);
+
+    // Empty text is an empty map; an all-empty map survives a round trip.
+    CHECK(scene2d::parse_tiles("", error) == scene2d::TileGrid{});
+    const scene2d::TileGrid blank{1, 2, {-1, -1}};
+    CHECK(scene2d::parse_tiles(scene2d::format_tiles(blank), error) == blank);
+
+    // Anything else is refused, with where it is.
+    CHECK_FALSE(scene2d::parse_tiles("0,1\n2,x", error).has_value());
+    CHECK(error ==
+          "Row 2, column 2 is 'x', which is not a tile number (a whole number from -1 up).");
+    CHECK_FALSE(scene2d::parse_tiles("-2", error).has_value());
+    CHECK_FALSE(scene2d::parse_tiles("1.5", error).has_value());
+    CHECK_FALSE(scene2d::parse_tiles("99999999999", error).has_value());
+    CHECK_FALSE(
+        scene2d::parse_tiles(std::string(scene2d::max_tilemap_side, ','), error).has_value());
+    CHECK(error == "A tilemap can have at most 4096 columns.");
+    CHECK_FALSE(
+        scene2d::parse_tiles(std::string(scene2d::max_tilemap_side, '\n'), error).has_value());
+    CHECK(error == "A tilemap can have at most 4096 rows.");
+    // The largest allowed side is fine.
+    CHECK(scene2d::parse_tiles(std::string(scene2d::max_tilemap_side - 1, ','), error)
+              .value_or(scene2d::TileGrid{})
+              .width == scene2d::max_tilemap_side);
+
+    // The component keeps the parsed grid until its text changes.
+    scene2d::Tilemap tilemap;
+    tilemap.tiles = "4";
+    const scene2d::TileGrid* first = tilemap.grid(error);
+    REQUIRE(first != nullptr);
+    CHECK(first->at(0, 0) == 4);
+    CHECK(tilemap.grid(error) == first);
+    tilemap.tiles = "5,6";
+    REQUIRE(tilemap.grid(error) != nullptr);
+    CHECK(tilemap.grid(error)->at(1, 0) == 6);
+    tilemap.tiles = "oops";
+    CHECK(tilemap.grid(error) == nullptr);
+    CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("Animations step through frames, loop or finish once") {
+    reflect::Registry registry;
+    scene2d::register_types(registry);
+    world::World w(registry);
+    REQUIRE(scene2d::register_components(w));
+    const world::Entity torch = w.create("torch");
+    w.add<scene2d::Sprite>(torch);
+    scene2d::SpriteAnimation* animation = w.add<scene2d::SpriteAnimation>(torch);
+    REQUIRE(animation != nullptr);
+    animation->first_frame = 4;
+    animation->frame_count = 3;
+    animation->frames_per_second = 10.0;
+    const world::Entity no_sprite = w.create("no_sprite");
+    w.add<scene2d::SpriteAnimation>(no_sprite); // ignored: nothing to show the frames on
+
+    // 1/60 s steps at 10 frames per second: a new frame every 6 steps, in exact steps.
+    std::vector<std::uint32_t> frames;
+    for (int step = 0; step < 24; ++step) {
+        CHECK(scene2d::animate(w, 1.0 / 60.0).empty());
+        frames.push_back(w.get<scene2d::Sprite>(torch)->frame);
+    }
+    CHECK(frames == std::vector<std::uint32_t>{4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 6,
+                                               6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 5});
+
+    // Without looping it stops on the last frame and reports that once.
+    w.get<scene2d::SpriteAnimation>(torch)->loop = false;
+    w.get<scene2d::SpriteAnimation>(torch)->play();
+    std::size_t finished_at = 0;
+    for (std::size_t step = 1; step <= 40; ++step) {
+        const std::vector<world::Entity> finished = scene2d::animate(w, 1.0 / 60.0);
+        if (!finished.empty()) {
+            CHECK(finished == std::vector<world::Entity>{torch});
+            CHECK(finished_at == 0);
+            finished_at = step;
+        }
+    }
+    CHECK(finished_at == 18); // 0.3 s: the end of the third frame
+    CHECK(w.get<scene2d::Sprite>(torch)->frame == 6);
+    CHECK_FALSE(w.get<scene2d::SpriteAnimation>(torch)->playing);
+
+    // Stopped, it stays on its frame; bad times are ignored.
+    w.get<scene2d::SpriteAnimation>(torch)->loop = true;
+    w.get<scene2d::SpriteAnimation>(torch)->play();
+    scene2d::animate(w, 0.15);
+    w.get<scene2d::SpriteAnimation>(torch)->stop();
+    scene2d::animate(w, 1.0);
+    scene2d::animate(w, -1.0);
+    scene2d::animate(w, std::numeric_limits<double>::quiet_NaN());
+    CHECK(w.get<scene2d::Sprite>(torch)->frame == 5);
+}
+
+TEST_CASE("Sprite sheet frames and tilemaps draw pixel-exact") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    Fixture f;
+    const Color green{0, 255, 0, 255};
+    // A 4 x 2 sheet: a red 2 x 2 frame, then a blue one. Also the tileset for the map.
+    write_image(f.folder.path / "sheet.png", 4, 2,
+                {f.red, f.red, f.blue, f.blue, f.red, f.red, f.blue, f.blue});
+    f.db.refresh();
+    REQUIRE(f.db.issues().empty());
+    const Guid sheet = f.db.find("sheet.png")->guid;
+    const auto target = device->create_render_target(8, 8);
+    const auto sprites = render::SpriteRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(sprites != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    // 2 pixels per tile, no upscaling: the camera's (0, 0) is pixel (4, 4).
+    scene2d::Camera2D camera{0.0, 0.0, 2, 1};
+
+    SUBCASE("Frames") {
+        const auto w = f.make_world();
+        const world::Entity hero = Fixture::place(*w, "Hero", 0.0, 0.0, sheet);
+        scene2d::Sprite* sprite = w->get<scene2d::Sprite>(hero);
+        sprite->frame_width = 2;
+        sprite->frame_height = 2;
+        // Pivot bottom centre: pixels x 3..4, y 2..3.
+        for (const auto& [frame, colour] :
+             std::vector<std::pair<std::uint32_t, Color>>{{0, f.red}, {1, f.blue}, {2, f.red}}) {
+            sprite->frame = frame; // 2 wraps around to 0
+            CHECK(
+                scene2d::draw_world(*w, textures, *sprites, *target, camera, f.background).drawn ==
+                1);
+            const std::vector<std::uint8_t> pixels = target->read_pixels();
+            CHECK(pixel(pixels, 8, 3, 2) == colour);
+            CHECK(pixel(pixels, 8, 4, 3) == colour);
+            CHECK(pixel(pixels, 8, 5, 3) == f.background); // only one frame wide
+            CHECK(pixel(pixels, 8, 2, 3) == f.background);
+        }
+    }
+
+    SUBCASE("Tilemaps") {
+        const auto w = f.make_world();
+        const world::Entity map = w->create("Ground");
+        w->add<scene2d::Transform2D>(map);
+        scene2d::Tilemap* tilemap = w->add<scene2d::Tilemap>(map);
+        REQUIRE(tilemap != nullptr);
+        tilemap->tileset = sheet.to_string(); // tile 0 red, tile 1 blue; 2 pixels each
+        tilemap->tiles = "0,1\n1,-1\n7";      // 7 is past the end of the tileset: skipped
+        scene2d::DrawStats stats =
+            scene2d::draw_world(*w, textures, *sprites, *target, camera, f.background);
+        CHECK(stats.drawn == 3);
+        CHECK(stats.missing == 0);
+        std::vector<std::uint8_t> pixels = target->read_pixels();
+        CHECK(pixel(pixels, 8, 4, 4) == f.red);
+        CHECK(pixel(pixels, 8, 5, 5) == f.red);
+        CHECK(pixel(pixels, 8, 6, 4) == f.blue);
+        CHECK(pixel(pixels, 8, 7, 5) == f.blue);
+        CHECK(pixel(pixels, 8, 4, 6) == f.blue);
+        CHECK(pixel(pixels, 8, 6, 6) == f.background); // tile -1
+        CHECK(pixel(pixels, 8, 3, 4) == f.background);
+
+        // A sprite on the same entity is drawn over its tilemap.
+        scene2d::Sprite* sprite = w->add<scene2d::Sprite>(map);
+        sprite->image = f.blue_image.to_string();
+        sprite->pivot_x = 0.0;
+        sprite->pivot_y = 0.0;
+        scene2d::draw_world(*w, textures, *sprites, *target, camera, f.background);
+        CHECK(pixel(target->read_pixels(), 8, 4, 4) == f.blue);
+        w->remove(map, *f.registry.find_type<scene2d::Sprite>());
+
+        // Only the tiles in view are drawn: in a 100 x 100 map, 4 x 4 tiles fill the view.
+        const scene2d::TileGrid big{100, 100, std::vector<std::int32_t>(std::size_t{100} * 100, 1)};
+        tilemap->tiles = scene2d::format_tiles(big);
+        camera.x = 50.0;
+        camera.y = 50.0;
+        stats = scene2d::draw_world(*w, textures, *sprites, *target, camera, f.background);
+        CHECK(stats.drawn == 16);
+        pixels = target->read_pixels();
+        for (std::uint32_t y = 0; y < 8; ++y) {
+            for (std::uint32_t x = 0; x < 8; ++x) {
+                CHECK(pixel(pixels, 8, x, y) == f.blue);
+            }
+        }
+        // Half a tile off the grid: 5 x 5 tiles overlap the view.
+        camera.x = 50.25;
+        camera.y = 50.25;
+        CHECK(scene2d::draw_world(*w, textures, *sprites, *target, camera, f.background).drawn ==
+              25);
+        // Far away: nothing.
+        camera.x = -50.0;
+        CHECK(scene2d::draw_world(*w, textures, *sprites, *target, camera, f.background).drawn ==
+              0);
+
+        // Bad tiles or a missing tileset are counted, not drawn.
+        tilemap->tiles = "x";
+        CHECK(scene2d::draw_world(*w, textures, *sprites, *target, camera, green).missing == 1);
+        tilemap->tiles = "0";
+        tilemap->tileset = Guid::generate().to_string();
+        CHECK(scene2d::draw_world(*w, textures, *sprites, *target, camera, green).missing == 1);
+    }
 }

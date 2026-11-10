@@ -81,7 +81,8 @@ const render::Color rock_colour{90, 90, 100, 255};
 const render::Color background{20, 24, 40, 255};
 
 /// A small project: a 32 x 32 game at 8 pixels per tile, a hero that walks (2 x 2 pixels)
-/// at the origin, a rock that does not, and Rules that log on start and on Interact.
+/// at the origin, a rock that does not, a torch with an animation that plays once, and
+/// Rules that log on start, on Interact, and when the torch's animation finishes.
 struct Project {
     Project() {
         game::ProjectSettings settings;
@@ -116,6 +117,14 @@ struct Project {
         const world::Entity rock = w.create("rock");
         w.add<scene2d::Transform2D>(rock);
         w.add<scene2d::Sprite>(rock)->image = rock_image.to_string();
+        // A torch far away, whose three-frame animation plays once in 0.3 s.
+        const world::Entity torch = w.create("torch");
+        w.add<scene2d::Transform2D>(torch)->x = 100.0;
+        w.add<scene2d::Sprite>(torch)->image = rock_image.to_string();
+        scene2d::SpriteAnimation* flame = w.add<scene2d::SpriteAnimation>(torch);
+        flame->frame_count = 3;
+        flame->frames_per_second = 10.0;
+        flame->loop = false;
         write_json(folder.path / "assets/maps/start.dscene", serialize::scene_to_json(w));
 
         logic::LogicAsset rules;
@@ -129,6 +138,8 @@ struct Project {
             {ir::compare(logic::CompareOp::Equal, ir::event_value("action"), text("interact"))},
             {ir::log(4, text("hello"))},
             {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{5}, "torch", "finished", {}, {ir::log(6, text("torch done"))}, {}});
         write_json(folder.path / "assets/logic/main.drules", serialize::logic_to_json(rules));
     }
 
@@ -284,7 +295,9 @@ TEST_CASE("Recorded input walks the hero and runs Rules, step for step") {
     CHECK(runtime->step_count() == 30);
     CHECK(transform_of(*runtime, "hero").x == doctest::Approx(2.0)); // 4 tiles/s for 0.5 s
     CHECK(transform_of(*runtime, "hero").y == 0.0);
-    CHECK(runtime->log() == std::vector<std::string>{"start", "hello"});
+    // The torch's animation ended at step 17 (the 18th step: 0.3 s), after Interact at
+    // step 10.
+    CHECK(runtime->log() == std::vector<std::string>{"start", "hello", "torch done"});
 
     // Released at step 30: no further movement.
     for (int i = 0; i < 10; ++i) {

@@ -2,8 +2,8 @@
 
 > **Status: v0.1, the first playable loop.** A project folder on disk (settings, PNG
 > images, a scene and Rules) opens and runs: a hero walks with the keyboard or a gamepad,
-> Rules react to the game starting and to buttons, and the game draws pixel-perfect into a
-> window that follows the hero. No-code logic reaches the world's entities by name or GUID,
+> Rules react to the game starting, to buttons and to animations finishing, and the game
+> draws pixel-perfect into a window that follows the hero. No-code logic reaches the world's entities by name or GUID,
 > through all their components. Every behaviour below is covered by tests.
 >
 > Code: [`engine/game/include/engine/game/`](../../engine/game/include/engine/game/):
@@ -28,7 +28,7 @@ flowchart LR
     RT --> G["GPU<br/>window or offscreen"]
     subgraph Step["Each fixed step (1/60 s)"]
         direction LR
-        I["1. Input"] --> M["2. Movement"] --> E["3. Input events<br/>to Rules"] --> S["4. Waiting<br/>Sequences"]
+        I["1. Input"] --> M["2. Movement"] --> E["3. Input events<br/>to Rules"] --> S["4. Waiting<br/>Sequences"] --> AN["5. Animation"]
     end
     W --> Step
     VM --> Step
@@ -104,8 +104,11 @@ draws and presents. It returns false when the player closes the window. Each `st
    so *"When Interact is pressed"* Rules run.
 4. **Logic update.** Events that scripts emitted since the last update are delivered,
    then Sequences whose wait is over resume.
+5. **Animation.** Sprite animations advance ([scene2d.md](scene2d.md) §3). Each one that
+   reached its end sends its entity's **"finished"** event, so *"When the torch's
+   animation finishes"* Rules run.
 
-This is the start of the order in `plan/05` §5; physics, Brains and "continuously" Rules
+This follows the order in `plan/05` §5 so far; physics, Brains and "continuously" Rules
 take their places in it as they arrive.
 
 ### Drawing
@@ -159,6 +162,11 @@ GUIDs never change, so the editor will write them into logic assets. Names are f
 people, and for logic written by hand while they are unique. The runtime also binds the
 `input` object, for conditions such as *"Interact is held"*.
 
+The VM matches an event by the exact name a Rule was written with. So when the engine
+sends an entity's own event, such as an animation's "finished", `game::emit()` sends it
+under each name that reaches the entity (`names_of()`): its GUID, then its name if no
+other entity shares it. A Rule runs once, whichever name it uses (tested).
+
 ## 6. Objects made of several parts
 
 - `Vm::set_object_resolver()` lets the VM ask for an object's parts by name whenever a
@@ -189,17 +197,17 @@ drawing (`plan/03` §7).
 | Test | Checks |
 |---|---|
 | Project settings | A missing file; a round trip; out-of-range values, a wrong style and an unknown entry, each reported at its path; another format or a newer version refused |
-| Recorded input | A temporary project on disk. Right held for 30 steps, in frames of one and two steps, walks the hero exactly 2 tiles; the game-start Rule logs once; Cancel does not trigger the Interact Rule, Interact does |
+| Recorded input | A temporary project on disk. Right held for 30 steps, in frames of one and two steps, walks the hero exactly 2 tiles; the game-start Rule logs once; Cancel does not trigger the Interact Rule, Interact does; the torch's one-shot animation runs its "finished" Rule once, at 0.3 s |
 | Diagonals | Right and down for one second move 4/√2 tiles on each axis; a disabled mover stays put |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
-| Logic and world | Names and GUIDs resolve; Rules act through several components; logic survives storage moves |
+| Logic and world | Names and GUIDs resolve; an entity's event reaches Rules written with its name and with its GUID, once each; Rules act through several components; logic survives storage moves |
 | Clock | Exact stepping, stalls and the step cap |
 
 ## 9. Next increments
 
-1. **Tilemaps and animation** in the Classic 2D style, and collisions with the map, so
-   the hero can walk around a village rather than an empty field.
+1. **Collisions with the map** (solid tiles), and walk animations that follow the Top-down
+   Mover's direction, so the hero can walk around a village rather than an empty field.
 2. **Hot reload while playing:** pass asset changes to the texture cache and reload
    changed logic.
 3. **Spawning and destroying from logic,** with entities created by Rules addressable by

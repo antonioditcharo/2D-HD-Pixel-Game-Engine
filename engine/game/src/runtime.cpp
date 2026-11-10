@@ -417,6 +417,11 @@ void Runtime::step() {
 
     // 4. Waiting Sequences, and events emitted while scripts ran.
     r.vm->update(dt);
+
+    // 5. Animation; animations that reached their end tell Rules they finished.
+    for (const world::Entity entity : scene2d::animate(*r.world, dt)) {
+        emit(*r.vm, *r.world, entity, "finished");
+    }
     ++r.steps;
 }
 

@@ -99,6 +99,31 @@ TEST_CASE("Names and GUIDs resolve to entities; shared names do not") {
     CHECK(types("barrel").empty());
 }
 
+TEST_CASE("An entity's events reach Rules written with its name or its GUID") {
+    Fixture f;
+    const std::string chest_guid = f.w.guid(f.chest).to_string();
+    CHECK(game::names_of(f.w, f.chest) == std::vector<std::string>{chest_guid, "chest"});
+    const world::Entity barrel = f.w.find_named("barrel").at(0);
+    CHECK(game::names_of(f.w, barrel) == std::vector<std::string>{f.w.guid(barrel).to_string()});
+
+    logic::LogicAsset asset;
+    asset.name = "both_names";
+    asset.rules.push_back(
+        logic::Rule{logic::BlockId{1}, "chest", "opened", {}, {ir::log(2, whole(1))}, {}});
+    asset.rules.push_back(
+        logic::Rule{logic::BlockId{3}, chest_guid, "opened", {}, {ir::log(4, whole(2))}, {}});
+    f.load(asset);
+    CHECK(game::emit(f.vm, f.w, f.chest, "opened"));
+    CHECK(f.log == std::vector<std::string>{"2", "1"}); // each Rule once: GUID first
+    CHECK_FALSE(game::emit(f.vm, f.w, f.chest, "no_such_event"));
+    CHECK_FALSE(game::emit(f.vm, f.w, f.goblin, "opened")); // a Purse has no "opened"
+
+    f.w.destroy(f.chest);
+    CHECK(game::names_of(f.w, f.chest).empty());
+    CHECK_FALSE(game::emit(f.vm, f.w, f.chest, "opened"));
+    CHECK(f.log.size() == 2);
+}
+
 TEST_CASE("Rules act on an entity through all its components") {
     Fixture f;
     logic::LogicAsset asset;

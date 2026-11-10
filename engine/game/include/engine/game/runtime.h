@@ -99,7 +99,8 @@ public:
     /// Advances real time: runs the fixed steps that are due, then draws and presents.
     /// Returns false when the player asked to quit.
     bool frame(double seconds);
-    /// One fixed step: input, movement, input events to Rules, then waiting Sequences.
+    /// One fixed step: input, movement, input events to Rules, waiting Sequences, then
+    /// animation (with "finished" events to Rules).
     void step();
     /// Draws the current state into the offscreen target. False without graphics.
     bool draw();

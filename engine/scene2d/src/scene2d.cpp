@@ -1,8 +1,12 @@
 #include "engine/scene2d/scene2d.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
+#include <limits>
 #include <optional>
+#include <string_view>
+#include <system_error>
 #include <tuple>
 
 namespace engine::scene2d {
@@ -39,12 +43,235 @@ void register_types(reflect::Registry& registry) {
         "Tint blue");
     sprite.property<&Sprite::tint_a>("tint_a").range(0, 255).flags(advanced).display_name(
         "Opacity");
+    sprite.property<&Sprite::frame_width>("frame_width")
+        .range(0, 4096)
+        .unit(reflect::Unit::Pixels)
+        .flags(advanced)
+        .display_name("Frame width")
+        .tooltip("For a sprite sheet: the width of one frame in pixels. 0 uses the whole "
+                 "picture.");
+    sprite.property<&Sprite::frame_height>("frame_height")
+        .range(0, 4096)
+        .unit(reflect::Unit::Pixels)
+        .flags(advanced)
+        .display_name("Frame height")
+        .tooltip("For a sprite sheet: the height of one frame in pixels. 0 uses the whole "
+                 "picture.");
+    sprite.property<&Sprite::frame>("frame").range(0, 65535).flags(advanced).tooltip(
+        "Which frame of the sprite sheet to show, counting from 0, left to right, then top "
+        "to bottom.");
+
+    auto animation = registry.add_type<SpriteAnimation>("sprite_animation")
+                         .display_name("Animation")
+                         .category("Visuals")
+                         .tooltip("Plays frames of a sprite sheet one after another.");
+    animation.property<&SpriteAnimation::first_frame>("first_frame")
+        .range(0, 65535)
+        .display_name("First frame")
+        .tooltip("The frame the animation starts on.");
+    animation.property<&SpriteAnimation::frame_count>("frame_count")
+        .range(1, 1024)
+        .display_name("Frames")
+        .tooltip("How many frames the animation has, from the first frame on.");
+    animation.property<&SpriteAnimation::frames_per_second>("frames_per_second")
+        .range(0.0, 60.0)
+        .step(1.0)
+        .display_name("Speed")
+        .tooltip("Frames per second.");
+    animation.property<&SpriteAnimation::loop>("loop").tooltip(
+        "Start again after the last frame. Otherwise it stops there and says it finished.");
+    animation.property<&SpriteAnimation::playing>("playing").tooltip("Whether it is playing.");
+    animation.property<&SpriteAnimation::elapsed>("elapsed")
+        .unit(reflect::Unit::Seconds)
+        .flags(reflect::property_flag::hidden)
+        .tooltip("How long it has been playing.");
+    animation.action<&SpriteAnimation::play>("play")
+        .text("Play the animation from the start")
+        .tooltip("Starts the animation again from its first frame.");
+    animation.action<&SpriteAnimation::stop>("stop")
+        .text("Stop the animation")
+        .tooltip("Stops on the frame it is showing.");
+    animation.event<>("finished")
+        .text("When the animation finishes")
+        .tooltip("Happens when an animation that does not loop reaches its last frame.");
+
+    auto tilemap =
+        registry.add_type<Tilemap>("tilemap").display_name("Tilemap").category("Visuals").tooltip(
+            "A grid of tiles painted from a tileset picture.");
+    tilemap.property<&Tilemap::tileset>("tileset").tooltip("The picture the tiles come from.");
+    tilemap.property<&Tilemap::tile_size>("tile_size")
+        .range(0, 256)
+        .unit(reflect::Unit::Pixels)
+        .flags(advanced)
+        .display_name("Tile size")
+        .tooltip("The size of one tile in pixels. 0 uses the project's pixels per tile.");
+    tilemap.property<&Tilemap::tiles>("tiles")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("The painted tiles.");
+    tilemap.property<&Tilemap::visible>("visible").tooltip("Hide the tiles without removing "
+                                                           "them.");
 }
 
 bool register_components(world::World& world) {
     const bool transform = world.register_component<Transform2D>();
     const bool sprite = world.register_component<Sprite>();
-    return transform && sprite;
+    const bool animation = world.register_component<SpriteAnimation>();
+    const bool tilemap = world.register_component<Tilemap>();
+    return transform && sprite && animation && tilemap;
+}
+
+// ---------------------------------------------------------------------------------------
+// Tiles
+// ---------------------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] std::string_view trim(std::string_view text) {
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
+        text.remove_prefix(1);
+    }
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) {
+        text.remove_suffix(1);
+    }
+    return text;
+}
+
+} // namespace
+
+std::optional<TileGrid> parse_tiles(std::string_view text, std::string& error) {
+    TileGrid grid;
+    if (text.empty()) {
+        return grid;
+    }
+    std::vector<std::vector<std::int32_t>> rows;
+    std::size_t line_start = 0;
+    while (line_start <= text.size()) {
+        const std::size_t line_end = std::min(text.find('\n', line_start), text.size());
+        const std::string_view line = text.substr(line_start, line_end - line_start);
+        if (rows.size() == max_tilemap_side) {
+            error = "A tilemap can have at most " + std::to_string(max_tilemap_side) + " rows.";
+            return std::nullopt;
+        }
+        std::vector<std::int32_t>& row = rows.emplace_back();
+        std::size_t cell_start = 0;
+        while (cell_start <= line.size()) {
+            const std::size_t cell_end = std::min(line.find(',', cell_start), line.size());
+            const std::string_view cell = trim(line.substr(cell_start, cell_end - cell_start));
+            if (row.size() == max_tilemap_side) {
+                error =
+                    "A tilemap can have at most " + std::to_string(max_tilemap_side) + " columns.";
+                return std::nullopt;
+            }
+            std::int64_t value = -1;
+            if (!cell.empty()) {
+                const auto [end, result] =
+                    std::from_chars(cell.data(), cell.data() + cell.size(), value);
+                if (result != std::errc{} || end != cell.data() + cell.size() || value < -1 ||
+                    value > std::numeric_limits<std::int32_t>::max()) {
+                    error = "Row " + std::to_string(rows.size()) + ", column " +
+                            std::to_string(row.size() + 1) + " is '" + std::string(cell) +
+                            "', which is not a tile number (a whole number from -1 up).";
+                    return std::nullopt;
+                }
+            }
+            row.push_back(static_cast<std::int32_t>(value));
+            cell_start = cell_end + 1;
+        }
+        line_start = line_end + 1;
+    }
+    std::size_t width = 0;
+    for (const std::vector<std::int32_t>& row : rows) {
+        width = std::max(width, row.size());
+    }
+    grid.width = static_cast<std::uint32_t>(width);
+    grid.height = static_cast<std::uint32_t>(rows.size());
+    grid.cells.assign(width * rows.size(), -1);
+    for (std::size_t y = 0; y < rows.size(); ++y) {
+        std::copy(rows[y].begin(), rows[y].end(),
+                  grid.cells.begin() + static_cast<std::ptrdiff_t>(y * width));
+    }
+    return grid;
+}
+
+std::string format_tiles(const TileGrid& grid) {
+    std::string text;
+    if (grid.width == 0 || grid.height == 0) {
+        return text;
+    }
+    for (std::uint32_t y = 0; y < grid.height; ++y) {
+        if (y > 0) {
+            text += '\n';
+        }
+        for (std::uint32_t x = 0; x < grid.width; ++x) {
+            if (x > 0) {
+                text += ',';
+            }
+            if (const std::int32_t tile = grid.at(x, y); tile >= 0) {
+                text += std::to_string(tile);
+            }
+        }
+    }
+    return text;
+}
+
+const TileGrid* Tilemap::grid(std::string& error) const {
+    if (!parsed_once_ || parsed_text_ != tiles) {
+        parse_error_.clear();
+        parsed_ = parse_tiles(tiles, parse_error_);
+        parsed_text_ = tiles;
+        parsed_once_ = true;
+    }
+    if (!parsed_) {
+        error = parse_error_;
+        return nullptr;
+    }
+    return &*parsed_;
+}
+
+// ---------------------------------------------------------------------------------------
+// Animation
+// ---------------------------------------------------------------------------------------
+
+std::vector<world::Entity> animate(world::World& world, double seconds) {
+    std::vector<world::Entity> finished;
+    const reflect::TypeInfo* type = world.registry().find_type<SpriteAnimation>();
+    if (type == nullptr) {
+        return finished;
+    }
+    if (!std::isfinite(seconds) || seconds < 0.0) {
+        seconds = 0.0;
+    }
+    world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        SpriteAnimation* animation = ref.as<SpriteAnimation>();
+        Sprite* sprite = world.get<Sprite>(entity);
+        if (animation == nullptr || sprite == nullptr || animation->frame_count == 0) {
+            return;
+        }
+        if (animation->playing) {
+            animation->elapsed += seconds;
+        }
+        const double fps = std::isfinite(animation->frames_per_second)
+                               ? std::max(animation->frames_per_second, 0.0)
+                               : 0.0;
+        const double count = static_cast<double>(animation->frame_count);
+        // A tiny tolerance, so that rounding in the sum of fixed steps never shows a frame
+        // one step late.
+        double index = std::floor((animation->elapsed * fps) + 1e-9);
+        if (!std::isfinite(index) || index < 0.0) {
+            index = 0.0;
+        }
+        if (animation->loop) {
+            index = std::fmod(index, count);
+        } else if (index >= count) {
+            index = count - 1.0;
+            if (animation->playing) {
+                animation->playing = false;
+                finished.push_back(entity);
+            }
+        }
+        sprite->frame = animation->first_frame + static_cast<std::uint32_t>(index);
+    });
+    return finished;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -107,11 +334,30 @@ namespace {
 struct Item {
     std::int32_t layer = 0;
     double y = 0.0;
-    Guid guid; ///< The entity's: a stable tie-breaker.
+    Guid guid;             ///< The entity's: a stable tie-breaker.
+    std::uint8_t part = 0; ///< 0 for a tilemap, 1 for a sprite: the tilemap goes first.
+    std::size_t index = 0; ///< The tile's position in its map.
     const render::Texture* texture{nullptr};
+    render::Rect source;
     render::Rect destination;
     render::Color tint;
 };
+
+/// The part of `texture` that frame `frame` of a `width` x `height` grid covers. A size of
+/// 0, or one larger than the texture, uses the whole texture.
+render::Rect frame_rect(const render::Texture& texture, std::uint32_t width, std::uint32_t height,
+                        std::uint32_t frame) {
+    const std::uint32_t w = width == 0 || width > texture.width() ? texture.width() : width;
+    const std::uint32_t h = height == 0 || height > texture.height() ? texture.height() : height;
+    const std::uint32_t columns = texture.width() / w;
+    const std::uint32_t rows = texture.height() / h;
+    const std::uint64_t total = std::uint64_t{columns} * rows;
+    const auto f = static_cast<std::uint32_t>(frame % total);
+    const std::uint32_t column = f % columns;
+    const std::uint32_t row = f / columns;
+    return render::Rect{static_cast<float>(column * w), static_cast<float>(row * h),
+                        static_cast<float>(w), static_cast<float>(h)};
+}
 
 } // namespace
 
@@ -129,51 +375,123 @@ DrawStats draw_world(const world::World& world, TextureCache& textures,
     const std::uint32_t centre_y_pixel = target.height() / 2;
     const auto centre_x = static_cast<double>(centre_x_pixel);
     const auto centre_y = static_cast<double>(centre_y_pixel);
+    // The source pixels in view, relative to the camera's pixel.
+    const double view_left = -centre_x / scale;
+    const double view_top = -centre_y / scale;
+    const double view_right = (static_cast<double>(target.width()) - centre_x) / scale;
+    const double view_bottom = (static_cast<double>(target.height()) - centre_y) / scale;
+
+    const auto to_screen = [&](double left, double top, double width, double height) {
+        return render::Rect{static_cast<float>(centre_x + (left * scale)),
+                            static_cast<float>(centre_y + (top * scale)),
+                            static_cast<float>(width * scale), static_cast<float>(height * scale)};
+    };
 
     if (transform_type != nullptr) {
         world.each(*transform_type, [&](world::Entity entity, reflect::ObjectRef ref) {
             const Transform2D* transform = ref.as<Transform2D>();
-            const Sprite* sprite = world.get<Sprite>(entity);
-            if (transform == nullptr || sprite == nullptr || !sprite->visible) {
+            if (transform == nullptr) {
                 return;
             }
-            const std::optional<Guid> image = Guid::parse(sprite->image);
-            const render::Texture* texture = image ? textures.get(*image) : nullptr;
-            if (texture == nullptr) {
-                ++stats.missing;
-                return;
+            Item base;
+            base.layer = transform->layer;
+            base.y = transform->y;
+            base.guid = world.guid(entity);
+
+            if (const Tilemap* tilemap = world.get<Tilemap>(entity);
+                tilemap != nullptr && tilemap->visible) {
+                const std::optional<Guid> image = Guid::parse(tilemap->tileset);
+                const render::Texture* texture = image ? textures.get(*image) : nullptr;
+                std::string error;
+                const TileGrid* grid = tilemap->grid(error);
+                const std::uint32_t size = tilemap->tile_size == 0
+                                               ? std::max<std::uint32_t>(camera.ppu, 1)
+                                               : tilemap->tile_size;
+                if (texture == nullptr || grid == nullptr || texture->width() < size ||
+                    texture->height() < size) {
+                    ++stats.missing;
+                } else {
+                    const std::uint32_t columns = texture->width() / size;
+                    const std::uint64_t tiles = std::uint64_t{columns} * (texture->height() / size);
+                    const auto tile = static_cast<double>(size);
+                    const double left = std::round((transform->x - camera.x) * ppu);
+                    const double top = std::round((transform->y - camera.y) * ppu);
+                    // Only the columns and rows that overlap the view.
+                    const auto first = [&](double view, double origin, std::uint32_t count) {
+                        const double n = std::floor((view - origin) / tile);
+                        return static_cast<std::uint32_t>(
+                            std::clamp(n, 0.0, static_cast<double>(count)));
+                    };
+                    const auto last = [&](double view, double origin, std::uint32_t count) {
+                        const double n = std::ceil((view - origin) / tile);
+                        return static_cast<std::uint32_t>(
+                            std::clamp(n, 0.0, static_cast<double>(count)));
+                    };
+                    const std::uint32_t x0 = first(view_left, left, grid->width);
+                    const std::uint32_t x1 = last(view_right, left, grid->width);
+                    const std::uint32_t y0 = first(view_top, top, grid->height);
+                    const std::uint32_t y1 = last(view_bottom, top, grid->height);
+                    for (std::uint32_t y = y0; y < y1; ++y) {
+                        for (std::uint32_t x = x0; x < x1; ++x) {
+                            const std::int32_t number = grid->at(x, y);
+                            if (number < 0 || static_cast<std::uint64_t>(number) >= tiles) {
+                                continue; // no tile, or past the end of the tileset
+                            }
+                            const auto n = static_cast<std::uint32_t>(number);
+                            const std::uint32_t column = n % columns;
+                            const std::uint32_t row = n / columns;
+                            Item item = base;
+                            item.part = 0;
+                            item.index = (std::size_t{y} * grid->width) + x;
+                            item.texture = texture;
+                            item.source = render::Rect{
+                                static_cast<float>(column * size), static_cast<float>(row * size),
+                                static_cast<float>(size), static_cast<float>(size)};
+                            item.destination =
+                                to_screen(left + (x * tile), top + (y * tile), tile, tile);
+                            item.tint = render::Color{255, 255, 255, 255};
+                            items.push_back(item);
+                        }
+                    }
+                }
             }
-            const auto width = static_cast<double>(texture->width());
-            const auto height = static_cast<double>(texture->height());
-            // Snap in source pixels, then upscale by a whole number: pixel-perfect.
-            const double left =
-                std::round((transform->x - camera.x) * ppu - sprite->pivot_x * width);
-            const double top =
-                std::round((transform->y - camera.y) * ppu - sprite->pivot_y * height);
-            Item item;
-            item.layer = transform->layer;
-            item.y = transform->y;
-            item.guid = world.guid(entity);
-            item.texture = texture;
-            item.destination =
-                render::Rect{static_cast<float>(centre_x + left * scale),
-                             static_cast<float>(centre_y + top * scale),
-                             static_cast<float>(width * scale), static_cast<float>(height * scale)};
-            item.tint =
-                render::Color{sprite->tint_r, sprite->tint_g, sprite->tint_b, sprite->tint_a};
-            items.push_back(item);
+
+            if (const Sprite* sprite = world.get<Sprite>(entity);
+                sprite != nullptr && sprite->visible) {
+                const std::optional<Guid> image = Guid::parse(sprite->image);
+                const render::Texture* texture = image ? textures.get(*image) : nullptr;
+                if (texture == nullptr) {
+                    ++stats.missing;
+                    return;
+                }
+                const render::Rect source =
+                    frame_rect(*texture, sprite->frame_width, sprite->frame_height, sprite->frame);
+                const auto width = static_cast<double>(source.w);
+                const auto height = static_cast<double>(source.h);
+                // Snap in source pixels, then upscale by a whole number: pixel-perfect.
+                const double left =
+                    std::round(((transform->x - camera.x) * ppu) - (sprite->pivot_x * width));
+                const double top =
+                    std::round(((transform->y - camera.y) * ppu) - (sprite->pivot_y * height));
+                Item item = base;
+                item.part = 1;
+                item.texture = texture;
+                item.source = source;
+                item.destination = to_screen(left, top, width, height);
+                item.tint =
+                    render::Color{sprite->tint_r, sprite->tint_g, sprite->tint_b, sprite->tint_a};
+                items.push_back(item);
+            }
         });
     }
     std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
-        return std::tie(a.layer, a.y, a.guid) < std::tie(b.layer, b.y, b.guid);
+        return std::tie(a.layer, a.y, a.guid, a.part, a.index) <
+               std::tie(b.layer, b.y, b.guid, b.part, b.index);
     });
 
     sprites.begin(target, clear);
     for (const Item& item : items) {
-        sprites.draw(*item.texture,
-                     render::Rect{0, 0, static_cast<float>(item.texture->width()),
-                                  static_cast<float>(item.texture->height())},
-                     item.destination, item.tint);
+        sprites.draw(*item.texture, item.source, item.destination, item.tint);
     }
     sprites.end();
     stats.drawn = items.size();

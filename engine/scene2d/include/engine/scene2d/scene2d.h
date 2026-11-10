@@ -1,8 +1,9 @@
 #pragma once
 
-// Classic 2D scenes (plan/04 §3): entities with a 2D transform and a sprite, drawn through
-// a pixel-snapped orthographic camera. This is the first place where the world, the asset
-// database and the renderer work together.
+// Classic 2D scenes (plan/04 §3): entities with a 2D transform and a sprite or a tilemap,
+// drawn through a pixel-snapped orthographic camera, and sprites animated from sprite
+// sheets. This is the first place where the world, the asset database and the renderer
+// work together.
 //
 // See docs/dev/scene2d.md.
 
@@ -15,7 +16,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -43,13 +46,87 @@ struct Sprite {
     std::uint8_t tint_b = 255;
     std::uint8_t tint_a = 255;
     bool visible = true;
+    /// For a sprite sheet: the size of one frame in pixels. 0 uses the whole image. Frames
+    /// are numbered from 0, left to right, then top to bottom; numbers past the last frame
+    /// wrap around.
+    std::uint32_t frame_width = 0;
+    std::uint32_t frame_height = 0;
+    std::uint32_t frame = 0;
 };
 
-/// Registers Transform2D ("transform_2d") and Sprite ("sprite") with their editor
-/// metadata.
+/// "Animation": plays a run of a sprite sheet's frames on the entity's Sprite.
+struct SpriteAnimation {
+    std::uint32_t first_frame = 0;
+    std::uint32_t frame_count = 1;
+    double frames_per_second = 8.0;
+    bool loop = true;
+    bool playing = true;
+    double elapsed = 0.0; ///< Seconds since it started playing (hidden; saved with scenes).
+
+    /// Starts again from the first frame.
+    void play() {
+        elapsed = 0.0;
+        playing = true;
+    }
+    /// Stops on the current frame.
+    void stop() { playing = false; }
+};
+
+/// A tilemap's tiles, parsed. Cells hold tile numbers, or -1 for none.
+struct TileGrid {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<std::int32_t> cells; ///< Row by row.
+
+    [[nodiscard]] std::int32_t at(std::uint32_t x, std::uint32_t y) const noexcept {
+        return x < width && y < height ? cells[(std::size_t{y} * width) + x] : -1;
+    }
+
+    friend bool operator==(const TileGrid&, const TileGrid&) = default;
+};
+
+/// The largest tilemap side, in tiles.
+inline constexpr std::uint32_t max_tilemap_side = 4096;
+
+/// Parses tilemap text: one line per row, cells separated by commas, each a tile number
+/// or empty (or -1) for no tile. Short rows are filled with empty cells. Returns nothing,
+/// with `error` in plain language, for a cell that is not a whole number from -1 up, or a
+/// map wider or taller than max_tilemap_side.
+[[nodiscard]] std::optional<TileGrid> parse_tiles(std::string_view text, std::string& error);
+/// The text form of `grid`, which parse_tiles() reads back unchanged.
+[[nodiscard]] std::string format_tiles(const TileGrid& grid);
+
+/// "Tilemap": a grid of tiles from one tileset image, with its top-left corner at the
+/// entity's position. Tiles are numbered like sprite sheet frames. They are stored as text
+/// (see parse_tiles()) so scene files stay readable and diff well.
+struct Tilemap {
+    std::string tileset;         ///< The GUID of a PNG asset.
+    std::uint32_t tile_size = 0; ///< In pixels, square. 0 uses the camera's PPU.
+    std::string tiles;
+    bool visible = true;
+
+    /// The parsed tiles, kept until `tiles` changes. Null, with `error` set, if the text
+    /// is not valid.
+    [[nodiscard]] const TileGrid* grid(std::string& error) const;
+
+private:
+    // A cache only: not reflected, so never saved.
+    mutable std::string parsed_text_;
+    mutable std::optional<TileGrid> parsed_;
+    mutable std::string parse_error_;
+    mutable bool parsed_once_ = false;
+};
+
+/// Registers Transform2D ("transform_2d"), Sprite ("sprite"), SpriteAnimation
+/// ("sprite_animation") and Tilemap ("tilemap") with their editor metadata.
 void register_types(reflect::Registry& registry);
-/// Makes both usable as components of `world`. register_types() must have run first.
+/// Makes them all usable as components of `world`. register_types() must have run first.
 bool register_components(world::World& world);
+
+/// Advances every playing SpriteAnimation by `seconds` and sets its Sprite's frame. Call
+/// it once per fixed step. Returns the entities whose animation reached its end this time
+/// (animations that do not loop), so their "finished" event can be sent.
+std::vector<world::Entity> animate(world::World& world, double seconds);
 
 /// A pixel-perfect orthographic camera.
 struct Camera2D {
@@ -84,13 +161,13 @@ private:
 };
 
 struct DrawStats {
-    std::size_t drawn = 0;
-    std::size_t missing = 0; ///< Sprites whose image could not be loaded.
+    std::size_t drawn = 0;   ///< Sprites and tiles drawn.
+    std::size_t missing = 0; ///< Sprites and tilemaps whose image or tiles could not be used.
 };
 
-/// Draws every visible entity that has both a Transform2D and a Sprite into `target`,
-/// cleared to `clear`, as seen by `camera`. Positions are snapped to whole pixels, so
-/// pixel art never shimmers.
+/// Draws every visible entity that has a Transform2D and a Sprite or a Tilemap into
+/// `target`, cleared to `clear`, as seen by `camera`. Positions are snapped to whole
+/// pixels, so pixel art never shimmers. Only the tiles in view are drawn.
 DrawStats draw_world(const world::World& world, TextureCache& textures,
                      render::SpriteRenderer& sprites, render::RenderTarget& target,
                      const Camera2D& camera, render::Color clear);
