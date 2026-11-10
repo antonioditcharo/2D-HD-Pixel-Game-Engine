@@ -134,6 +134,7 @@ Details and the questions that remain open are in
 | [World](dev/world.md) | Entities, GUIDs, the hierarchy and components |
 | [Rendering](dev/rendering.md) | The GPU device, sprites, offline shaders, and testing without a graphics card |
 | [Assets](dev/assets.md) | The asset database: GUIDs in `.meta` files, change detection, image import |
+| [Classic 2D scenes](dev/scene2d.md) | Position and sprite components, the texture cache, pixel-perfect drawing, hot reload |
 | [Serialization](dev/serialization.md) | How objects, logic assets and scenes are saved as JSON: determinism, versions, error reporting |
 
 ### Sources

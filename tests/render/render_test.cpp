@@ -7,12 +7,13 @@
 #include <doctest/doctest.h>
 
 #include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <ostream>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "support/gpu.h"
 
 namespace engine::render {
 // Lets failed checks print colours.
@@ -28,20 +29,7 @@ using render::Rect;
 
 namespace {
 
-/// The shared device, or null when there is no GPU.
-render::Device* gpu() {
-    static std::string error;
-    static const std::unique_ptr<render::Device> device =
-        render::Device::create(render::DeviceOptions{true, false}, error);
-    if (device == nullptr) {
-        const char* required = std::getenv("SPARXEL_REQUIRE_GPU");
-        if (required != nullptr && std::string_view(required) == "1") {
-            FAIL("A GPU is required (SPARXEL_REQUIRE_GPU=1) but none was found: " << error);
-        }
-        MESSAGE("Skipped: no GPU (" << error << ")");
-    }
-    return device.get();
-}
+using test_support::gpu;
 
 Color pixel(const std::vector<std::uint8_t>& pixels, std::uint32_t width, std::uint32_t x,
             std::uint32_t y) {

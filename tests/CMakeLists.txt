@@ -76,6 +76,7 @@ target_link_libraries(engine_render_tests PRIVATE
     doctest::doctest
 )
 target_compile_definitions(engine_render_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+target_include_directories(engine_render_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 engine_configure_test_target(engine_render_tests)
 
 add_test(NAME render COMMAND engine_render_tests)
@@ -92,3 +93,18 @@ target_compile_definitions(engine_assets_tests PRIVATE DOCTEST_CONFIG_USE_STD_HE
 engine_configure_test_target(engine_assets_tests)
 
 add_test(NAME assets COMMAND engine_assets_tests)
+
+add_executable(engine_scene2d_tests
+    test_main.cpp
+    scene2d/scene2d_test.cpp
+)
+target_link_libraries(engine_scene2d_tests PRIVATE
+    engine::scene2d
+    engine::serialize
+    doctest::doctest
+)
+target_compile_definitions(engine_scene2d_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+target_include_directories(engine_scene2d_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+engine_configure_test_target(engine_scene2d_tests)
+
+add_test(NAME scene2d COMMAND engine_scene2d_tests)

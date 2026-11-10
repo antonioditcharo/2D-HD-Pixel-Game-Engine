@@ -11,10 +11,12 @@
 │   ├── serialize/     Reflected objects, logic assets and scenes to and from JSON.
 │   ├── render/        The GPU device, render targets and sprites (SDL3 GPU inside);
 │   │                  HLSL shaders in render/shaders/.
-│   └── assets/        The asset database (GUIDs in .meta files) and importers.
+│   ├── assets/        The asset database (GUIDs in .meta files) and importers.
+│   └── scene2d/       Classic 2D scenes: transforms and sprites drawn from the world.
 ├── editor/            The editor application (not started). May use engine/, never the
 │                      other way round.
-├── tests/             Unit tests, one folder per engine module.
+├── tests/             Unit tests, one folder per engine module; shared helpers in
+│                      tests/support/.
 ├── tools/             Development scripts. Never shipped.
 ├── third_party/       Vendored third-party code, only when vcpkg cannot provide it.
 ├── cmake/             CMake helper modules.
