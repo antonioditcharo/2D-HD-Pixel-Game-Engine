@@ -1,8 +1,8 @@
 # The Reflection Registry
 
-> **Status: first version (v0).** Types, properties and choice lists are in place and
-> tested. Actions, conditions and events (the no-code blocks) are the next increment
-> (§6).
+> **Status: v0.2.** Types, properties, choice lists, and the no-code blocks' building
+> parts (actions, conditions, value getters and events) are in place and tested. See §7
+> for what comes next.
 >
 > Code: [`engine/foundation/include/engine/foundation/reflect.h`](../../engine/foundation/include/engine/foundation/reflect.h)
 > and [`src/reflect.cpp`](../../engine/foundation/src/reflect.cpp). Tests:
@@ -71,7 +71,7 @@ What the registry fills in automatically:
 | Kind (Yes/No, Whole number, Number, Text, Choice) | The member's C++ type |
 | Default value | The member's value in a default-constructed object |
 | Display name | Derived from the id: `radius_tiles` → "Radius tiles", unless set |
-| Type id | A stable hash of the registered name (§4) |
+| Type id | A stable hash of the registered name (§5) |
 
 ## 3. Reading and writing values
 
@@ -100,7 +100,65 @@ otherwise:
 Values travel as `Value`, a `std::variant` of `bool`, `std::int64_t` (whole numbers and
 choices), `double` (numbers) and `std::string` (text).
 
-## 4. Rules and design decisions
+## 4. Actions, conditions, getters and events
+
+These are the "Do", "If" and "When" parts of the no-code blocks (`plan/05` §2). A type
+registers its member functions, with parameter ids and the text the block shows:
+
+```cpp
+auto npc = registry.add_type<Npc>("npc").category("Characters");
+
+npc.action<&Npc::heal>("heal", {"amount"})          // void heal(int amount)
+    .text("Heal {amount} HP")
+    .param("amount").range(1, 999);
+
+npc.condition<&Npc::hp_below>("hp_below", {"threshold"}) // bool hp_below(int) const
+    .text("HP is below {threshold}");
+
+npc.getter<&Npc::mood>("mood");                     // Mood mood() const
+
+npc.event<std::int32_t, Mood>("damaged", {"amount", "mood"}) // payload types
+    .text("When damaged by {amount}");
+```
+
+| Role | Block part | C++ requirement (checked at compile time) |
+|---|---|---|
+| `action` | "Do" | Returns `void` |
+| `condition` | "If" | Returns `bool`; must be `const` |
+| `getter` | A value for other blocks | Returns a supported type; must be `const` |
+| `event` | "When" | Payload types are listed as template arguments |
+
+- **Parameter ids** are listed in C++ parameter order. A wrong count is reported
+  (`ParameterCountMismatch`).
+- **Block text** uses `{id}` placeholders. Each must name a parameter, and braces must
+  balance (`InvalidBlockText`). Without custom text, the block reads as the display name
+  followed by one placeholder per parameter, for example "Set mood {mood}".
+- **Parameter defaults** start at zero, or at the first entry for choices. Setting a range
+  moves an out-of-range default to the nearest bound. `default_value()` sets one
+  explicitly, and it must fit (`InvalidDefault`).
+- **Ids are shared** across a type's properties, functions and events, so every block
+  name is unambiguous (`DuplicateMember`).
+
+Calling a function goes through `call()`, which checks the object's type, the argument
+count and every argument before invoking anything:
+
+```cpp
+std::vector<Value> arguments{std::int64_t{20}};
+CallResult result = call(npc_object, *npc_type->find_function("heal"), arguments);
+// result.ok(), or result.error and result.argument say what was wrong.
+```
+
+| `CallError` | Meaning |
+|---|---|
+| `WrongType` | The function belongs to a different C++ type than the object |
+| `WrongArgumentCount` | Too many or too few arguments |
+| `WrongKind`, `OutOfRange`, `UnknownChoice` | As for properties, with `argument` giving the index |
+| `NotRepresentable` | The argument fits the kind but not the C++ parameter type |
+
+Conditions and getters return their result in `CallResult::value`. Events are described
+only for now; firing them belongs to the message bus in the logic runtime (`plan/03` §6).
+
+## 5. Rules and design decisions
 
 | Rule | Why |
 |---|---|
@@ -114,24 +172,22 @@ choices), `double` (numbers) and `std::string` (text).
 | **Supported member types:** `bool`, integers (not `char` types, not 64-bit unsigned), `float`, `double`, `std::string`, registered enums. | Each maps to exactly one no-code kind. Unsupported types fail at compile time with a message saying what is supported. |
 | **Descriptions are never removed.** | Pointers returned by `find_type()` and friends stay valid for the registry's lifetime, so the editor can hold them. |
 
-## 5. How it connects to the rest of the plan
+## 6. How it connects to the rest of the plan
 
 | Consumer | How it will use the registry | Plan reference |
 |---|---|---|
 | Inspector (editor) | One widget per property: checkbox, spin box or slider with unit, text field, dropdown. Advanced and hidden flags decide visibility | `plan/06` §1, §3 |
-| No-code blocks | "Set [property] of [object] to [value]" and "[property] of [object]" blocks for every property | `plan/05` §2, §8 |
+| No-code blocks | "Set [property] of [object] to [value]" and "[property] of [object]" blocks for every property, plus one block per action, condition, getter and event, reading as its block text | `plan/05` §2, §8 |
 | Save system | Properties flagged `saved` are written to save files automatically | `plan/03` §10; feature M1 |
 | Project files | Ids and type ids are the keys used in the JSON project format | `plan/03` §4 |
 | ECS (flecs) | Registered types become components; flecs reflection is fed from this registry, not the other way round | ADR-006 |
 | Documentation | Every type and property gets a generated docs page from its metadata | Feature Q2 |
 
-## 6. Next increments
+## 7. Next increments
 
 In order:
 
-1. **Actions, conditions and events.** Register functions with typed, described
-   parameters and a type-erased invoker. These become the no-code blocks of `plan/05` §2.
-   This also needs Logic IR integration, decided in the logic spike (ADR-007).
+1. **Firing events** and the Logic IR integration, decided in the logic spike (ADR-007).
 2. **More value kinds:** Colour, Position (2D and 3D), Direction, Time, object references
    and asset references (GUIDs), and lists.
 3. **JSON serialization** of reflected objects, for the project format (`plan/03` §4).

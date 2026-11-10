@@ -4,6 +4,7 @@ add_executable(engine_foundation_tests
     test_main.cpp
     foundation/version_test.cpp
     foundation/reflect_test.cpp
+    foundation/reflect_functions_test.cpp
 )
 target_link_libraries(engine_foundation_tests PRIVATE
     engine::foundation
