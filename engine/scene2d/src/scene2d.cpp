@@ -252,6 +252,40 @@ Span covered(double low, double high, double tile) {
 
 } // namespace
 
+bool overlaps(const Box& a, const Box& b) noexcept {
+    return a.left < b.right - edge_tolerance && b.left < a.right - edge_tolerance &&
+           a.top < b.bottom - edge_tolerance && b.top < a.bottom - edge_tolerance;
+}
+
+double sweep_boxes(const Box& box, Axis axis, double distance, const std::vector<Box>& obstacles) {
+    if (!std::isfinite(distance) || distance == 0.0) {
+        return 0.0;
+    }
+    const bool x_axis = axis == Axis::X;
+    const double low = x_axis ? box.left : box.top;
+    const double high = x_axis ? box.right : box.bottom;
+    const double across_low = x_axis ? box.top : box.left;
+    const double across_high = x_axis ? box.bottom : box.right;
+    double allowed = distance;
+    for (const Box& obstacle : obstacles) {
+        const double o_low = x_axis ? obstacle.left : obstacle.top;
+        const double o_high = x_axis ? obstacle.right : obstacle.bottom;
+        const double o_across_low = x_axis ? obstacle.top : obstacle.left;
+        const double o_across_high = x_axis ? obstacle.bottom : obstacle.right;
+        const bool beside = o_across_high <= across_low + edge_tolerance ||
+                            o_across_low >= across_high - edge_tolerance;
+        if (beside || overlaps(box, obstacle)) {
+            continue;
+        }
+        if (distance > 0.0 && o_low >= high - edge_tolerance) {
+            allowed = std::min(allowed, std::max(0.0, o_low - high));
+        } else if (distance < 0.0 && o_high <= low + edge_tolerance) {
+            allowed = std::max(allowed, std::min(0.0, o_high - low));
+        }
+    }
+    return allowed;
+}
+
 double sweep(const world::World& world, const Box& box, Axis axis, double distance,
              std::uint32_t ppu) {
     if (!std::isfinite(distance) || distance == 0.0) {

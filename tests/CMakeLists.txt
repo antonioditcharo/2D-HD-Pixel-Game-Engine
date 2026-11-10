@@ -111,6 +111,7 @@ add_test(NAME scene2d COMMAND engine_scene2d_tests)
 
 add_executable(engine_game_tests
     test_main.cpp
+    game/behaviours_test.cpp
     game/clock_test.cpp
     game/logic_world_test.cpp
     game/runtime_test.cpp

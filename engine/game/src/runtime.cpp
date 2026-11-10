@@ -209,112 +209,7 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
 void register_types(reflect::Registry& registry) {
     scene2d::register_types(registry);
     input::register_types(registry);
-    registry.add_choice_list<Facing>("facing")
-        .display_name("Facing")
-        .entry(Facing::Down, "down")
-        .entry(Facing::Left, "left")
-        .entry(Facing::Right, "right")
-        .entry(Facing::Up, "up");
-    auto mover = registry.add_type<TopDownMover>("top_down_mover")
-                     .display_name("Top-down Mover")
-                     .category("Movement")
-                     .tooltip("Walks in eight directions with the move actions.");
-    mover.property<&TopDownMover::speed>("speed").range(0.0, 64.0).step(0.5).tooltip(
-        "How fast it walks, in tiles per second.");
-    mover.property<&TopDownMover::enabled>("enabled").tooltip(
-        "Turn off to stop the player moving, for example in a cutscene.");
-    mover.property<&TopDownMover::hitbox_width>("hitbox_width")
-        .range(0.0, 16.0)
-        .step(0.125)
-        .unit(reflect::Unit::Tiles)
-        .flags(reflect::property_flag::advanced)
-        .display_name("Hitbox width")
-        .tooltip("How wide the feet are, for bumping into walls.");
-    mover.property<&TopDownMover::hitbox_height>("hitbox_height")
-        .range(0.0, 16.0)
-        .step(0.125)
-        .unit(reflect::Unit::Tiles)
-        .flags(reflect::property_flag::advanced)
-        .display_name("Hitbox height")
-        .tooltip("How deep the feet are, for bumping into walls.");
-    mover.property<&TopDownMover::facing>("facing").tooltip("The direction it looks.");
-    mover.property<&TopDownMover::moving>("moving")
-        .flags(reflect::property_flag::read_only)
-        .tooltip("Whether it is walking.");
-
-    auto walk = registry.add_type<WalkAnimation>("walk_animation")
-                    .display_name("Walk Animation")
-                    .category("Movement")
-                    .tooltip("Shows a character sheet's walk cycle in the direction it faces.");
-    walk.property<&WalkAnimation::frames_per_direction>("frames_per_direction")
-        .range(1, 64)
-        .display_name("Frames per direction")
-        .tooltip("How many frames each row of the character sheet has.");
-    walk.property<&WalkAnimation::frames_per_second>("frames_per_second")
-        .range(0.0, 60.0)
-        .step(1.0)
-        .display_name("Speed")
-        .tooltip("Frames per second while walking.");
-    walk.property<&WalkAnimation::standing_frame>("standing_frame")
-        .range(0, 63)
-        .display_name("Standing frame")
-        .tooltip("The frame of the row shown when standing still, counting from 0.");
-    walk.property<&WalkAnimation::ping_pong>("ping_pong")
-        .flags(reflect::property_flag::advanced)
-        .display_name("Back and forth")
-        .tooltip("Step through the frames and back (1, 2, 3, 2) instead of starting over.");
-    walk.property<&WalkAnimation::elapsed>("elapsed")
-        .unit(reflect::Unit::Seconds)
-        .flags(reflect::property_flag::hidden)
-        .tooltip("How long it has been walking.");
-}
-
-Facing facing_for(Facing current, double dx, double dy) noexcept {
-    const bool left = dx < 0.0;
-    const bool right = dx > 0.0;
-    const bool up = dy < 0.0;
-    const bool down = dy > 0.0;
-    if (!left && !right && !up && !down) {
-        return current;
-    }
-    const bool keeps = (current == Facing::Left && left) || (current == Facing::Right && right) ||
-                       (current == Facing::Up && up) || (current == Facing::Down && down);
-    if (keeps) {
-        return current;
-    }
-    if (left || right) {
-        return left ? Facing::Left : Facing::Right;
-    }
-    return up ? Facing::Up : Facing::Down;
-}
-
-void update_walk(const TopDownMover& mover, WalkAnimation& walk, scene2d::Sprite& sprite,
-                 double seconds) {
-    const std::uint32_t count = std::max<std::uint32_t>(walk.frames_per_direction, 1);
-    const auto row = static_cast<std::uint32_t>(mover.facing);
-    std::uint32_t column = std::min(walk.standing_frame, count - 1);
-    if (mover.moving) {
-        if (std::isfinite(seconds) && seconds > 0.0) {
-            walk.elapsed += seconds;
-        }
-        const double fps =
-            std::isfinite(walk.frames_per_second) ? std::max(walk.frames_per_second, 0.0) : 0.0;
-        // Ping-pong over n frames has a period of 2n - 2: 0, 1, ..., n-1, n-2, ..., 1.
-        const std::uint32_t period = walk.ping_pong && count > 2 ? (2 * count) - 2 : count;
-        double step = std::floor((walk.elapsed * fps) + 1e-9);
-        step =
-            std::isfinite(step) && step >= 0.0 ? std::fmod(step, static_cast<double>(period)) : 0.0;
-        const auto index = static_cast<std::uint32_t>(step);
-        column = index < count ? index : period - index;
-    } else {
-        walk.elapsed = 0.0;
-    }
-    sprite.frame = (row * count) + column;
-}
-
-scene2d::Box hitbox(const TopDownMover& mover, double x, double y) {
-    const double half = std::max(mover.hitbox_width, 0.0) / 2.0;
-    return scene2d::Box{x - half, y - std::max(mover.hitbox_height, 0.0), x + half, y};
+    register_behaviours(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -365,8 +260,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     register_types(r.registry);
     r.world = std::make_unique<world::World>(r.registry);
     scene2d::register_components(*r.world);
-    r.world->register_component<TopDownMover>();
-    r.world->register_component<WalkAnimation>();
+    register_behaviour_components(*r.world);
 
     // Assets.
     r.assets.refresh();
@@ -485,49 +379,44 @@ void Runtime::step() {
         r.keep_running = input::pump_events(r.state) && r.keep_running;
     }
 
-    // 2. Movement.
+    // 2. Movement, with walls, bodies and walk animations; then trigger areas.
     const double dt = r.clock.step_seconds();
-    if (const reflect::TypeInfo* mover_type = r.registry.find_type<TopDownMover>()) {
-        r.world->each(*mover_type, [&](world::Entity entity, reflect::ObjectRef ref) {
-            TopDownMover* mover = ref.as<TopDownMover>();
-            scene2d::Transform2D* transform = r.world->get<scene2d::Transform2D>(entity);
-            if (mover == nullptr || transform == nullptr) {
-                return;
-            }
-            WalkAnimation* walk = r.world->get<WalkAnimation>(entity);
-            scene2d::Sprite* sprite = r.world->get<scene2d::Sprite>(entity);
-            if (!mover->enabled) {
-                mover->moving = false;
-                if (walk != nullptr && sprite != nullptr) {
-                    update_walk(*mover, *walk, *sprite, dt);
-                }
-                return;
-            }
-            const double dx =
-                (r.state.held("move_right") ? 1.0 : 0.0) - (r.state.held("move_left") ? 1.0 : 0.0);
-            const double dy =
-                (r.state.held("move_down") ? 1.0 : 0.0) - (r.state.held("move_up") ? 1.0 : 0.0);
-            const double length = std::sqrt(dx * dx + dy * dy);
-            mover->facing = facing_for(mover->facing, dx, dy);
-            mover->moving = length > 0.0;
-            if (length > 0.0) {
-                const double step = mover->speed * dt / length;
-                // One axis at a time, so a diagonal into a wall slides along it.
-                transform->x += scene2d::sweep(*r.world, hitbox(*mover, transform->x, transform->y),
-                                               scene2d::Axis::X, dx * step, r.settings.ppu);
-                transform->y += scene2d::sweep(*r.world, hitbox(*mover, transform->x, transform->y),
-                                               scene2d::Axis::Y, dy * step, r.settings.ppu);
-            }
-            if (walk != nullptr && sprite != nullptr) {
-                update_walk(*mover, *walk, *sprite, dt);
-            }
-        });
+    move_characters(*r.world, r.state, dt, r.settings.ppu);
+    for (const TriggerEvent& event : update_triggers(*r.world)) {
+        const std::vector<std::string> who = names_of(*r.world, event.who);
+        const std::array<reflect::Value, 1> payload{
+            reflect::Value{who.empty() ? std::string() : who.back()}};
+        emit(*r.vm, *r.world, event.trigger, event.entered ? "entered" : "exited", payload);
     }
 
-    // 3. Events: each pressed action runs the Rules listening for it.
+    // 3. Events: each pressed action runs the Rules listening for it. Interact also
+    //    reaches what each mover faces, in mover GUID order.
     for (const std::string& action : r.state.pressed_actions()) {
         const std::array<reflect::Value, 1> payload{reflect::Value{action}};
         r.vm->emit("input", "pressed", payload);
+        if (action != "interact") {
+            continue;
+        }
+        std::vector<std::pair<Guid, world::Entity>> movers;
+        if (const reflect::TypeInfo* type = r.registry.find_type<TopDownMover>()) {
+            r.world->each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+                const TopDownMover* mover = ref.as<TopDownMover>();
+                if (mover != nullptr && mover->enabled) {
+                    movers.emplace_back(r.world->guid(entity), entity);
+                }
+            });
+        }
+        std::sort(movers.begin(), movers.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (const auto& [guid, mover] : movers) {
+            const world::Entity target = find_interaction(*r.world, mover);
+            if (target.is_valid()) {
+                const std::vector<std::string> who = names_of(*r.world, mover);
+                const std::array<reflect::Value, 1> by{
+                    reflect::Value{who.empty() ? std::string() : who.back()}};
+                emit(*r.vm, *r.world, target, "interacted", by);
+            }
+        }
     }
 
     // 4. Waiting Sequences, and events emitted while scripts ran.

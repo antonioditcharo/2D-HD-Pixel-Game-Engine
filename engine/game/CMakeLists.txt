@@ -1,6 +1,7 @@
 # Game: the runtime that connects the engine's parts and runs a project.
 
 add_library(engine_game STATIC
+    src/behaviours.cpp
     src/clock.cpp
     src/logic_world.cpp
     src/runtime.cpp

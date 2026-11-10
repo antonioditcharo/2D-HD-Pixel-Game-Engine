@@ -142,6 +142,15 @@ struct Box {
 
 enum class Axis : std::uint8_t { X, Y };
 
+/// True if the boxes share more than an edge (or a rounding error of one).
+[[nodiscard]] bool overlaps(const Box& a, const Box& b) noexcept;
+
+/// Like sweep(), against boxes instead of tiles: how far `box` can move by `distance`
+/// along `axis` before it would enter one of `obstacles`. Obstacles it already overlaps do
+/// not block.
+[[nodiscard]] double sweep_boxes(const Box& box, Axis axis, double distance,
+                                 const std::vector<Box>& obstacles);
+
 /// How far `box` can move by `distance` along `axis` before it would enter a tile of a
 /// solid Tilemap in `world`, visible or not: `distance` itself if nothing is in the way,
 /// else the distance to the first such tile's edge (0 when touching it). Tiles the box

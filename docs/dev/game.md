@@ -2,12 +2,15 @@
 
 > **Status: v0.1, the first playable loop.** A project folder on disk (settings, PNG
 > images, a scene and Rules) opens and runs: a hero walks with the keyboard or a gamepad,
-> Rules react to the game starting, to buttons and to animations finishing, and the game
-> draws pixel-perfect into a window that follows the hero. No-code logic reaches the world's entities by name or GUID,
-> through all their components. Every behaviour below is covered by tests.
+> turning and animating as it goes, stopped by walls and people; Rules react to the game
+> starting, to buttons, to talking to people, to walking through doorways and to
+> animations finishing; and the game draws pixel-perfect into a window that follows the
+> hero. No-code logic reaches the world's entities by name or GUID, through all their
+> components. Every behaviour below is covered by tests.
 >
 > Code: [`engine/game/include/engine/game/`](../../engine/game/include/engine/game/):
 > [`runtime.h`](../../engine/game/include/engine/game/runtime.h),
+> [`behaviours.h`](../../engine/game/include/engine/game/behaviours.h),
 > [`logic_world.h`](../../engine/game/include/engine/game/logic_world.h) and
 > [`clock.h`](../../engine/game/include/engine/game/clock.h). Tests:
 > [`tests/game/`](../../tests/game/).
@@ -99,9 +102,12 @@ while (game && game->frame(seconds_since_last_frame)) {}
 draws and presents. It returns false when the player closes the window. Each `step()`:
 
 1. **Input.** The step's controls, from the recording or from the operating system.
-2. **Movement.** Every enabled Top-down Mover walks (§4).
+2. **Movement.** Every enabled Top-down Mover walks, stopped by walls and Solid Bodies,
+   and Walk Animations update (§4). Then Trigger Areas send **"entered"** and
+   **"exited"** for the movers that walked in or out.
 3. **Input events.** Each action pressed this step emits `input.pressed` with the action,
-   so *"When Interact is pressed"* Rules run.
+   so *"When Interact is pressed"* Rules run. For Interact, each enabled mover (in GUID
+   order) then reaches the Interactable it faces, which sends **"interacted"** (§4).
 4. **Logic update.** Events that scripts emitted since the last update are delivered,
    then Sequences whose wait is over resume.
 5. **Animation.** Sprite animations advance ([scene2d.md](scene2d.md) §3). Each one that
@@ -118,10 +124,20 @@ camera follows the first entity with a Top-down Mover, so the hero stays centred
 window shows the image pixel-perfect with black bars around it ([rendering.md](rendering.md)
 §4).
 
-## 4. Behaviours: the Top-down Mover
+## 4. Behaviours
 
 Behaviours are components that give an entity a capability with no logic to write
-(`plan/05` §3.1). The first is **Top-down Mover** (`top_down_mover`):
+(`plan/05` §3.1). They live in `behaviours.h`, with their systems as plain functions
+(`move_characters()`, `update_triggers()`, `find_interaction()`) that the runtime calls
+each step and tests call directly.
+
+Every behaviour's area is a box **centred on the bottom of its position** (`feet_box()`),
+so the feet of a character, the base of a villager and the floor of a doorway line up
+with their position, which is also what y-sorting uses.
+
+### Top-down Mover
+
+**Top-down Mover** (`top_down_mover`):
 
 | Property | Meaning |
 |---|---|
@@ -159,6 +175,17 @@ cycle. Set the Sprite's frame size to one cell of the sheet.
 While walking, the row's frames cycle in fixed steps; on stopping, the standing frame of
 the row shows and the cycle starts again next time. Do not combine it with an Animation
 on the same entity: the Animation runs later in the step and would win.
+
+### Solid Body, Trigger Area and Interactable
+
+| Behaviour | Properties | What it does |
+|---|---|---|
+| **Solid Body** (`body`) | `width` 0.75, `height` 0.5 tiles; `enabled` | Blocks movers like a wall that can stand anywhere: villagers, crates, signs. Movers stop exactly at its edge and slide along it. A mover's own body never blocks it. Bodies block where they stand at the start of the step |
+| **Trigger Area** (`trigger`) | `width` 1, `height` 1 tiles; `enabled` | Sends **"entered"** when a mover's hitbox starts overlapping it and **"exited"** when it stops, once each, with the mover's name as `who` (its GUID if the name is shared). For doorways, cutscene zones and traps. Disabling it makes everyone inside exit |
+| **Interactable** (`interactable`) | `width` 1, `height` 1 tiles; `enabled` | Sends **"interacted"**, with `who`, when a mover presses Interact facing it: the mover's hitbox moved half a tile (`interact_reach`) the way it faces must overlap it. The nearest one wins; ties go to the lower GUID |
+
+Events are sent in a fixed order (exits before entries, then by trigger and mover GUID),
+so a replay always runs Rules in the same order.
 
 ## 5. Logic meets the world
 
@@ -228,6 +255,8 @@ drawing (`plan/03` §7).
 | Recorded input | A temporary project on disk. Right held for 30 steps, in frames of one and two steps, walks the hero exactly 2 tiles; the game-start Rule logs once; Cancel does not trigger the Interact Rule, Interact does; the torch's one-shot animation runs its "finished" Rule once, at 0.3 s |
 | Diagonals | Right and down for one second move 4/√2 tiles on each axis; a disabled mover stays put |
 | Walls | Walking right stops with the hitbox on the wall (x = 2.625 for a wall at 3); adding down slides along it at the diagonal speed |
+| Bodies, triggers, interaction | Boxes touching versus overlapping; sweeping against boxes in every direction; a villager stopping the hero at its edge, and not when disabled; a doorway reporting a mover already inside, a mover walking in and out once each, exits in GUID order, and everyone leaving when disabled; the reach in each facing, the nearest of two, disabled ones and the mover itself skipped |
+| Talking and doorways | In the runtime: Interact facing the elder runs its "interacted" Rule after the Interact input Rule; walking left runs the doorway's "entered" Rule with `who` = "hero" at exactly 4.2 tiles, and "exited" after leaving it |
 | Facing and walking | Every facing rule; exact frames of the cycle, back and forth and starting over, at 6 frames per second; the standing frame; clamped settings; the runtime turning the hero left and animating it |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
@@ -236,8 +265,8 @@ drawing (`plan/03` §7).
 
 ## 9. Next increments
 
-1. **Touching other characters and trigger areas,** with "When touched" and "When the
-   player talks to" events, so the hero can explore a village and talk to people.
+1. **Dialogue:** a message box with text and choices, shown by a "Say" action, that pauses
+   the player until it is closed, so talking to the elder shows words on screen.
 2. **Hot reload while playing:** pass asset changes to the texture cache and reload
    changed logic.
 3. **Spawning and destroying from logic,** with entities created by Rules addressable by

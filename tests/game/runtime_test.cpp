@@ -109,7 +109,7 @@ struct Project {
         REQUIRE(registry.errors().empty());
         world::World w(registry);
         REQUIRE(scene2d::register_components(w));
-        REQUIRE(w.register_component<game::TopDownMover>());
+        REQUIRE(game::register_behaviour_components(w));
         const world::Entity hero = w.create("hero");
         w.add<scene2d::Transform2D>(hero);
         w.add<scene2d::Sprite>(hero)->image = hero_image.to_string();
@@ -125,6 +125,13 @@ struct Project {
         flame->frame_count = 3;
         flame->frames_per_second = 10.0;
         flame->loop = false;
+        // An elder to talk to, below the start, and a doorway to the left.
+        const world::Entity elder = w.create("elder");
+        w.add<scene2d::Transform2D>(elder)->y = 3.0;
+        w.add<game::Interactable>(elder);
+        const world::Entity door = w.create("door");
+        w.add<scene2d::Transform2D>(door)->x = -5.0;
+        w.add<game::Trigger>(door);
         write_json(folder.path / "assets/maps/start.dscene", serialize::scene_to_json(w));
 
         logic::LogicAsset rules;
@@ -140,6 +147,12 @@ struct Project {
             {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{5}, "torch", "finished", {}, {ir::log(6, text("torch done"))}, {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{7}, "elder", "interacted", {}, {ir::log(8, text("talk"))}, {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{9}, "door", "entered", {}, {ir::log(10, ir::event_value("who"))}, {}});
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{11}, "door", "exited", {}, {ir::log(12, text("bye"))}, {}});
         write_json(folder.path / "assets/logic/main.drules", serialize::logic_to_json(rules));
     }
 
@@ -457,6 +470,43 @@ TEST_CASE("The runtime turns and animates a walking hero") {
     w.get<game::TopDownMover>(hero)->enabled = false;
     runtime->step();
     CHECK_FALSE(w.get<game::TopDownMover>(hero)->moving);
+}
+
+TEST_CASE("Talking to people and walking through doorways runs their Rules") {
+    const Project project;
+    input::Recording replay;
+    replay.record(1, key(input::Key::Z), true); // Interact, facing down at the elder
+    replay.record(2, key(input::Key::Z), false);
+    replay.record(5, key(input::Key::Left), true);
+    const auto runtime = project.open(no_graphics(&replay));
+    const world::World& w = runtime->world();
+    const world::Entity hero = w.find_named("hero").at(0);
+    // Just above the elder: the reach (0.5 below the hitbox) overlaps its 1 x 1 box.
+    w.get<scene2d::Transform2D>(hero)->y = 1.75;
+    for (int i = 0; i < 5; ++i) {
+        runtime->step();
+    }
+    // The input Rule for Interact runs first, then the elder's.
+    CHECK(runtime->log() == std::vector<std::string>{"start", "hello", "talk"});
+
+    // Walking left from x = 0: the hitbox reaches the doorway (x -5.5 to -4.5) after
+    // 4.125 tiles, and leaves it after 5.875 tiles, at 4 tiles per second.
+    w.get<scene2d::Transform2D>(hero)->y = 0.0;
+    for (int i = 0; i < 61; ++i) {
+        runtime->step(); // to x = -4.0667: not yet inside
+    }
+    CHECK(runtime->log() == std::vector<std::string>{"start", "hello", "talk", "torch done"});
+    for (int i = 0; i < 2; ++i) {
+        runtime->step(); // to x = -4.2
+    }
+    CHECK(runtime->log() ==
+          std::vector<std::string>{"start", "hello", "talk", "torch done", "hero"});
+    for (int i = 0; i < 30; ++i) {
+        runtime->step(); // to x = -6.2
+    }
+    CHECK(runtime->log() ==
+          std::vector<std::string>{"start", "hello", "talk", "torch done", "hero", "bye"});
+    CHECK(runtime->vm().errors().empty());
 }
 
 TEST_CASE("Problems are reported with the file they are in") {
