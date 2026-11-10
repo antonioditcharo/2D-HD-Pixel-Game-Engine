@@ -3,11 +3,12 @@
 ```
 .
 ├── engine/            Runtime code. Everything here can ship inside an exported game.
-│   ├── foundation/    Lowest layer: version info and the reflection registry today;
+│   ├── foundation/    Lowest layer: version info, GUIDs and the reflection registry today;
 │   │                  memory, jobs and logging later.
 │   ├── logic/         The logic runtime: the Logic IR, its compiler, and the sandboxed
 │   │                  Luau VM that runs no-code logic.
-│   └── serialize/     Reflected objects and logic assets to and from JSON.
+│   ├── world/         Entities, GUIDs, the hierarchy and components (flecs inside).
+│   └── serialize/     Reflected objects, logic assets and scenes to and from JSON.
 ├── editor/            The editor application (not started). May use engine/, never the
 │                      other way round.
 ├── tests/             Unit tests, one folder per engine module.

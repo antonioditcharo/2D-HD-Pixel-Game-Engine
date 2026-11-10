@@ -149,8 +149,13 @@
   in depth here, and a custom ECS (cost). flecs is preferred because its documented
   built-ins (relationships, prefabs, JSON reflection [S70]) map directly onto features we
   need.
-- **Note:** flecs reflection *feeds* the engine's own reflection registry (`03` §1.2). It
-  does not replace it, because editor metadata (tooltips, units, icons) is ours.
+- **Note:** the engine's own reflection registry (`03` §1.2) is the source of truth for
+  components: the world registers each reflected type with flecs, not the other way
+  round. flecs reflection does not replace ours, because editor metadata (tooltips, units,
+  icons) is ours. (An earlier wording had the direction reversed; corrected when the world
+  was built, November 2026.)
+- **Status (November 2026):** in use, behind a type-erased `World` API that keeps flecs an
+  implementation detail (`docs/dev/world.md`).
 
 ## ADR-007: Logic VM, Luau
 
@@ -316,7 +321,7 @@
 | SDL3 | zlib [S66] | Yes | Do not misrepresent origin; keep the notice in the source |
 | Luau | MIT [S71] | Yes | Include the licence notice |
 | nlohmann/json | MIT [S105] | Yes (project and save files) | Include the licence notice |
-| flecs | MIT [S70] | Yes | Include the licence notice |
+| flecs | MIT [S70]; bundles EmbeddableWebServer (BSD-2-Clause) in its HTTP addon | Yes | Include both notices (`THIRD_PARTY_NOTICES.md`) |
 | Jolt Physics | MIT [S69] | Yes | Include the licence notice |
 | Box2D v3 | MIT [S67] | Yes | Include the licence notice |
 | miniaudio | Public domain or MIT-0 [S72] | Yes | None |

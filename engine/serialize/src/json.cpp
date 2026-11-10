@@ -9,23 +9,14 @@
 #include <limits>
 #include <utility>
 
+#include "detail.h"
+
 namespace engine::serialize {
 
-namespace {
-
-using text::expected_text;
-using text::quote;
-using text::range_text;
-
-/// Deeper nesting than this is refused when reading, as the compiler refuses it.
-constexpr int max_depth = 64;
-
-// ---------------------------------------------------------------------------------------
-// Paths
-// ---------------------------------------------------------------------------------------
+namespace detail {
 
 /// Appends a key to a JSON Pointer, escaping '~' and '/' as RFC 6901 requires.
-[[nodiscard]] std::string child(std::string_view path, std::string_view key) {
+std::string child(std::string_view path, std::string_view key) {
     std::string out(path);
     out += '/';
     for (const char c : key) {
@@ -40,9 +31,60 @@ constexpr int max_depth = 64;
     return out;
 }
 
-[[nodiscard]] std::string child(std::string_view path, std::size_t index) {
+std::string child(std::string_view path, std::size_t index) {
     return std::string(path) + "/" + std::to_string(index);
 }
+
+/// The value of a whole number above 0, whether JSON holds it as signed or unsigned
+/// (parsed text gives unsigned, values built in code are often signed).
+std::optional<std::uint64_t> positive_integer(const Json& json) {
+    if (json.is_number_unsigned()) {
+        const auto value = json.get<std::uint64_t>();
+        return value > 0 ? std::optional<std::uint64_t>(value) : std::nullopt;
+    }
+    if (json.is_number_integer()) {
+        const auto value = json.get<std::int64_t>();
+        return value > 0 ? std::optional<std::uint64_t>(static_cast<std::uint64_t>(value))
+                         : std::nullopt;
+    }
+    return std::nullopt;
+}
+
+/// How a JSON value reads in a message.
+std::string describe(const Json& json) {
+    if (json.is_string()) {
+        return text::quote(json.get_ref<const std::string&>());
+    }
+    if (json.is_null()) {
+        return "nothing";
+    }
+    if (json.is_object()) {
+        return "a group of values";
+    }
+    if (json.is_array()) {
+        return "a list";
+    }
+    return json.dump();
+}
+
+} // namespace detail
+
+namespace {
+
+using detail::child;
+using detail::describe;
+using detail::positive_integer;
+
+using text::expected_text;
+using text::quote;
+using text::range_text;
+
+/// Deeper nesting than this is refused when reading, as the compiler refuses it.
+constexpr int max_depth = 64;
+
+// ---------------------------------------------------------------------------------------
+// Paths
+// ---------------------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------------------
 // Values
@@ -128,38 +170,6 @@ enum class Read : std::uint8_t { Ok, WrongKind, UnknownChoice };
     }
     }
     return Read::WrongKind;
-}
-
-/// The value of a whole number above 0, whether JSON holds it as signed or unsigned
-/// (parsed text gives unsigned, values built in code are often signed).
-[[nodiscard]] std::optional<std::uint64_t> positive_integer(const Json& json) {
-    if (json.is_number_unsigned()) {
-        const auto value = json.get<std::uint64_t>();
-        return value > 0 ? std::optional<std::uint64_t>(value) : std::nullopt;
-    }
-    if (json.is_number_integer()) {
-        const auto value = json.get<std::int64_t>();
-        return value > 0 ? std::optional<std::uint64_t>(static_cast<std::uint64_t>(value))
-                         : std::nullopt;
-    }
-    return std::nullopt;
-}
-
-/// How a JSON value reads in a message.
-[[nodiscard]] std::string describe(const Json& json) {
-    if (json.is_string()) {
-        return quote(json.get_ref<const std::string&>());
-    }
-    if (json.is_null()) {
-        return "nothing";
-    }
-    if (json.is_object()) {
-        return "a group of values";
-    }
-    if (json.is_array()) {
-        return "a list";
-    }
-    return json.dump();
 }
 
 // ---------------------------------------------------------------------------------------

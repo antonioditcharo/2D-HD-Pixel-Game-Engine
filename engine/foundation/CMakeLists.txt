@@ -7,6 +7,7 @@ configure_file(
 )
 
 add_library(engine_foundation STATIC
+    src/guid.cpp
     src/reflect.cpp
     src/text.cpp
     src/version.cpp

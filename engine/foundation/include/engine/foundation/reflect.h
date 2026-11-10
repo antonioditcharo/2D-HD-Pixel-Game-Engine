@@ -514,6 +514,19 @@ public:
         return ObjectRef(static_cast<void*>(&object), detail::type_key<T>());
     }
 
+    /// Refers to `object`, whose C++ type is the one `key` identifies. For containers that
+    /// store objects by type key themselves, such as the ECS world, and know the key is
+    /// right. Everyone else uses of(), which cannot get it wrong.
+    [[nodiscard]] static ObjectRef from_key(void* object, const void* key) noexcept {
+        return object == nullptr || key == nullptr ? ObjectRef() : ObjectRef(object, key);
+    }
+
+    /// The key of T, as stored in ObjectRef::key() and PropertyInfo::owner_key.
+    template <typename T>
+    [[nodiscard]] static const void* key_of() noexcept {
+        return detail::type_key<T>();
+    }
+
     [[nodiscard]] void* object() const noexcept { return object_; }
     /// Identifies the object's C++ type. Compare with PropertyInfo::owner_key and
     /// FunctionInfo::owner_key, or look up the type with Registry::find_type(ObjectRef).

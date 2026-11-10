@@ -131,7 +131,8 @@ Details and the questions that remain open are in
 | [Repository layout](dev/repo-layout.md) | What lives where |
 | [Reflection registry](dev/reflection.md) | How engine features describe their data for the editor and no-code blocks |
 | [Logic runtime](dev/logic-runtime.md) | The Logic IR, its compiler, and the sandboxed Luau VM that runs no-code logic |
-| [Serialization](dev/serialization.md) | How objects and logic assets are saved as JSON: determinism, versions, error reporting |
+| [World](dev/world.md) | Entities, GUIDs, the hierarchy and components |
+| [Serialization](dev/serialization.md) | How objects, logic assets and scenes are saved as JSON: determinism, versions, error reporting |
 
 ### Sources
 [sources.md](sources.md) lists 105 sources, each with an ID (`[S#]`) and a note on how it was

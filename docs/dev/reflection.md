@@ -200,7 +200,7 @@ the Rules listening for it ([logic-runtime.md](logic-runtime.md) §4).
 | Logic runtime | Scripts reach objects only through the registry: `sx.call`, `sx.get` and `sx.set` ([logic-runtime.md](logic-runtime.md)). In use | `plan/03` §6 |
 | Save system | Properties flagged `saved` are written to save files automatically | `plan/03` §10; feature M1 |
 | Project files | Ids and type ids are the keys used in the JSON project format | `plan/03` §4 |
-| ECS (flecs) | Registered types become components; flecs reflection is fed from this registry, not the other way round | ADR-006 |
+| ECS (flecs) | Registered types become components; flecs is told about them by the world, not the other way round ([world.md](world.md)). In use | ADR-006 |
 | Documentation | Every type and property gets a generated docs page from its metadata | Feature Q2 |
 
 ## 7. Next increments

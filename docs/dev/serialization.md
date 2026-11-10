@@ -1,12 +1,14 @@
 # Serialization
 
-> **Status: v0.1.** Reflected objects and logic assets are written to and read from JSON,
-> as the project format requires (ADR-011, `plan/03` §4). Every behaviour below is covered
-> by tests. Scene and project files come next (§6).
+> **Status: v0.2.** Reflected objects, logic assets and scenes are written to and read from
+> JSON, as the project format requires (ADR-011, `plan/03` §4). Every behaviour below is
+> covered by tests. §7 lists what comes next.
 >
-> Code: [`engine/serialize/include/engine/serialize/json.h`](../../engine/serialize/include/engine/serialize/json.h)
-> and [`src/json.cpp`](../../engine/serialize/src/json.cpp). Tests:
-> [`tests/serialize/json_test.cpp`](../../tests/serialize/json_test.cpp).
+> Code: [`engine/serialize/include/engine/serialize/json.h`](../../engine/serialize/include/engine/serialize/json.h),
+> [`src/json.cpp`](../../engine/serialize/src/json.cpp) and
+> [`src/scene.cpp`](../../engine/serialize/src/scene.cpp). Tests:
+> [`json_test.cpp`](../../tests/serialize/json_test.cpp) and
+> [`scene_test.cpp`](../../tests/serialize/scene_test.cpp) in `tests/serialize/`.
 
 ## 1. What it is for
 
@@ -17,7 +19,8 @@ engine's in-memory data into that text and back:
 - **reflected objects**, the properties of anything registered with the reflection
   registry ([reflection.md](reflection.md)); scenes, prefabs and save games are built from
   these;
-- **logic assets**, the Logic IR of Rules and Sequences ([logic-runtime.md](logic-runtime.md)).
+- **logic assets**, the Logic IR of Rules and Sequences ([logic-runtime.md](logic-runtime.md));
+- **scenes**, the entities of a map with their components ([world.md](world.md)).
 
 It uses nlohmann/json (MIT) [S105].
 
@@ -28,7 +31,7 @@ It uses nlohmann/json (MIT) [S105].
 | **Deterministic:** saving the same content twice gives byte-identical files | Object keys are always sorted, lists keep their order, and numbers use the shortest text that reads back exactly. `to_text()` always uses two-space indentation and ends with a newline. Tested by saving, loading and saving again |
 | **Versioned:** every file carries a schema version, and older versions are migrated on load | Logic files start with `"format": "sparxel.logic"` and `"version"`. Loading runs the migration from each older version in order. A file from a newer version is refused with a message, never read wrongly |
 | **Never silently drop data** | Every key that cannot be used is reported as an `Issue`, with its place in the file |
-| **Stable references** | Choices are saved as their entry id (`"north"`), never as numbers, so reordering an enum in C++ cannot change what a file means. Object references by GUID come with scene files (§6) |
+| **Stable references** | Choices are saved as their entry id (`"north"`), never as numbers, so reordering an enum in C++ cannot change what a file means. Entities are identified by GUID (§5) |
 
 ## 3. Reflected objects
 
@@ -117,7 +120,48 @@ Paths are JSON Pointers (RFC 6901): `/` and `~` inside a key are written as `~1`
   is only reported, and the asset still loads.
 - A loaded asset is equal (`==`) to the one saved, and compiles the same.
 
-## 5. Safety
+## 5. Scenes
+
+A scene (`.dscene`) holds the entities of one map with their components
+([world.md](world.md)):
+
+```json
+{
+  "entities": [
+    { "guid": "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa", "name": "House" },
+    {
+      "components": { "sprite": { "image": "door.dsprite", "kind": "prop", "layer": 0 } },
+      "guid": "bbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb",
+      "name": "Door",
+      "parent": "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
+    }
+  ],
+  "format": "sparxel.scene",
+  "version": 1
+}
+```
+
+(Shown compacted; files have one key per line.)
+
+- **Parents first:** roots in creation order, each followed by its descendants in order,
+  so the hierarchy and its order rebuild exactly. Saving a loaded scene gives the same
+  bytes (tested).
+- **Components are keyed by their registered type name** and hold their properties as in
+  §3.
+- **Loading is checked in two passes.** The first checks the whole document: every entity
+  has a valid GUID, no GUID is repeated or already in the world, and every parent is an
+  earlier entity in the file or one already in the world. If anything fails, **nothing is
+  created**, so a broken file never leaves a half-loaded map. The second pass creates the
+  entities.
+- **Problems inside components do not stop the load:** an unknown component type, for
+  example from a plugin that is not installed, or a property value that does not fit, is
+  reported and the rest of the entity loads.
+- A scene can be loaded **under an entity already in the world**, by naming it as a
+  parent.
+- Saving and loading never recurse, so very deep hierarchies are safe (tested with
+  20,000 levels).
+
+## 6. Safety
 
 | Input | Result | Test |
 |---|---|---|
@@ -129,12 +173,11 @@ Paths are JSON Pointers (RFC 6901): `/` and `~` inside a key are written as `~1`
 
 No function in this module throws for bad input.
 
-## 6. Next increments
+## 7. Next increments
 
 In order:
 
-1. **Scene files** (`.dscene`): entities with GUIDs, their components as reflected
-   objects, and prefab overrides. This needs the world model (ADR-006).
+1. **Prefabs** (`.dprefab`) and prefab overrides in scenes, with the world's prefabs.
 2. **Project settings** (`project.sparxel.json`).
 3. **Save games:** properties flagged `saved`, with their own format version.
 4. **Asset metadata** (`.meta` files with GUIDs and import settings).

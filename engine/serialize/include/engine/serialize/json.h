@@ -13,6 +13,7 @@
 
 #include "engine/foundation/reflect.h"
 #include "engine/logic/ir.h"
+#include "engine/world/world.h"
 
 #include <nlohmann/json.hpp>
 
@@ -86,5 +87,30 @@ struct LogicLoad {
 /// Reads a logic asset, migrating older schema versions first. A document from a newer
 /// version of Sparxel is refused rather than read wrongly.
 [[nodiscard]] LogicLoad logic_from_json(const Json& json);
+
+// ---------------------------------------------------------------------------------------
+// Scenes
+// ---------------------------------------------------------------------------------------
+
+inline constexpr std::string_view scene_format = "sparxel.scene";
+inline constexpr int scene_version = 1;
+
+/// Every entity of `world` with its GUID, name, parent and components. Entities are
+/// listed parents first: roots in creation order, each followed by its descendants in
+/// order. Components are keyed by their registered type name.
+[[nodiscard]] Json scene_to_json(const world::World& world);
+
+struct SceneLoad {
+    /// The entities created, in the order of the file. Empty if the scene was refused.
+    std::vector<world::Entity> entities;
+    std::vector<Issue> issues;
+};
+
+/// Adds the entities of a scene document to `world`. The whole document is checked
+/// first, and nothing is created if the scene cannot be loaded faithfully: an invalid or
+/// repeated GUID, a GUID already in the world, or a parent that is neither earlier in the
+/// file nor already in the world. Problems inside components (an unknown component type,
+/// a property that does not fit) are reported, and the rest of the entity still loads.
+[[nodiscard]] SceneLoad scene_from_json(const Json& json, world::World& world);
 
 } // namespace engine::serialize

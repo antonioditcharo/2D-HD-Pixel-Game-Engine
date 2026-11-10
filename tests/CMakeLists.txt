@@ -43,6 +43,7 @@ add_test(NAME logic COMMAND engine_logic_tests)
 add_executable(engine_serialize_tests
     test_main.cpp
     serialize/json_test.cpp
+    serialize/scene_test.cpp
 )
 target_link_libraries(engine_serialize_tests PRIVATE
     engine::serialize
@@ -52,3 +53,16 @@ target_compile_definitions(engine_serialize_tests PRIVATE DOCTEST_CONFIG_USE_STD
 engine_configure_test_target(engine_serialize_tests)
 
 add_test(NAME serialize COMMAND engine_serialize_tests)
+
+add_executable(engine_world_tests
+    test_main.cpp
+    world/world_test.cpp
+)
+target_link_libraries(engine_world_tests PRIVATE
+    engine::world
+    doctest::doctest
+)
+target_compile_definitions(engine_world_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+engine_configure_test_target(engine_world_tests)
+
+add_test(NAME world COMMAND engine_world_tests)
