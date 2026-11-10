@@ -108,6 +108,33 @@ logic::LogicAsset sample_asset() {
                     {ir::log(22, ir::literal(reflect::Value{std::string("too dim")}))}});
     asset.rules.push_back(
         logic::Rule{logic::BlockId{23}, "", "game_start", {}, {ir::run(24, "intro")}, {}});
+    logic::Brain brain;
+    brain.id = logic::BlockId{30};
+    brain.name = "mood";
+    brain.initial = "calm";
+    logic::BrainState calm;
+    calm.id = logic::BlockId{31};
+    calm.name = "calm";
+    calm.on_enter = {ir::log(32, ir::literal(reflect::Value{std::string("calm")}))};
+    calm.transitions.push_back(
+        logic::Transition{logic::BlockId{33},
+                          "busy",
+                          {ir::compare(CompareOp::Greater, ir::variable("count"),
+                                       ir::literal(reflect::Value{std::int64_t{2}}))},
+                          1.5});
+    logic::BrainState busy;
+    busy.id = logic::BlockId{34};
+    busy.name = "busy";
+    busy.while_in = {
+        ir::set_variable(35, "count",
+                         ir::arithmetic(ArithmeticOp::Subtract, ir::variable("count"),
+                                        ir::literal(reflect::Value{std::int64_t{1}})))};
+    busy.on_exit = {ir::log(36, ir::literal(reflect::Value{std::string("done")}))};
+    busy.transitions.push_back(logic::Transition{logic::BlockId{37}, "calm", {}, 0.0});
+    brain.states = {calm, busy};
+    brain.from_any.push_back(
+        logic::Transition{logic::BlockId{38}, "calm", {ir::literal(reflect::Value{false})}, 0.0});
+    asset.brains.push_back(brain);
     return asset;
 }
 
@@ -224,6 +251,21 @@ TEST_CASE("Logic assets round-trip exactly and deterministically") {
     // Whole numbers and numbers stay distinct in the file.
     CHECK(text.find("\"value\": 2.0") != std::string::npos);
     CHECK(text.find("\"value\": -3") != std::string::npos);
+    // Brains: states with enter, while and exit steps, transitions with "after" seconds.
+    CHECK(text.find("\"brains\"") != std::string::npos);
+    CHECK(text.find("\"after\": 1.5") != std::string::npos);
+    CHECK(text.find("\"from_any\"") != std::string::npos);
+    CHECK(text.find("\"while\"") != std::string::npos);
+
+    // A malformed brain is reported where it is.
+    serialize::Json broken = serialize::logic_to_json(asset);
+    broken["brains"][0]["states"][0]["go"][0]["after"] = "soon";
+    broken["brains"][0]["states"][1]["sleep"] = true;
+    const serialize::LogicLoad bad = serialize::logic_from_json(broken);
+    REQUIRE(bad.issues.size() == 2);
+    CHECK(bad.issues[0].path == "/brains/0/states/0/go/0/after");
+    CHECK(bad.issues[0].message == "This must be a number of seconds, but is 'soon'.");
+    CHECK(bad.issues[1].path == "/brains/0/states/1/sleep");
 }
 
 TEST_CASE("The logic file format is readable") {

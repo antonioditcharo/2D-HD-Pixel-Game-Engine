@@ -132,8 +132,9 @@ public:
                                               std::span<const reflect::Value> arguments = {});
 
     /// Advances time by `seconds`, delivers the events emitted while scripts were running,
-    /// then resumes the tasks whose wait is over, in the order they were started. A task
-    /// never resumes in the update that started it.
+    /// runs every Brain once (each takes at most one transition, then runs its state), then
+    /// resumes the tasks whose wait is over, in the order they were started. A task never
+    /// resumes in the update that started it.
     void update(double seconds);
 
     /// Emits an event: every function registered for it with `sx.on` starts as a task, in

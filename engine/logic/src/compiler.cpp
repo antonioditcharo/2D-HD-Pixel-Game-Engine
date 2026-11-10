@@ -368,13 +368,17 @@ public:
         check_names_and_ids();
         // The variables are also a script-private global, so saved games can read and
         // restore them (Vm::variables()). On one line, so line numbers stay put.
-        emit(BlockId{}, "local vars = {}; _VARS = vars");
+        // _BRAINS lists each Brain's update function, for Vm::update() to call.
+        emit(BlockId{}, "local vars = {}; _VARS = vars; _BRAINS = {}");
         variables();
         for (const Sequence& sequence : asset_.sequences) {
             compile_sequence(sequence);
         }
         for (const Rule& rule : asset_.rules) {
             compile_rule(rule);
+        }
+        for (const Brain& brain : asset_.brains) {
+            compile_brain(brain);
         }
 
         CompiledLogic result;
@@ -446,6 +450,80 @@ private:
             }
             claim_ids(rule.actions);
             claim_ids(rule.otherwise);
+        }
+        std::set<std::string, std::less<>> brains;
+        for (const Brain& brain : asset_.brains) {
+            claim_id(brain.id, true);
+            if (!reflect::is_valid_id(brain.name)) {
+                error(brain.id, "The brain name " + quote(brain.name) +
+                                    " is not valid: use lowercase letters, digits and "
+                                    "underscores, starting with a letter.");
+            } else if (!brains.insert(brain.name).second) {
+                error(brain.id, "There is already a brain called " + quote(brain.name) + ".");
+            }
+            if (brain.states.empty()) {
+                error(brain.id, "The brain " + quote(brain.name) + " has no states.");
+            }
+            std::set<std::string, std::less<>> states;
+            for (const BrainState& state : brain.states) {
+                claim_id(state.id, true);
+                if (!reflect::is_valid_id(state.name)) {
+                    error(state.id, "The state name " + quote(state.name) +
+                                        " is not valid: use lowercase letters, digits and "
+                                        "underscores, starting with a letter.");
+                } else if (!states.insert(state.name).second) {
+                    error(state.id, "There is already a state called " + quote(state.name) + ".");
+                }
+            }
+            if (!brain.initial.empty() && !states.contains(brain.initial)) {
+                error(brain.id, "The brain starts in " + quote(brain.initial) +
+                                    ", which is not one of its states.");
+            }
+            const auto check_transition = [&](const Transition& transition) {
+                claim_id(transition.id, true);
+                for (const Expr& condition : transition.conditions) {
+                    claim_ids(condition);
+                }
+                if (!states.contains(transition.to)) {
+                    error(transition.id,
+                          "There is no state called " + quote(transition.to) + " to go to.");
+                }
+                if (!std::isfinite(transition.min_time) || transition.min_time < 0.0) {
+                    error(transition.id,
+                          "The time in the state before leaving must be 0 seconds or more.");
+                }
+            };
+            for (const Transition& transition : brain.from_any) {
+                check_transition(transition);
+            }
+            for (const BrainState& state : brain.states) {
+                for (const Transition& transition : state.transitions) {
+                    check_transition(transition);
+                }
+                for (const std::vector<Stmt>* section :
+                     {&state.on_enter, &state.while_in, &state.on_exit}) {
+                    claim_ids(*section);
+                    no_waiting(*section, 0);
+                }
+            }
+        }
+    }
+
+    /// Brains run to the end in every update, so their steps cannot wait, directly or by
+    /// running a sequence (which may wait).
+    void no_waiting(const std::vector<Stmt>& list, int depth) {
+        if (depth > max_depth) {
+            return; // reported when compiled
+        }
+        for (const Stmt& stmt : list) {
+            if (stmt.kind == StmtKind::Wait) {
+                error(stmt.id, "A brain cannot wait. Start a sequence from a rule instead.");
+            } else if (stmt.kind == StmtKind::Run) {
+                error(stmt.id, "A brain cannot run a sequence, which may wait. Start it from a "
+                               "rule instead.");
+            }
+            no_waiting(stmt.body, depth + 1);
+            no_waiting(stmt.otherwise, depth + 1);
         }
     }
 
@@ -1116,6 +1194,128 @@ private:
         --indent_;
         emit(rule.id, "end)");
         event_ = nullptr;
+    }
+
+    // --- Brains -------------------------------------------------------------------------
+
+    /// Emits "if"/"elseif" tests for `transitions`, each setting `to` when it holds.
+    /// `skip_current` leaves out a transition towards the state the brain is in.
+    void transition_tests(const std::string& brain, const std::vector<Transition>& transitions,
+                          bool skip_current) {
+        bool first = true;
+        for (const Transition& transition : transitions) {
+            std::string test = std::string(first ? "if " : "elseif ") + "vars[" +
+                               lua_string("@brain." + brain + ".time") +
+                               "] >= " + format_number(transition.min_time);
+            if (skip_current) {
+                test += " and s ~= " + lua_string(transition.to);
+            }
+            emit(transition.id, test);
+            for (const Expr& condition : transition.conditions) {
+                const std::optional<std::string> code = condition_code(transition.id, condition);
+                emit(condition.id.is_valid() ? condition.id : transition.id,
+                     "  and " + code.value_or("false"));
+            }
+            emit(transition.id, "then");
+            ++indent_;
+            emit(transition.id, "to = " + lua_string(transition.to));
+            --indent_;
+            first = false;
+        }
+        if (!first) {
+            emit(BlockId{}, "end");
+        }
+    }
+
+    /// A local function running one section of every state, chosen by the state's name.
+    void state_sections(const Brain& brain, const char* suffix,
+                        std::vector<Stmt> BrainState::*section) {
+        emit(brain.id, "local function brain_" + brain.name + "_" + suffix + "(s)");
+        ++indent_;
+        bool first = true;
+        for (const BrainState& state : brain.states) {
+            if ((state.*section).empty()) {
+                continue;
+            }
+            emit(state.id, std::string(first ? "if" : "elseif") +
+                               " s == " + lua_string(state.name) + " then");
+            ++indent_;
+            statements(state.*section);
+            --indent_;
+            first = false;
+        }
+        if (!first) {
+            emit(brain.id, "end");
+        }
+        --indent_;
+        emit(brain.id, "end");
+    }
+
+    void compile_brain(const Brain& brain) {
+        if (!reflect::is_valid_id(brain.name) || brain.states.empty()) {
+            return; // Already reported.
+        }
+        event_ = nullptr;
+        const std::string& start =
+            brain.initial.empty() ? brain.states.front().name : brain.initial;
+        const std::string state = "vars[" + lua_string("@brain." + brain.name + ".state") + "]";
+        const std::string time = "vars[" + lua_string("@brain." + brain.name + ".time") + "]";
+        const std::string on = "vars[" + lua_string("@brain." + brain.name + ".on") + "]";
+        // The brain's own variables: saved and restored with the asset's (Vm::variables()).
+        emit(brain.id, state + " = " + lua_string(start));
+        emit(brain.id, time + " = 0");
+        emit(brain.id, on + " = false");
+        state_sections(brain, "enter", &BrainState::on_enter);
+        state_sections(brain, "exit", &BrainState::on_exit);
+        state_sections(brain, "while", &BrainState::while_in);
+
+        const std::string entry = "brain_" + brain.name;
+        emit(brain.id, "function " + entry + "(dt)");
+        ++indent_;
+        if (options_.trace) {
+            emit(brain.id, "sx.trace()");
+        }
+        emit(brain.id, "if not " + on + " then");
+        ++indent_;
+        emit(brain.id, on + " = true");
+        emit(brain.id, entry + "_enter(" + state + ")");
+        --indent_;
+        emit(brain.id, "end");
+        emit(brain.id, time + " = " + time + " + dt");
+        emit(brain.id, "local s = " + state);
+        emit(brain.id, "local to = nil");
+        transition_tests(brain.name, brain.from_any, true);
+        emit(brain.id, "if to == nil then");
+        ++indent_;
+        bool first = true;
+        for (const BrainState& from : brain.states) {
+            if (from.transitions.empty()) {
+                continue;
+            }
+            emit(from.id,
+                 std::string(first ? "if" : "elseif") + " s == " + lua_string(from.name) + " then");
+            ++indent_;
+            transition_tests(brain.name, from.transitions, false);
+            --indent_;
+            first = false;
+        }
+        if (!first) {
+            emit(brain.id, "end");
+        }
+        --indent_;
+        emit(brain.id, "end");
+        emit(brain.id, "if to ~= nil then");
+        ++indent_;
+        emit(brain.id, entry + "_exit(s)");
+        emit(brain.id, state + " = to");
+        emit(brain.id, time + " = 0");
+        emit(brain.id, entry + "_enter(to)");
+        --indent_;
+        emit(brain.id, "end");
+        emit(brain.id, entry + "_while(" + state + ")");
+        --indent_;
+        emit(brain.id, "end");
+        emit(brain.id, "_BRAINS[" + lua_string(brain.name) + "] = " + entry);
     }
 
     const LogicAsset& asset_;

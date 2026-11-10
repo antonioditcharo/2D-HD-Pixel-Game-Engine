@@ -348,7 +348,8 @@ public:
     explicit LogicReader(std::vector<Issue>& issues) : issues_(issues) {}
 
     [[nodiscard]] bool read_asset(const Json& json, logic::LogicAsset& out) {
-        if (!object(json, "", {"format", "version", "name", "variables", "sequences", "rules"})) {
+        if (!object(json, "",
+                    {"format", "version", "name", "variables", "sequences", "rules", "brains"})) {
             return false;
         }
         bool ok = string_field(json, "", "name", out.name, true);
@@ -373,6 +374,14 @@ public:
                       logic::Rule rule;
                       const bool read = read_rule(item, path, rule);
                       out.rules.push_back(std::move(rule));
+                      return read;
+                  }) &&
+             ok;
+        ok = list(json, "", "brains",
+                  [&](const Json& item, const std::string& path) {
+                      logic::Brain brain;
+                      const bool read = read_brain(item, path, brain);
+                      out.brains.push_back(std::move(brain));
                       return read;
                   }) &&
              ok;
@@ -609,6 +618,63 @@ private:
         return ok;
     }
 
+    bool read_transition(const Json& json, const std::string& path, logic::Transition& out) {
+        if (!object(json, path, {"block", "to", "if", "after"})) {
+            return false;
+        }
+        bool ok = block_field(json, path, out.id, true);
+        ok = string_field(json, path, "to", out.to, true) && ok;
+        ok = exprs(json, path, "if", out.conditions, 0) && ok;
+        if (const auto after = json.find("after"); after != json.end()) {
+            if (after->is_number()) {
+                out.min_time = after->get<double>();
+            } else {
+                issue(child(path, "after"),
+                      "This must be a number of seconds, but is " + describe(*after) + ".");
+                ok = false;
+            }
+        }
+        return ok;
+    }
+
+    bool transitions(const Json& json, const std::string& path, const char* key,
+                     std::vector<logic::Transition>& out) {
+        return list(json, path, key, [&](const Json& item, const std::string& item_path) {
+            logic::Transition transition;
+            const bool read = read_transition(item, item_path, transition);
+            out.push_back(std::move(transition));
+            return read;
+        });
+    }
+
+    bool read_brain(const Json& json, const std::string& path, logic::Brain& out) {
+        if (!object(json, path, {"block", "name", "initial", "states", "from_any"})) {
+            return false;
+        }
+        bool ok = block_field(json, path, out.id, true);
+        ok = string_field(json, path, "name", out.name, true) && ok;
+        ok = string_field(json, path, "initial", out.initial, false) && ok;
+        ok = list(json, path, "states",
+                  [&](const Json& item, const std::string& item_path) {
+                      logic::BrainState state;
+                      bool read = object(item, item_path,
+                                         {"block", "name", "enter", "while", "exit", "go"});
+                      if (read) {
+                          read = block_field(item, item_path, state.id, true);
+                          read = string_field(item, item_path, "name", state.name, true) && read;
+                          read = stmts(item, item_path, "enter", state.on_enter, 0) && read;
+                          read = stmts(item, item_path, "while", state.while_in, 0) && read;
+                          read = stmts(item, item_path, "exit", state.on_exit, 0) && read;
+                          read = transitions(item, item_path, "go", state.transitions) && read;
+                      }
+                      out.states.push_back(std::move(state));
+                      return read;
+                  }) &&
+             ok;
+        ok = transitions(json, path, "from_any", out.from_any) && ok;
+        return ok;
+    }
+
     std::vector<Issue>& issues_;
 };
 
@@ -795,6 +861,58 @@ Json logic_to_json(const logic::LogicAsset& asset) {
             rules.push_back(std::move(item));
         }
         out["rules"] = std::move(rules);
+    }
+    if (!asset.brains.empty()) {
+        const auto transitions_to_json = [](const std::vector<logic::Transition>& list) {
+            Json items = Json::array();
+            for (const logic::Transition& transition : list) {
+                Json item = Json::object();
+                item["block"] = transition.id.value;
+                item["to"] = transition.to;
+                if (!transition.conditions.empty()) {
+                    item["if"] = exprs_to_json(transition.conditions);
+                }
+                if (transition.min_time != 0.0) {
+                    item["after"] = transition.min_time;
+                }
+                items.push_back(std::move(item));
+            }
+            return items;
+        };
+        Json brains = Json::array();
+        for (const logic::Brain& brain : asset.brains) {
+            Json item = Json::object();
+            item["block"] = brain.id.value;
+            item["name"] = brain.name;
+            if (!brain.initial.empty()) {
+                item["initial"] = brain.initial;
+            }
+            Json states = Json::array();
+            for (const logic::BrainState& state : brain.states) {
+                Json entry = Json::object();
+                entry["block"] = state.id.value;
+                entry["name"] = state.name;
+                if (!state.on_enter.empty()) {
+                    entry["enter"] = stmts_to_json(state.on_enter);
+                }
+                if (!state.while_in.empty()) {
+                    entry["while"] = stmts_to_json(state.while_in);
+                }
+                if (!state.on_exit.empty()) {
+                    entry["exit"] = stmts_to_json(state.on_exit);
+                }
+                if (!state.transitions.empty()) {
+                    entry["go"] = transitions_to_json(state.transitions);
+                }
+                states.push_back(std::move(entry));
+            }
+            item["states"] = std::move(states);
+            if (!brain.from_any.empty()) {
+                item["from_any"] = transitions_to_json(brain.from_any);
+            }
+            brains.push_back(std::move(item));
+        }
+        out["brains"] = std::move(brains);
     }
     return out;
 }

@@ -176,6 +176,7 @@ A `LogicAsset` is what one logic file in a project holds, and compiles to one sc
 | `Variable` | An id, a kind (choices name their choice list) and an optional starting value. Shared by everything in the asset |
 | `Sequence` | A name and a list of steps (layer 4 of `plan/05` §3) |
 | `Rule` | When (an object's event, or a game-wide event), If (conditions, all must hold), Do and Otherwise (layer 3) |
+| `Brain` | A state machine (layer 5): states with On Enter, While In and On Exit steps and transitions out, plus "from any state" transitions; see Brains below |
 
 | Statement | Does |
 |---|---|
@@ -194,6 +195,35 @@ variable, a value the rule's event carries, not / all of / any of, comparisons, 
 
 Every statement, sequence and rule has a **block id**, unique in the asset; expressions may
 have one, so a single condition can be highlighted and explained.
+
+### Brains
+
+A **Brain** (`plan/05` §3.5) is a state machine for characters, enemy AI, bosses and game
+flow:
+
+- Each **state** has **On Enter**, **While In** and **On Exit** steps, and **transitions**
+  out. A transition names the state it leads to, has conditions (all must hold; none
+  means only the time counts) and a minimum **time in the state** in seconds. The first
+  transition that holds wins, so their order is their priority.
+- **From any state** transitions, such as *"HP at most 0: Dead"*, are checked before the
+  current state's own, and never towards the state the Brain is already in.
+- **When it runs:** every `Vm::update()` runs every Brain once, after events are delivered
+  and before waiting Sequences resume (`plan/05` §5, step 4). On its first run a Brain
+  enters its starting state (the first, or `initial`). Then it adds the update's time to
+  its time in the state, takes at most one transition (On Exit, switch, time back to 0,
+  On Enter), and runs the While In steps of the state it is in. Scripts run in load
+  order, Brains by name, so the order is fixed.
+- **Brains cannot wait.** A Wait step, or Running a sequence (which may wait), anywhere in
+  a Brain is a compile error that says to start the sequence from a rule.
+- **Saved with the game:** a Brain's state, time and whether it has started are variables
+  of its script (`@brain.<name>.state`, `.time`, `.on`), so `variables()` and saved games
+  include them; restoring a state resumes there without running On Enter again (tested).
+- Compiled code: three local functions (enter, exit, while) choose the steps by state
+  name, and `brain_<name>(dt)` does the rest; `_BRAINS`, a script-private table set on the
+  first line, lists them for `update()`.
+
+Not yet: hierarchical states, templates (Patrol, Chase, Attack, Return), and the live view
+that lights the active state (`plan/05` §3.5).
 
 ### Checking
 

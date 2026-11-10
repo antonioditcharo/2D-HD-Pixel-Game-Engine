@@ -104,10 +104,13 @@ Paths are JSON Pointers (RFC 6901): `/` and `~` inside a key are written as `~1`
 
 | Item | Keys |
 |---|---|
-| Document | `format`, `version`, `name`, `variables`, `sequences`, `rules` |
+| Document | `format`, `version`, `name`, `variables`, `sequences`, `rules`, `brains` |
 | Variable | `id`, `kind` (`yes_no`, `whole_number`, `number`, `text`, `choice`), `choice_list`, `initial` |
 | Sequence | `block`, `name`, `steps` |
 | Rule | `block`, `object`, `event`, `if`, `do`, `otherwise` |
+| Brain | `block`, `name`, `initial`, `states`, `from_any` (transitions) |
+| Brain state | `block`, `name`, `enter`, `while`, `exit` (steps), `go` (transitions) |
+| Transition | `block`, `to`, `if` (conditions), `after` (seconds in the state) |
 | Step | `kind` (`do`, `set`, `set_variable`, `wait`, `if`, `repeat`, `run`, `log`), `block`, `object`, `member`, `values`, `body`, `otherwise` |
 | Value | `kind` (`literal`, `property`, `call`, `variable`, `event_value`, `not`, `all`, `any`, `compare`, `arithmetic`), `block`, `value`, `object`, `member`, `op`, `operands` |
 

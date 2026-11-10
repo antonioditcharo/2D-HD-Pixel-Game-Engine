@@ -124,12 +124,49 @@ struct Rule {
     friend bool operator==(const Rule&, const Rule&) = default;
 };
 
+/// A way out of a Brain state: taken when every condition holds (layer 5).
+struct Transition {
+    BlockId id;
+    std::string to;               ///< The state it leads to.
+    std::vector<Expr> conditions; ///< All must hold; with none, only the time counts.
+    double min_time = 0.0;        ///< Seconds in the state before it may be taken.
+
+    friend bool operator==(const Transition&, const Transition&) = default;
+};
+
+/// One state of a Brain: steps on entering, on every update while in it, and on leaving,
+/// and the transitions out, the first that holds winning. The steps cannot wait.
+struct BrainState {
+    BlockId id;
+    std::string name; ///< An id, unique in its Brain.
+    std::vector<Stmt> on_enter;
+    std::vector<Stmt> while_in;
+    std::vector<Stmt> on_exit;
+    std::vector<Transition> transitions; ///< In priority order.
+
+    friend bool operator==(const BrainState&, const BrainState&) = default;
+};
+
+/// A state machine (layer 5): for characters, enemy AI, bosses and game flow.
+struct Brain {
+    BlockId id;
+    std::string name;    ///< An id, unique in its asset.
+    std::string initial; ///< The state it starts in; empty for the first.
+    std::vector<BrainState> states;
+    /// "From any state" transitions, such as "HP at most 0: Dead", checked before the
+    /// current state's own; never taken towards the state the Brain is already in.
+    std::vector<Transition> from_any;
+
+    friend bool operator==(const Brain&, const Brain&) = default;
+};
+
 /// One logic asset: what one file in a project holds, and what compiles to one script.
 struct LogicAsset {
     std::string name; ///< The script name, as passed to Vm::load().
     std::vector<Variable> variables;
     std::vector<Sequence> sequences;
     std::vector<Rule> rules; ///< In the order they run for the same event.
+    std::vector<Brain> brains;
 
     friend bool operator==(const LogicAsset&, const LogicAsset&) = default;
 };

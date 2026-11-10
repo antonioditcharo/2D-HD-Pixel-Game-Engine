@@ -961,6 +961,36 @@ void Vm::update(double seconds) {
         std::make_move_iterator(due.begin() + static_cast<std::ptrdiff_t>(delivered)),
         std::make_move_iterator(due.end()));
 
+    // Then every Brain takes at most one transition and runs its state (step 4): scripts
+    // in load order, Brains by name. Brains cannot wait, so each run ends here.
+    for (const auto& script : impl.scripts) {
+        lua_State* thread = script->thread;
+        lua_getfield(thread, LUA_GLOBALSINDEX, "_BRAINS");
+        std::vector<std::string> brains;
+        if (lua_type(thread, -1) == LUA_TTABLE) {
+            lua_pushnil(thread);
+            while (lua_next(thread, -2) != 0) {
+                if (lua_type(thread, -2) == LUA_TSTRING && lua_type(thread, -1) == LUA_TFUNCTION) {
+                    brains.emplace_back(string_at(thread, -2));
+                }
+                lua_pop(thread, 1);
+            }
+        }
+        std::sort(brains.begin(), brains.end());
+        for (const std::string& brain : brains) {
+            if (impl.frame_steps >= impl.limits.steps_per_frame) {
+                break;
+            }
+            lua_getfield(thread, -1, brain.c_str()); // the Brain's function, from _BRAINS
+            Task& task = impl.create_task(*script);
+            lua_pushnumber(task.thread, seconds);
+            if (!impl.resume(task, 1)) {
+                impl.release(task);
+            }
+        }
+        lua_pop(thread, 1); // _BRAINS
+    }
+
     // Then the tasks whose wait is over (step 5). Bound functions cannot call start(), so
     // only dispatch() above adds tasks, and those are skipped as born in this update.
     for (const auto& task : impl.tasks) {

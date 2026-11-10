@@ -169,7 +169,7 @@ TEST_CASE("The compiler emits readable Luau with one block per line") {
 
     const logic::CompiledLogic compiled = world.compile(asset);
     REQUIRE(compiled.ok());
-    CHECK(compiled.source == "local vars = {}; _VARS = vars\n"
+    CHECK(compiled.source == "local vars = {}; _VARS = vars; _BRAINS = {}\n"
                              "vars[\"count\"] = 0\n"
                              "function seq_greet()\n"
                              "  sx.log(\"hi\")\n"
@@ -628,4 +628,134 @@ TEST_CASE("stop_all() ends waiting sequences but keeps Rules") {
     CHECK(world.log.empty()); // the stopped sequence never logs
     CHECK(world.vm.emit("", "game_start"));
     CHECK(world.log == std::vector<std::string>{"rule"});
+}
+
+TEST_CASE("Brains enter, run, take transitions by priority and time, and never wait") {
+    World world;
+    logic::LogicAsset asset;
+    asset.name = "ai";
+    logic::Brain guard;
+    guard.id = logic::BlockId{1};
+    guard.name = "guard";
+    // Idle until the player has the bell; Alert pays a gold per update and calms down
+    // after half a second; any state goes to Down once the chest is unlocked.
+    logic::BrainState idle;
+    idle.id = logic::BlockId{2};
+    idle.name = "idle";
+    idle.on_enter = {ir::log(3, text("idle"))};
+    idle.transitions.push_back(logic::Transition{
+        logic::BlockId{4}, "alert", {ir::call("player", "has_item", {text("bell")})}, 0.0});
+    logic::BrainState alert;
+    alert.id = logic::BlockId{5};
+    alert.name = "alert";
+    alert.on_enter = {ir::log(6, text("alert"))};
+    alert.while_in = {ir::do_action(7, "player", "add_gold", {whole(1)})};
+    alert.on_exit = {ir::log(8, text("calm"))};
+    alert.transitions.push_back(logic::Transition{logic::BlockId{9}, "idle", {}, 0.5});
+    logic::BrainState down;
+    down.id = logic::BlockId{10};
+    down.name = "down";
+    down.on_enter = {ir::log(11, text("down"))};
+    guard.states = {idle, alert, down};
+    guard.from_any.push_back(logic::Transition{
+        logic::BlockId{12},
+        "down",
+        {ir::compare(CompareOp::Equal, ir::property("chest", "locked"), yes_no(false))},
+        0.0});
+    asset.brains.push_back(guard);
+    world.load(asset);
+
+    const auto state = [&world] {
+        for (const auto& [name, value] : world.vm.variables("ai")) {
+            if (name == "@brain.guard.state") {
+                return std::get<std::string>(value);
+            }
+        }
+        return std::string();
+    };
+    CHECK(state() == "idle");
+    CHECK(world.log.empty()); // nothing runs before the first update
+
+    world.vm.update(0.25);
+    CHECK(world.log == std::vector<std::string>{"idle"});
+    world.vm.update(0.25); // no bell: stays
+    CHECK(world.log.size() == 1);
+
+    world.player.give_item("bell");
+    world.vm.update(0.25); // to Alert, which then runs once
+    CHECK(state() == "alert");
+    CHECK(world.log == std::vector<std::string>{"idle", "alert"});
+    CHECK(world.player.gold == 1);
+    world.player.take_item("bell");
+    world.vm.update(0.25); // 0.25 s in Alert: too soon to calm down
+    CHECK(state() == "alert");
+    CHECK(world.player.gold == 2);
+    world.vm.update(0.25); // 0.5 s: back to Idle, leaving through On Exit
+    CHECK(state() == "idle");
+    CHECK(world.log == std::vector<std::string>{"idle", "alert", "calm", "idle"});
+    CHECK(world.player.gold == 2);
+
+    // "From any state" wins, and is not taken again once there.
+    world.player.give_item("bell");
+    world.chest.locked = false;
+    world.vm.update(0.25);
+    CHECK(state() == "down");
+    world.vm.update(0.25);
+    CHECK(world.log == std::vector<std::string>{"idle", "alert", "calm", "idle", "down"});
+    CHECK(world.vm.errors().empty());
+
+    // A brain's state is a variable, so saved games keep it: restoring Idle resumes there,
+    // without running On Enter again.
+    REQUIRE(world.vm.set_variable("ai", "@brain.guard.state", reflect::Value{std::string("idle")}));
+    world.chest.locked = true;
+    world.vm.update(0.25); // has the bell: to Alert
+    CHECK(state() == "alert");
+    CHECK(world.log.back() == "alert");
+}
+
+TEST_CASE("Brain mistakes are reported at their blocks") {
+    World world;
+    const auto errors_of = [&world](const logic::Brain& brain) {
+        logic::LogicAsset asset;
+        asset.name = "ai";
+        asset.brains.push_back(brain);
+        std::vector<std::string> messages;
+        for (const logic::Diagnostic& error : world.compile(asset).errors) {
+            messages.push_back(std::to_string(error.block.value) + ": " + error.message);
+        }
+        return messages;
+    };
+    logic::Brain empty;
+    empty.id = logic::BlockId{1};
+    empty.name = "empty";
+    CHECK(errors_of(empty) == std::vector<std::string>{"1: The brain 'empty' has no states."});
+
+    logic::Brain bad;
+    bad.id = logic::BlockId{1};
+    bad.name = "Bad Name";
+    bad.initial = "sleeping";
+    logic::BrainState first;
+    first.id = logic::BlockId{2};
+    first.name = "idle";
+    first.on_enter = {ir::wait(3, number(1.0))};
+    first.while_in = {ir::if_then(4, yes_no(true), {ir::run(5, "anything")})};
+    first.transitions.push_back(logic::Transition{logic::BlockId{6}, "nowhere", {}, -1.0});
+    logic::BrainState twin = first;
+    twin.id = logic::BlockId{7};
+    twin.on_enter.clear();
+    twin.while_in.clear();
+    twin.transitions.clear();
+    bad.states = {first, twin};
+    const std::vector<std::string> errors = errors_of(bad);
+    const std::vector<std::string> expected{
+        std::string("1: The brain name 'Bad Name' is not valid: use lowercase letters, ") +
+            "digits and underscores, starting with a letter.",
+        "7: There is already a state called 'idle'.",
+        "1: The brain starts in 'sleeping', which is not one of its states.",
+        "6: There is no state called 'nowhere' to go to.",
+        "6: The time in the state before leaving must be 0 seconds or more.",
+        "3: A brain cannot wait. Start a sequence from a rule instead.",
+        "5: A brain cannot run a sequence, which may wait. Start it from a rule instead.",
+    };
+    CHECK(errors == expected);
 }
