@@ -142,6 +142,7 @@ browser, and the results were read directly.
 | S69 | Jolt Physics repository: https://github.com/jrouwe/JoltPhysics | MIT; determinism; character controllers; games using it | Fetched |
 | S70 | flecs repository: https://github.com/SanderMertens/flecs | MIT; relationships; prefabs; reflection and JSON; explorer | Fetched |
 | S71 | Luau repository: https://github.com/luau-lang/luau | MIT; sandboxing; gradual typing; users | Fetched |
+| S105 | nlohmann/json repository: https://github.com/nlohmann/json (`LICENSE.MIT`, tag v3.12.0) | MIT; header-only JSON library used for project files | Fetched (the tagged source was cloned and its licence file read) |
 | S72 | miniaudio repository: https://github.com/mackron/miniaudio | Public domain or MIT-0; WASAPI; node graph; decoders | Fetched |
 | S73 | Dear ImGui repository: https://github.com/ocornut/imgui | MIT; not designed for end-user UI, accessibility or full i18n | Fetched |
 | S74 | Qt 6 documentation, Licensing: https://doc.qt.io/qt-6/licensing.html | LGPLv3 option; GPLv3-only module list | Fetched |

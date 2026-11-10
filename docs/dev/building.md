@@ -2,7 +2,7 @@
 
 The repository builds the engine modules under `engine/` (see
 [repo-layout.md](repo-layout.md)) and one unit-test executable per module. Third-party
-libraries come from vcpkg, as listed in `vcpkg.json`: today Luau and, for tests, doctest.
+libraries come from vcpkg, as listed in `vcpkg.json`: today Luau and nlohmann/json and, for tests, doctest.
 
 ## What you need
 

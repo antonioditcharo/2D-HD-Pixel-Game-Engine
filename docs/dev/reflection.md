@@ -209,7 +209,8 @@ In order:
 
 1. **More value kinds:** Colour, Position (2D and 3D), Direction, Time, object references
    and asset references (GUIDs), and lists.
-2. **JSON serialization** of reflected objects, for the project format (`plan/03` §4).
+2. **JSON serialization** of reflected objects: done ([serialization.md](serialization.md));
+   the new value kinds above will need it extended.
 3. **flecs bridge:** register reflected types as components (ADR-006).
 4. **Docs generation:** produce a reference page per type from the metadata.
 5. **Localization of metadata:** display names and tooltips become string-table keys.

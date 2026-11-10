@@ -39,3 +39,16 @@ target_compile_definitions(engine_logic_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEA
 engine_configure_test_target(engine_logic_tests)
 
 add_test(NAME logic COMMAND engine_logic_tests)
+
+add_executable(engine_serialize_tests
+    test_main.cpp
+    serialize/json_test.cpp
+)
+target_link_libraries(engine_serialize_tests PRIVATE
+    engine::serialize
+    doctest::doctest
+)
+target_compile_definitions(engine_serialize_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+engine_configure_test_target(engine_serialize_tests)
+
+add_test(NAME serialize COMMAND engine_serialize_tests)

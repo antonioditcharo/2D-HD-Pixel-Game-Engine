@@ -216,7 +216,8 @@
 ## ADR-011: Project and asset formats
 
 - **Decision:**
-  - JSON text project files with stable GUIDs and schema versions (`03` §4).
+  - JSON text project files with stable GUIDs and schema versions (`03` §4), read and
+    written with nlohmann/json (MIT) [S105].
   - Open interchange: **glTF 2.0** for 3D, **PNG**, **`.aseprite` import** via the public
     spec [S46], **LDtk** import [S53], and WAV, FLAC and MP3 audio [S72].
   - A cooked binary pack (zstd) for shipping.
@@ -314,6 +315,7 @@
 |---|---|---|---|
 | SDL3 | zlib [S66] | Yes | Do not misrepresent origin; keep the notice in the source |
 | Luau | MIT [S71] | Yes | Include the licence notice |
+| nlohmann/json | MIT [S105] | Yes (project and save files) | Include the licence notice |
 | flecs | MIT [S70] | Yes | Include the licence notice |
 | Jolt Physics | MIT [S69] | Yes | Include the licence notice |
 | Box2D v3 | MIT [S67] | Yes | Include the licence notice |

@@ -247,7 +247,8 @@ results.
 In order:
 
 1. **Object handles:** GUID-based references from the world instead of names bound by
-   hand, and IR serialization in the project's JSON format.
+   hand. (Logic assets are already saved and loaded as JSON: see
+   [serialization.md](serialization.md).)
 2. **More blocks:** parallel steps, "wait until", For each, and text joining.
 3. **Brain runner** (state machines) and **"why didn't this fire?"** support, which
    re-evaluates a rule's conditions one by one using their block ids.
