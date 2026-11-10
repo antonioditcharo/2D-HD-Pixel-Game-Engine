@@ -1,6 +1,6 @@
 # Plan 02: Systems and Features
 
-> The master catalogue of every system and workflow Diorama provides.
+> The master catalogue of every system and workflow Glimmerbox provides.
 >
 > **Release tags:**
 > - **α** (Alpha): needed for the closed alpha at the end of Phase 4. This is the solo

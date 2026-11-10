@@ -184,7 +184,7 @@ a gamepad.
 | Feature | Behavior |
 |---|---|
 | Autosave | Every 30–60 s (configurable) and on focus loss. Uses a crash-safe journal of Commands |
-| Crash recovery | On restart: "Diorama closed unexpectedly. Restore your work from 12 seconds before?" |
+| Crash recovery | On restart: "Glimmerbox closed unexpectedly. Restore your work from 12 seconds before?" |
 | Snapshots | Named, thumbnailed restore points (*"Before boss fight"*). Created automatically before risky operations such as bulk delete or format migration |
 | History browser | A visual timeline of snapshots. Preview any one, then restore all of it or just one asset |
 | Git (optional, 1.0) | Friendly UI. "Save to history" means commit; "Share" means push. Uses libgit2 (ADR-012) |

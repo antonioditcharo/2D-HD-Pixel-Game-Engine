@@ -31,5 +31,7 @@
 3. **Public headers live under `include/engine/<name>/`.** Code includes them as
    `"engine/<name>/<file>.h"`. Everything under `src/` is private to the module.
 4. **Tests mirror modules:** `tests/<name>/`.
-5. **Names stay neutral.** Targets and namespaces use `engine`, not the product codename,
-   so the product can be renamed without touching code (`plan/09` §6, Q-09).
+5. **Names stay neutral.** Targets and namespaces use `engine`, not the product name
+   Glimmerbox. The name has not been professionally cleared yet (`plan/09` §5, Q-09), so
+   the code should not depend on it. User-facing files may use it, for example the project
+   file `project.glimmerbox.json` (`plan/03` §4).

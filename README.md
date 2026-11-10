@@ -2,8 +2,9 @@
 
 HD Pixel game engine with all the needed pipelines and systems built in, including sprite editing, animating, and all other workflows to make a pixel game.
 
-**Goal:** a Windows-native, all-in-one, **no-code** engine for making HD-2D-style pixel
-games, from first sketch to a shipped game on Steam, without writing code.
+**Glimmerbox** (the planned product name) is a Windows-native, all-in-one, **no-code**
+engine for making HD-2D-style pixel games, from first sketch to a shipped game on Steam,
+without writing code.
 
 It is **open source under the [MIT licence](LICENSE)**. Games made with it are yours and
 owe no fees or royalties.
@@ -17,7 +18,7 @@ place. There is no engine to use yet.
 |---|---|
 | Research and plan | Written: [`docs/`](docs/README.md) |
 | Owner decisions (licence, scope, team) | Recorded: [`docs/plan/09`](docs/plan/09-risks-quality-legal.md) §5 |
-| Product name | Candidates screened: [`docs/research/05`](docs/research/05-name-screening.md). Final choice open |
+| Product name | **Glimmerbox**, chosen after a preliminary screening ([`docs/research/05`](docs/research/05-name-screening.md)). Professional trademark clearance still needed |
 | Build system, tests and CI | In place: [`docs/dev/building.md`](docs/dev/building.md) |
 | Engine and editor | Not started. Next: the reflection registry and the Phase 0 prototypes ([`docs/plan/08`](docs/plan/08-roadmap.md)) |
 

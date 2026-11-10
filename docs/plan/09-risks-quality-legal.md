@@ -14,7 +14,7 @@ every phase gate.
 | R-03 | **The HD-2D look is hard to tune.** Even professionals invest years in it (Sea of Stars [S15]). | M | H | Phase 0 reference scene; golden-image tests; Look presets reviewed against the checklist in `research/01` §4. When a team forms, a rendering engineer and a technical artist are the first two roles (`08` §6). | Reference scene not reaching the target look or budget by Gate 0 |
 | R-04 | **Editor UX complexity** overwhelms non-coders. | M | H | Usability tests with non-coders at every gate (§3); Basic/Advanced split; glossary (`06` §9); measured SUS and task completion. | SUS < 68 at Gate 2 |
 | R-05 | **Dependency risk:** SDL GPU API feature gaps, Qt licence compliance, library abandonment. | M | M | Own RHI with a D3D12 fallback (ADR-004); no GPL-only Qt modules (ADR-005); only mature, actively maintained libraries; vendored versions. | Spike R finds missing features; upstream inactivity |
-| R-06 | **Trademark:** "HD-2D" is a Square Enix trademark [S11][S12][S13]. The repository name "2D-HD" is close to it. | M | H | Never use "HD-2D" in product name or marketing; describe the style generically ("pixel diorama", "2.5D pixel art"); candidate names screened in `research/05`; professional clearance before public launch; rename the repository once a name is chosen (Q-09). | Any marketing copy using the term |
+| R-06 | **Trademark:** "HD-2D" is a Square Enix trademark [S11][S12][S13]. The repository name "2D-HD" is close to it. | M | H | Never use "HD-2D" in product name or marketing; describe the style generically ("pixel diorama", "2.5D pixel art"); the product name Glimmerbox was screened (`research/05`); professional clearance before public launch; rename the repository to the product name (owner action). | Any marketing copy using the term |
 | R-07 | **IP similarity in templates and kits:** copying specific games' assets, characters or signature mechanics. | L | H | All template art and audio is original; battle systems are configurable and generic; legal review of templates before release. | Template reviews flag resemblance |
 | R-08 | **Data loss** in user projects. | L | H | Command journal, autosave, crash recovery, snapshots, atomic writes, format migrations with backups (`06` §5). | Any data-loss report |
 | R-09 | **Texel and pixel inconsistency** makes user games look "off". | M | M | PPU enforcement, texel-density view, Project Doctor warnings (R-VIS-07). | Template or user scenes failing the density view |
@@ -59,7 +59,10 @@ every phase gate.
 
 This is not legal advice. Each item should be reviewed by qualified counsel before release.
 
-- [ ] **Product name** chosen and trademark-searched. It must not use "HD-2D" (R-06).
+- [x] **Product name** chosen: Glimmerbox, after a preliminary screening (`research/05`).
+- [ ] **Professional trademark clearance** of Glimmerbox, and a decision on filing it in
+      the software classes (`research/05` §6). Before any public launch.
+- [ ] **Repository renamed** away from "2D-HD" (R-06). Owner action in GitHub settings.
 - [ ] **Third-party licences:** an automated notices file for the editor and per exported
       game (`07`, dependency table).
 - [ ] **LGPL compliance** for Qt and Qt Advanced Docking System: dynamic linking,
@@ -92,14 +95,15 @@ The project owner answered the original open questions on 9 November 2026.
 | Q-06 | AI assistant | **Work starts after the Early Access / beta release (Gate 5).** Opt-in and logic-only. | `06` §8; `02` Q5 |
 | Q-07 | Minimum hardware target | **Decide after the rendering spike** (Spike R) has measurements. | ADR-001; `08` Phase 0 |
 | Q-08 | Product name | **Screen 3–5 candidate names** for trademark and product conflicts, then choose. | `research/05`; R-06 |
+| Q-09 | Final product name (decided 10 November 2026) | **Glimmerbox.** Chosen knowing the screening rated it moderate risk. | `research/05` §6; R-06 |
 
 ## 6. Open questions
 
-These follow from the decisions above. None blocks Phase 0.
+These follow from the decisions above. None blocks Phase 0. (Q-09, the final product name,
+was decided on 10 November 2026; see §5.)
 
 | ID | Question | Why it matters | Recommendation |
 |---|---|---|---|
-| Q-09 | **Final product name.** Pick from the screened candidates in `research/05`, or propose others. | Branding, code and repository naming, trademark (R-06) | Choose one of the lower-risk candidates, then have a professional clear it before any public launch. Rename the GitHub repository afterwards. |
 | Q-10 | **Contributor terms:** plain "contributions are MIT", a sign-off (DCO), or a contributor licence agreement (CLA)? | Decides how easily outside contributions can be accepted, and whether the licence could ever change | Plain MIT contributions for now (what `CONTRIBUTING.md` says). Revisit when outside contributors arrive. |
 | Q-11 | **Licence for bundled template art and audio.** | Users ship these assets inside their own commercial games | CC0, so users owe no attribution. Decide before the first template ships (Phase 3). |
 | Q-12 | **Who owns the name and logo?** MIT covers the code, not the brand. | Stops forks from shipping under the same name | Keep the name and logo with the owner, as GDevelop does [S31]. Decide with Q-09. |

@@ -143,4 +143,37 @@ obstacle.
 4. **After choosing:** rename the GitHub repository (its current name is close to
    "HD-2D"), and check that a matching domain name is available. Neither was checked here.
 
-The choice is tracked as open question Q-09 in `plan/09` §6.
+## 6. Decision (10 November 2026)
+
+The owner chose **Glimmerbox**, knowing this screening rated it moderate risk. It is now
+the product name throughout the plan (`plan/09` §5, Q-09).
+
+### 6.1 Domain names (checked 10 November 2026)
+
+Each name was looked up in its registry's public RDAP service [S103].
+
+| Domain | Status found |
+|---|---|
+| glimmerbox.com | **Registered** since 30 July 2013. The site redirects to HugeDomains, a domain reseller, so it is listed for sale |
+| glimmerbox.org | **Registered** on 3 November 2026 by someone else. No website responded |
+| glimmerbox.dev | Not registered (the registry returned "not found") |
+| glimmerbox.app | Not registered (the registry returned "not found") |
+| glimmerbox.io | Not checked: the registry's lookup service rate-limited the request |
+| glimmerbox.gg | Not checked: the registry's lookup service did not respond |
+
+**Analysis:** the `.org` registration a week before this check is recent. It may be
+unrelated, but it is worth watching. If a domain matters, register `glimmerbox.dev` or
+`glimmerbox.app` soon, or ask the reseller for the `.com` price.
+
+### 6.2 What remains before a public launch (Analysis)
+
+1. **Professional clearance.** Ask a trademark professional to clear Glimmerbox for
+   software and video games (classes 9, 41 and 42). In particular, ask whether the
+   registered US mark THE GLIMMER BOX (reg. no. 8013876, jigsaw puzzles, class 28) blocks
+   use or registration for game-making software, and check WIPO and national registers,
+   which this screening could not query.
+2. **Consider filing** for Glimmerbox in the software classes once it is cleared, so that
+   a fork or another product cannot take the name. This also settles Q-12 (`plan/09` §6).
+3. **Keep branding away from puzzles and toys** to reduce overlap with the class 28 mark.
+4. **Rename the GitHub repository**, for example to `glimmerbox`. Only the owner can do
+   this, in the repository settings. GitHub redirects the old URL afterwards.
