@@ -127,6 +127,10 @@ world->end();
   is behind. Pixel art keeps hard edges and needs no sorting, as `plan/04` §5.2 asks:
   sprites are alpha-tested and write depth.
 - **Colour:** each quad's colour multiplies its texels: lighting times tint.
+- **No atlas bleeding:** texture coordinates stay a hundredth of a texel inside the
+  source, because in perspective a coordinate exactly on a texel's edge can round into
+  the neighbouring tile of an atlas and show along tile seams (found in the sample
+  village; [player.md](player.md) §3).
 - **Fog:** linear with distance from the eye, from `start` to `end`, towards the fog
   colour; off when `end` is not past `start`.
 - **Batching:** one draw call per run of quads sharing a texture, as for sprites.

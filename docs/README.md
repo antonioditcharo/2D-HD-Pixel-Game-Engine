@@ -137,6 +137,7 @@ Details and the questions that remain open are in
 | [Classic 2D scenes](dev/scene2d.md) | Sprites, sprite-sheet animation, tilemaps and solid tiles, pixel-perfect drawing, hot reload |
 | [Game](dev/game.md) | The runtime that plays a project: behaviours, logic reaching the world, the fixed-step clock, saved games |
 | [Audio](dev/audio.md) | Sound effects and music: buses, fades, decoding, sound in no-code logic |
+| [Player and sample](dev/player.md) | Playing a project folder, headless runs and screenshots, and the Hello Sparxel sample village |
 | [Input](dev/input.md) | Named actions, bindings and presets, recording and replay, input in no-code logic |
 | [Serialization](dev/serialization.md) | How objects, logic assets and scenes are saved as JSON: determinism, versions, error reporting |
 

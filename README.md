@@ -35,6 +35,17 @@ cmake --build --preset windows-msvc
 ctest --preset windows-msvc
 ```
 
+## Try it
+
+After building, play the sample village (arrow keys to walk, Z to talk to the elder):
+
+```bat
+build\windows-msvc\player\sparxel-player.exe samples\hello
+```
+
+Set `"render_style"` to `"diorama"` in `samples/hello/project.sparxel.json` to see it in
+3D. See [`docs/dev/player.md`](docs/dev/player.md).
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md).

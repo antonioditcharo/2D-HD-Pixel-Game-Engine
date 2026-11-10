@@ -1,0 +1,18 @@
+{
+  "background": [
+    24,
+    28,
+    44
+  ],
+  "camera_distance": 12,
+  "camera_fov": 30,
+  "camera_pitch": 35,
+  "format": "sparxel.project",
+  "height": 180,
+  "name": "Hello Sparxel",
+  "ppu": 16,
+  "render_style": "classic_2d",
+  "start_scene": "maps/village.dscene",
+  "version": 1,
+  "width": 320
+}

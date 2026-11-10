@@ -16,6 +16,8 @@
 │   ├── input/         Named actions bound to keys and gamepad buttons; recording and replay.
 │   ├── audio/         Sound effects and music: buses, fades, decoding (miniaudio inside).
 │   └── game/          The runtime: opens a project and runs it; logic reaching the world; the clock.
+├── player/            sparxel-player: plays a project folder; what exported games run.
+├── samples/           Sample projects (hello: a small village), made by tools/make_sample.py.
 ├── editor/            The editor application (not started). May use engine/, never the
 │                      other way round.
 ├── tests/             Unit tests, one folder per engine module; shared helpers in

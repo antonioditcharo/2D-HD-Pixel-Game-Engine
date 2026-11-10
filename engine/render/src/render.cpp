@@ -936,10 +936,14 @@ void WorldRenderer::draw(const Texture& texture, const std::array<Vec3, 4>& corn
     }
     const auto tex_w = static_cast<float>(texture.width());
     const auto tex_h = static_cast<float>(texture.height());
-    const float u0 = source.x / tex_w;
-    const float v0 = source.y / tex_h;
-    const float u1 = (source.x + source.w) / tex_w;
-    const float v1 = (source.y + source.h) / tex_h;
+    // In perspective, a texture coordinate exactly on a texel edge can round into the
+    // neighbouring texel, so the next tile of an atlas bleeds in along tile seams. A
+    // hundredth of a texel inside the edges cannot show, and keeps sampling in the source.
+    constexpr float inset = 0.01F;
+    const float u0 = (source.x + inset) / tex_w;
+    const float v0 = (source.y + inset) / tex_h;
+    const float u1 = (source.x + source.w - inset) / tex_w;
+    const float v1 = (source.y + source.h - inset) / tex_h;
     const auto corner = [&](const Vec3& p, float u, float v) {
         return WorldVertex{p.x, p.y, p.z, u, v, color[0], color[1], color[2], color[3]};
     };

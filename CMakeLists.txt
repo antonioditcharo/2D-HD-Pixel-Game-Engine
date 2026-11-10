@@ -18,6 +18,7 @@ include(CompilerWarnings)
 include(EngineTargets)
 
 add_subdirectory(engine)
+add_subdirectory(player)
 
 if(ENGINE_BUILD_TESTS)
     enable_testing()

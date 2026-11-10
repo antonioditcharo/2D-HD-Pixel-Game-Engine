@@ -885,3 +885,55 @@ TEST_CASE("A Diorama project draws the hero as a lit billboard the camera follow
     CHECK(std::abs(hero.b - lit(hero_colour.b)) <= 2);
     CHECK(pixel(pixels, 32, 16, 4) == background); // sky: no ground in this project
 }
+
+TEST_CASE("The sample village in the Diorama style: no tile bleeds into its neighbour") {
+    if (test_support::gpu() == nullptr) {
+        return;
+    }
+    // A copy of samples/hello, switched to the Diorama style.
+    const TempFolder folder;
+    fs::copy(fs::path(SPARXEL_SAMPLES_DIR) / "hello", folder.path, fs::copy_options::recursive);
+    std::vector<serialize::Issue> issues;
+    game::ProjectSettings settings =
+        game::read_project(folder.path, issues).value_or(game::ProjectSettings{});
+    REQUIRE(issues.empty());
+    settings.style = game::RenderStyle::Diorama;
+    write_json(folder.path / game::project_file, game::project_to_json(settings));
+    game::RuntimeOptions options;
+    options.headless = true;
+    options.audio = game::AudioMode::Off;
+    options.save_folder = folder.path / "saves";
+    const auto runtime = game::Runtime::open(folder.path, options, issues);
+    INFO(issues_text(issues));
+    REQUIRE(runtime != nullptr);
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+
+    // Grass and path tops, as lit from above. A path-coloured pixel alone in the grass is
+    // the path tile's texels bleeding across a seam between grass tiles in the atlas
+    // (it happened before world quads kept their texture coordinates inside the tile).
+    const float top = scene2d::brightness(render::Vec3{0, 1, 0}, scene2d::DioramaLight{});
+    const auto lit = [top](int r, int g, int b) {
+        return render::Color{static_cast<std::uint8_t>(std::lround(top * static_cast<float>(r))),
+                             static_cast<std::uint8_t>(std::lround(top * static_cast<float>(g))),
+                             static_cast<std::uint8_t>(std::lround(top * static_cast<float>(b))),
+                             255};
+    };
+    const render::Color grass = lit(76, 150, 72);
+    const render::Color path = lit(196, 170, 120);
+    std::size_t grass_pixels = 0;
+    std::size_t stray = 0;
+    for (std::uint32_t y = 1; y + 1 < 180; ++y) {
+        for (std::uint32_t x = 1; x + 1 < 320; ++x) {
+            const render::Color c = pixel(pixels, 320, x, y);
+            grass_pixels += c == grass ? 1 : 0;
+            if (c == path && pixel(pixels, 320, x - 1, y) == grass &&
+                pixel(pixels, 320, x + 1, y) == grass && pixel(pixels, 320, x, y - 1) == grass &&
+                pixel(pixels, 320, x, y + 1) == grass) {
+                ++stray;
+            }
+        }
+    }
+    CHECK(grass_pixels > 10000);
+    CHECK(stray == 0);
+}

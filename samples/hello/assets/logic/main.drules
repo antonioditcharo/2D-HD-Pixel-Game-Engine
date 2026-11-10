@@ -1,0 +1,150 @@
+{
+  "brains": [
+    {
+      "block": 20,
+      "name": "weather",
+      "states": [
+        {
+          "block": 21,
+          "enter": [
+            {
+              "block": 22,
+              "kind": "log",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": "The sun is out."
+                }
+              ]
+            }
+          ],
+          "go": [
+            {
+              "after": 30,
+              "block": 23,
+              "to": "rain"
+            }
+          ],
+          "name": "sunny"
+        },
+        {
+          "block": 24,
+          "enter": [
+            {
+              "block": 25,
+              "kind": "log",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": "It starts to rain."
+                }
+              ]
+            }
+          ],
+          "go": [
+            {
+              "after": 15,
+              "block": 26,
+              "to": "sunny"
+            }
+          ],
+          "name": "rain"
+        }
+      ]
+    }
+  ],
+  "format": "sparxel.logic",
+  "name": "main",
+  "rules": [
+    {
+      "block": 1,
+      "do": [
+        {
+          "block": 2,
+          "kind": "log",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "Welcome to the village! Arrow keys to walk, Z to talk."
+            }
+          ]
+        }
+      ],
+      "event": "game_start"
+    },
+    {
+      "block": 3,
+      "do": [
+        {
+          "block": 4,
+          "kind": "log",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "Elder: Welcome, traveller. The road east leads home."
+            }
+          ]
+        },
+        {
+          "block": 5,
+          "kind": "do",
+          "member": "play_sound",
+          "object": "audio",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "sfx/chime.wav"
+            }
+          ]
+        },
+        {
+          "block": 6,
+          "kind": "set_variable",
+          "member": "talks",
+          "values": [
+            {
+              "kind": "arithmetic",
+              "op": "add",
+              "operands": [
+                {
+                  "kind": "variable",
+                  "member": "talks"
+                },
+                {
+                  "kind": "literal",
+                  "value": 1
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "event": "interacted",
+      "object": "elder"
+    },
+    {
+      "block": 7,
+      "do": [
+        {
+          "block": 8,
+          "kind": "log",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "The gate creaks. Beyond it, the road home."
+            }
+          ]
+        }
+      ],
+      "event": "entered",
+      "object": "gate"
+    }
+  ],
+  "variables": [
+    {
+      "id": "talks",
+      "kind": "whole_number"
+    }
+  ],
+  "version": 1
+}

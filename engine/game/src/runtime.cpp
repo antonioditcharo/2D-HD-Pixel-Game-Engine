@@ -425,9 +425,9 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         if (!options.headless) {
             const render::Placement fit =
                 render::fit_integer(r.settings.width, r.settings.height, 1280, 720);
-            r.window =
-                r.device->create_window(options.window_title, static_cast<std::uint32_t>(fit.width),
-                                        static_cast<std::uint32_t>(fit.height));
+            r.window = r.device->create_window(
+                options.window_title.empty() ? r.settings.name : options.window_title,
+                static_cast<std::uint32_t>(fit.width), static_cast<std::uint32_t>(fit.height));
         }
         if (r.settings.style == RenderStyle::Diorama) {
             r.world_renderer = render::WorldRenderer::create(*r.device);

@@ -135,7 +135,8 @@ target_link_libraries(engine_game_tests PRIVATE
     engine::game
     doctest::doctest
 )
-target_compile_definitions(engine_game_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+target_compile_definitions(engine_game_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS
+    SPARXEL_SAMPLES_DIR="${PROJECT_SOURCE_DIR}/samples")
 target_include_directories(engine_game_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 engine_configure_test_target(engine_game_tests)
 
@@ -155,3 +156,15 @@ target_compile_definitions(engine_input_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEA
 engine_configure_test_target(engine_input_tests)
 
 add_test(NAME input COMMAND engine_input_tests)
+
+# The player plays the sample project, in both render styles.
+foreach(style classic_2d diorama)
+    add_test(NAME player_${style}
+        COMMAND "${CMAKE_COMMAND}"
+            -DPLAYER=$<TARGET_FILE:sparxel_player>
+            -DSAMPLE=${PROJECT_SOURCE_DIR}/samples/hello
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/player_${style}
+            -DSTYLE=${style}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/player/run_sample.cmake"
+    )
+endforeach()

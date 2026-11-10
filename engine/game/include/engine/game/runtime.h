@@ -90,7 +90,8 @@ struct RuntimeOptions {
     /// Where save slots are kept. Empty: the player's own folder for this game, as the
     /// operating system suggests (on Windows, under AppData\Roaming\Sparxel).
     std::filesystem::path save_folder;
-    std::string window_title = "Sparxel";
+    /// The window's title; empty for the game's name.
+    std::string window_title;
     AudioMode audio = AudioMode::Device;
 };
 
