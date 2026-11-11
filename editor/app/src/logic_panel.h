@@ -15,6 +15,7 @@
 
 #include "editor/core/document.h"
 
+class QCheckBox;
 class QLabel;
 class QPushButton;
 class QToolButton;
@@ -55,7 +56,9 @@ private:
     void fill_add_menu();
     /// After adding `block` (invalid, with `error`, if refused): shows and selects it.
     void added(const std::string& path, engine::logic::BlockId block, const std::string& error);
-    void add_step(const LogicAction& action);
+    /// Adds a step for `action`; into the Otherwise of the selected If or Rule with
+    /// `otherwise`, or when the selected line is an "Otherwise:" line.
+    void add_step(const LogicAction& action, bool otherwise = false);
     void remove_step();
     void move_step(int by);
 
@@ -67,6 +70,8 @@ private:
     QPushButton* delete_ = nullptr;
     QPushButton* up_ = nullptr;
     QPushButton* down_ = nullptr;
+    QPushButton* not_ = nullptr;
+    QCheckBox* any_ = nullptr;
     QLabel* problems_ = nullptr;
 };
 

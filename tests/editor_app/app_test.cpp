@@ -9,6 +9,7 @@
 #include <doctest/doctest.h>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QDragEnterEvent>
@@ -632,4 +633,71 @@ TEST_CASE("The Project view changes the settings, and the scene shows them at on
     REQUIRE(again != nullptr);
     CHECK(again->currentIndex() == 0);
     CHECK(e.window.scene_view()->image() == flat);
+}
+
+TEST_CASE("The Logic view turns conditions around, matches any of them, and adds Otherwise") {
+    const Editor e;
+    editor::LogicPanel* panel = e.window.logic_panel();
+    QTreeWidget* tree = e.window.logic_view();
+    auto* add = panel->findChild<QToolButton*>(QStringLiteral("logic_add"));
+    auto* turn = panel->findChild<QPushButton*>(QStringLiteral("logic_not"));
+    auto* any = panel->findChild<QCheckBox*>(QStringLiteral("logic_any"));
+    auto* problems = panel->findChild<QLabel*>(QStringLiteral("logic_problems"));
+    REQUIRE(add != nullptr);
+    REQUIRE(turn != nullptr);
+    REQUIRE(any != nullptr);
+    REQUIRE(problems != nullptr);
+    const auto choose = [&](const QString& name) {
+        Q_EMIT add->menu()->aboutToShow();
+        auto* entry = add->menu()->findChild<QAction*>(name);
+        REQUIRE(entry != nullptr);
+        entry->trigger();
+        QApplication::processEvents();
+    };
+    const auto item = [&](const QString& text) -> QTreeWidgetItem* {
+        for (QTreeWidgetItemIterator it(tree); *it != nullptr; ++it) {
+            if ((*it)->text(0) == text) {
+                return *it;
+            }
+        }
+        return nullptr;
+    };
+    choose(QStringLiteral("add_file"));
+    choose(QStringLiteral("rule:/game_start"));
+    QTreeWidgetItem* rule = tree->currentItem();
+    REQUIRE(rule != nullptr);
+    CHECK(any->isVisibleTo(panel)); // a Rule: all or any of its conditions
+    CHECK_FALSE(turn->isEnabled());
+    choose(QStringLiteral("condition:dialogue/is_open"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("If a message is open (dialogue)"));
+    CHECK(turn->isEnabled());
+    turn->click();
+    QApplication::processEvents();
+    CHECK(item(QStringLiteral("If not a message is open (dialogue)")) != nullptr);
+
+    // A second condition, then any of them.
+    tree->setCurrentItem(item(QStringLiteral("When the game starts")));
+    choose(QStringLiteral("condition:game/has_save"));
+    tree->setCurrentItem(item(QStringLiteral("When the game starts")));
+    CHECK_FALSE(any->isChecked());
+    any->click();
+    QApplication::processEvents();
+    QTreeWidgetItem* group = item(QStringLiteral("If any of these:"));
+    REQUIRE(group != nullptr);
+    CHECK(group->childCount() == 2);
+    CHECK(group->child(0)->text(0) == QStringLiteral("not a message is open (dialogue)"));
+    tree->setCurrentItem(item(QStringLiteral("When the game starts")));
+    CHECK(any->isChecked());
+
+    // An Otherwise for the Rule, from the menu; a step on the "Otherwise:" line joins it.
+    choose(QStringLiteral("otherwise:/wait"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Wait 1 seconds"));
+    QTreeWidgetItem* otherwise = tree->currentItem()->parent();
+    REQUIRE(otherwise != nullptr);
+    CHECK(otherwise->text(0) == QStringLiteral("Otherwise:"));
+    tree->setCurrentItem(otherwise);
+    choose(QStringLiteral("action:/log"));
+    CHECK(tree->currentItem()->parent()->text(0) == QStringLiteral("Otherwise:"));
+    CHECK(tree->currentItem()->parent()->childCount() == 2);
+    CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));
 }

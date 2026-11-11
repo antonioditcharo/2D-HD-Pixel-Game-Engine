@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -843,6 +844,91 @@ TEST_CASE("Logic branches and loops: If, Wait until and Repeat, with steps insid
         "    Wait 1 seconds",
     };
     CHECK(lines() == expected);
+    CHECK(d->check_logic(file).empty());
+}
+
+TEST_CASE("Logic conditions turned around, matched any of, and Otherwise branches") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view file = "logic/choice.drules";
+    REQUIRE(d->create_logic_file(file, error));
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        for (const editor::LogicLine& line : editor::describe(found->asset, *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text +
+                            (line.otherwise ? " [otherwise]" : ""));
+        }
+        return shown;
+    };
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);
+    const engine::logic::BlockId open =
+        d->add_logic_condition(file, rule, editor::LogicAction{"dialogue", "is_open", ""}, error);
+    REQUIRE(open.is_valid());
+    // Turned around: "not"; its values still edit through it; and back.
+    CHECK(d->is_logic_test(file, open));
+    CHECK_FALSE(d->is_logic_test(file, rule));
+    REQUIRE(d->toggle_logic_not(file, open));
+    CHECK(d->undo_label() == "Turn a condition around");
+    CHECK(lines()[1] == "  If not a message is open (dialogue)");
+    // A second condition; then any of them ("or").
+    const engine::logic::BlockId saved =
+        d->add_logic_condition(file, rule, editor::LogicAction{"game", "has_save", ""}, error);
+    REQUIRE(saved.is_valid());
+    CHECK(d->logic_any(file, rule) == std::optional<bool>(false));
+    CHECK_FALSE(d->logic_any(file, open).has_value()); // not a Rule
+    REQUIRE(d->set_logic_any(file, rule, true, error));
+    CHECK(d->logic_any(file, rule) == std::optional<bool>(true));
+    // A third joins the group; each is its own line, and its values edit in place.
+    const engine::logic::BlockId later =
+        d->add_logic_condition(file, rule, editor::LogicAction{"game", "has_save", ""}, error);
+    REQUIRE(later.is_valid());
+    REQUIRE(d->set_logic_slot(file, later, 0, reflect::Value{std::int64_t{2}}, error));
+    // Steps, and an Otherwise for the Rule; an If with an Otherwise of its own.
+    REQUIRE(d->add_logic_step(file, rule, editor::LogicAction{"", "wait", ""}, error).is_valid());
+    REQUIRE(
+        d->add_logic_step(file, rule, editor::LogicAction{"", "log", ""}, error, true).is_valid());
+    const engine::logic::BlockId branch = d->add_logic_branch(
+        file, rule, editor::LogicAction{"dialogue", "is_open", ""}, false, error);
+    REQUIRE(branch.is_valid());
+    REQUIRE(d->toggle_logic_not(file, branch));
+    REQUIRE(d->add_logic_step(file, branch, editor::LogicAction{"", "repeat", ""}, error, true)
+                .is_valid());
+    CHECK_FALSE(
+        d->add_logic_step(file, saved, editor::LogicAction{"", "log", ""}, error, true).is_valid());
+    CHECK(error == "Only an If or a Rule has an Otherwise.");
+    const std::vector<std::string> expected{
+        "When the game starts",
+        "  If any of these:",
+        "    not a message is open (dialogue)",
+        "    slot 1 has a save (game)",
+        "    slot 2 has a save (game)",
+        "  If not a message is open (dialogue):",
+        "  Otherwise: [otherwise]",
+        "    Repeat 2 times:",
+        "  Wait 1 seconds",
+        "  Otherwise: [otherwise]",
+        "    Log “”",
+    };
+    CHECK(lines() == expected);
+    CHECK(d->check_logic(file).empty());
+    // Deleting down to one condition leaves just that one; all of them again: the group
+    // splits.
+    REQUIRE(d->remove_logic_block(file, saved));
+    REQUIRE(d->set_logic_any(file, rule, false, error));
+    CHECK(lines()[1] == "  If not a message is open (dialogue)");
+    CHECK(lines()[2] == "  If slot 2 has a save (game)");
+    REQUIRE(d->remove_logic_block(file, later));
+    CHECK_FALSE(d->set_logic_any(file, rule, true, error)); // one condition: nothing to match
+    CHECK(error == "A Rule needs two conditions or more to match any of them.");
+    REQUIRE(d->undo());
+    REQUIRE(d->set_logic_any(file, rule, true, error));
+    REQUIRE(d->remove_logic_block(file, later));
+    CHECK(lines()[1] == "  If not a message is open (dialogue)"); // a group of one dissolves
     CHECK(d->check_logic(file).empty());
 }
 

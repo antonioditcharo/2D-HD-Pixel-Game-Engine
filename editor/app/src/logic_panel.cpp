@@ -9,6 +9,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <climits>
 #include <map>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -31,6 +33,7 @@ namespace {
 
 constexpr int block_role = Qt::UserRole;
 constexpr int path_role = Qt::UserRole + 1;
+constexpr int otherwise_role = Qt::UserRole + 2; ///< An "Otherwise:" line.
 
 QString text_of(const std::string& s) {
     return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size()));
@@ -80,12 +83,19 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
     up_->setObjectName(QStringLiteral("logic_up"));
     down_ = new QPushButton(tr("Down"), this);
     down_->setObjectName(QStringLiteral("logic_down"));
-    for (QWidget* button : {static_cast<QWidget*>(add_), static_cast<QWidget*>(delete_),
-                            static_cast<QWidget*>(up_), static_cast<QWidget*>(down_)}) {
+    not_ = new QPushButton(tr("Not"), this);
+    not_->setObjectName(QStringLiteral("logic_not"));
+    not_->setToolTip(tr("Turn the selected condition into its opposite, or back."));
+    for (QWidget* button :
+         {static_cast<QWidget*>(add_), static_cast<QWidget*>(delete_), static_cast<QWidget*>(up_),
+          static_cast<QWidget*>(down_), static_cast<QWidget*>(not_)}) {
         buttons->addWidget(button);
     }
     buttons->addStretch(1);
     layout->addLayout(buttons);
+    any_ = new QCheckBox(tr("Run when any of its conditions holds (not all)"), this);
+    any_->setObjectName(QStringLiteral("logic_any"));
+    layout->addWidget(any_);
 
     problems_ = new QLabel(this);
     problems_->setObjectName(QStringLiteral("logic_problems"));
@@ -100,6 +110,24 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
     connect(delete_, &QPushButton::clicked, this, [this] { remove_step(); });
     connect(up_, &QPushButton::clicked, this, [this] { move_step(-1); });
     connect(down_, &QPushButton::clicked, this, [this] { move_step(1); });
+    connect(not_, &QPushButton::clicked, this, [this] {
+        const auto [path, block] = current();
+        if (document_ != nullptr && document_->toggle_logic_not(path, block)) {
+            rebuild();
+            Q_EMIT edited();
+        }
+    });
+    connect(any_, &QCheckBox::clicked, this, [this](bool on) {
+        const auto [path, block] = current();
+        std::string error;
+        if (document_ == nullptr || !document_->set_logic_any(path, block, on, error)) {
+            Q_EMIT refused(text_of(error));
+            update_buttons(); // back as it was
+            return;
+        }
+        rebuild();
+        Q_EMIT edited();
+    });
     update_buttons();
 }
 
@@ -136,6 +164,7 @@ void LogicPanel::rebuild() {
                     item->setData(0, block_role,
                                   QVariant::fromValue(static_cast<qulonglong>(line.block.value)));
                     item->setData(0, path_role, text_of(file.path));
+                    item->setData(0, otherwise_role, line.otherwise);
                     parents.back()->addChild(item);
                     parents.push_back(item);
                 }
@@ -316,6 +345,13 @@ void LogicPanel::update_buttons() {
     delete_->setEnabled(open && document_->is_logic_block(path, block));
     up_->setEnabled(step);
     down_->setEnabled(step);
+    not_->setEnabled(open && document_->is_logic_test(path, block));
+    const std::optional<bool> any = open ? document_->logic_any(path, block) : std::nullopt;
+    any_->setVisible(any.has_value());
+    {
+        const QSignalBlocker quiet(any_);
+        any_->setChecked(any.value_or(false));
+    }
     if (!open) {
         problems_->clear();
         return;
@@ -351,6 +387,18 @@ void LogicPanel::fill_add_menu() {
         QAction* item = sub->addAction(text_of(action.text));
         item->setObjectName(text_of("action:" + action.object + "/" + action.member));
         connect(item, &QAction::triggered, this, [this, action] { add_step(action); });
+    }
+    // The same steps, into the Otherwise of the selected If or Rule.
+    QMenu* otherwise = menu->addMenu(tr("Otherwise"));
+    by_object.clear();
+    for (const LogicAction& action : document_->logic_actions()) {
+        QMenu*& sub = by_object[action.object];
+        if (sub == nullptr) {
+            sub = grouped(otherwise, action.object);
+        }
+        QAction* item = sub->addAction(text_of(action.text));
+        item->setObjectName(text_of("otherwise:" + action.object + "/" + action.member));
+        connect(item, &QAction::triggered, this, [this, action] { add_step(action, true); });
     }
     // If and Wait until, each with the condition it tests.
     for (const bool wait_until : {false, true}) {
@@ -464,13 +512,17 @@ void LogicPanel::added(const std::string& path, engine::logic::BlockId block,
     Q_EMIT edited();
 }
 
-void LogicPanel::add_step(const LogicAction& action) {
+void LogicPanel::add_step(const LogicAction& action, bool otherwise) {
     const auto [path, block] = current();
     if (document_ == nullptr) {
         return;
     }
+    // On an "Otherwise:" line, steps go into that Otherwise.
+    const QList<QTreeWidgetItem*> chosen = tree_->selectedItems();
+    const bool on_otherwise = !chosen.isEmpty() && chosen.front()->data(0, otherwise_role).toBool();
     std::string error;
-    const BlockId added = document_->add_logic_step(path, block, action, error);
+    const BlockId added =
+        document_->add_logic_step(path, block, action, error, otherwise || on_otherwise);
     if (!added.is_valid()) {
         Q_EMIT refused(text_of(error));
         return;

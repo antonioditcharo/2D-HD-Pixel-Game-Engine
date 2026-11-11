@@ -154,8 +154,11 @@ public:
     /// Sequence or Brain state `after`. Returns the new step's block id, or an invalid one
     /// with `error`. Besides the objects' actions, logic_actions() offers the built-in
     /// steps (object ""): log, repeat, run and wait.
+    /// With `otherwise`, the step goes first into the Otherwise of the If step or Rule
+    /// `after` instead (a Rule's Otherwise runs when its conditions do not hold).
     engine::logic::BlockId add_logic_step(std::string_view path, engine::logic::BlockId after,
-                                          const LogicAction& action, std::string& error);
+                                          const LogicAction& action, std::string& error,
+                                          bool otherwise = false);
     /// Deletes a step, with any steps inside it.
     bool remove_logic_step(std::string_view path, engine::logic::BlockId step);
     /// Adds an "If" step (steps added while it is selected go inside it), or with
@@ -165,6 +168,19 @@ public:
                                             const LogicAction& condition, bool wait_until,
                                             std::string& error);
 
+    /// True if `block` is a test that toggle_logic_not() can turn around: a condition of a
+    /// Rule or a "Go to", or the test of an If or a Wait until step.
+    [[nodiscard]] bool is_logic_test(std::string_view path, engine::logic::BlockId block) const;
+    /// Turns a test into its opposite ("not"), or back.
+    bool toggle_logic_not(std::string_view path, engine::logic::BlockId block);
+    /// Whether the Rule `rule` runs when any of its conditions holds (true) or only when
+    /// all do (false); nothing if `rule` is not a Rule.
+    [[nodiscard]] std::optional<bool> logic_any(std::string_view path,
+                                                engine::logic::BlockId rule) const;
+    /// Makes the Rule run when any of its conditions holds ("or"; it needs two or more),
+    /// or only when all do. Conditions added later join them.
+    bool set_logic_any(std::string_view path, engine::logic::BlockId rule, bool any,
+                       std::string& error);
     /// Every event a Rule can start on: the game starting, and the events of the game's
     /// objects and of the scene's named entities' components.
     [[nodiscard]] std::vector<LogicEvent> logic_events() const;

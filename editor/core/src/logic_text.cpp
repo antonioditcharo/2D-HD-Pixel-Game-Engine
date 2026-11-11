@@ -149,8 +149,8 @@ public:
         return "…";
     }
 
-    void line(int depth, std::string text, logic::BlockId block) {
-        lines_.push_back(LogicLine{depth, std::move(text), block});
+    void line(int depth, std::string text, logic::BlockId block, bool otherwise = false) {
+        lines_.push_back(LogicLine{depth, std::move(text), block, otherwise});
     }
 
     void steps(const std::vector<Stmt>& list, int depth) {
@@ -197,7 +197,7 @@ public:
             line(depth, "If " + arg(0) + ":", s.id);
             steps(s.body, depth + 1);
             if (!s.otherwise.empty()) {
-                line(depth, "Otherwise:", s.id);
+                line(depth, "Otherwise:", s.id, true);
                 steps(s.otherwise, depth + 1);
             }
             return;
@@ -247,11 +247,26 @@ std::vector<LogicLine> describe(const logic::LogicAsset& asset, const Document& 
     for (const logic::Rule& rule : asset.rules) {
         w.line(0, w.event_text(rule.object, rule.event), rule.id);
         for (const Expr& condition : rule.conditions) {
+            // A group of conditions made in the editor (each with its own block): a line
+            // for the group, and one for each, so each can be selected.
+            const bool grouped =
+                (condition.kind == ExprKind::Any || condition.kind == ExprKind::All) &&
+                condition.id.is_valid() && !condition.operands.empty() &&
+                std::all_of(condition.operands.begin(), condition.operands.end(),
+                            [](const Expr& e) { return e.id.is_valid(); });
+            if (grouped) {
+                w.line(1, condition.kind == ExprKind::Any ? "If any of these:" : "If all of these:",
+                       condition.id);
+                for (const Expr& each : condition.operands) {
+                    w.line(2, w.expr(each), each.id);
+                }
+                continue;
+            }
             w.line(1, "If " + w.expr(condition), condition.id.is_valid() ? condition.id : rule.id);
         }
         w.steps(rule.actions, 1);
         if (!rule.otherwise.empty()) {
-            w.line(1, "Otherwise:", rule.id);
+            w.line(1, "Otherwise:", rule.id, true);
             w.steps(rule.otherwise, 2);
         }
     }

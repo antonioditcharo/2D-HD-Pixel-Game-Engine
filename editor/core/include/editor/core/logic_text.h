@@ -21,6 +21,8 @@ struct LogicLine {
     int depth = 0;                ///< Indentation: 0 for a Rule, Sequence or Brain.
     std::string text;             ///< Plain language.
     engine::logic::BlockId block; ///< The block it shows, to highlight and explain it.
+    /// An "Otherwise:" line: `block` is the If or Rule whose Otherwise follows.
+    bool otherwise = false;
 };
 
 /// Every logic asset of `document`'s project (.drules and .dsequence files), sorted by

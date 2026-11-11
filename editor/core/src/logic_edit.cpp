@@ -344,6 +344,8 @@ struct Header {
     std::vector<logic::Transition>* transitions = nullptr;
     logic::Expr* condition = nullptr;
     std::vector<logic::Expr>* conditions = nullptr;
+    /// When the condition is one of an "any of these" (or "all of these") group: the group.
+    logic::Expr* group = nullptr;
     std::size_t index = 0; ///< In whichever list holds the block.
 
     [[nodiscard]] bool found() const noexcept {
@@ -353,14 +355,52 @@ struct Header {
 
 bool find_condition(std::vector<logic::Expr>& conditions, BlockId id, Header& h) {
     for (std::size_t i = 0; i < conditions.size(); ++i) {
-        if (conditions[i].id == id) {
-            h.condition = &conditions[i];
+        logic::Expr& c = conditions[i];
+        if (c.id == id) {
+            h.condition = &c;
             h.conditions = &conditions;
             h.index = i;
             return true;
         }
+        // Inside a group of conditions: one level down.
+        if (c.kind == logic::ExprKind::Any || c.kind == logic::ExprKind::All) {
+            for (std::size_t j = 0; j < c.operands.size(); ++j) {
+                if (c.operands[j].id == id) {
+                    h.condition = &c.operands[j];
+                    h.conditions = &c.operands;
+                    h.group = &c;
+                    h.index = j;
+                    return true;
+                }
+            }
+        }
     }
     return false;
+}
+
+/// The test inside a condition: itself, or what its "not" turns around.
+logic::Expr& tested(logic::Expr& e) {
+    return e.kind == logic::ExprKind::Not && !e.operands.empty() ? e.operands[0] : e;
+}
+const logic::Expr& tested(const logic::Expr& e) {
+    return e.kind == logic::ExprKind::Not && !e.operands.empty() ? e.operands[0] : e;
+}
+
+/// Turns a condition into its opposite, or back, keeping its block id on the outside.
+void flip(logic::Expr& e) {
+    if (e.kind == logic::ExprKind::Not && !e.operands.empty()) {
+        logic::Expr inner = std::move(e.operands[0]);
+        inner.id = e.id;
+        e = std::move(inner);
+        return;
+    }
+    logic::Expr turned;
+    turned.kind = logic::ExprKind::Not;
+    turned.id = e.id;
+    logic::Expr inner = std::move(e);
+    inner.id = BlockId{};
+    turned.operands.push_back(std::move(inner));
+    e = std::move(turned);
 }
 
 bool find_transition(std::vector<logic::Transition>& list, BlockId id, Header& h) {
@@ -473,7 +513,7 @@ std::vector<LogicSlot> Document::header_slots(logic::LogicAsset& asset, BlockId 
     const Header h = find_header(asset, block);
     std::vector<LogicSlot> slots;
     if (h.condition != nullptr) {
-        const logic::Expr& c = *h.condition;
+        const logic::Expr& c = tested(*h.condition);
         const reflect::FunctionInfo* f =
             c.kind == logic::ExprKind::Call
                 ? find_function(Lookup{d.registry, *d.world}, c.object, c.member)
@@ -579,8 +619,8 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId step
     case StmtKind::If:
     case StmtKind::WaitUntil:
         // The values of its condition, when it is one of an object's conditions.
-        if (!s.arguments.empty() && s.arguments[0].kind == logic::ExprKind::Call) {
-            const logic::Expr& c = s.arguments[0];
+        if (!s.arguments.empty() && tested(s.arguments[0]).kind == logic::ExprKind::Call) {
+            const logic::Expr& c = tested(s.arguments[0]);
             if (const reflect::FunctionInfo* f =
                     find_function(Lookup{d.registry, *d.world}, c.object, c.member)) {
                 for (std::size_t i = 0; i < f->parameters.size() && i < c.operands.size(); ++i) {
@@ -665,11 +705,12 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
         (*place.list)[place.index].member = *text;
     } else if (place.list != nullptr && ((*place.list)[place.index].kind == StmtKind::If ||
                                          (*place.list)[place.index].kind == StmtKind::WaitUntil)) {
-        (*place.list)[place.index].arguments[0].operands[argument].literal = std::move(*fitted);
+        tested((*place.list)[place.index].arguments[0]).operands[argument].literal =
+            std::move(*fitted);
     } else if (place.list != nullptr) {
         (*place.list)[place.index].arguments[argument].literal = std::move(*fitted);
     } else if (h.condition != nullptr) {
-        h.condition->operands[argument].literal = std::move(*fitted);
+        tested(*h.condition).operands[argument].literal = std::move(*fitted);
     } else if (h.transition != nullptr) {
         if (argument == 0) {
             h.transition->to = *text;
@@ -753,7 +794,7 @@ std::vector<LogicAction> Document::logic_actions() const {
 }
 
 BlockId Document::add_logic_step(std::string_view path, BlockId after, const LogicAction& action,
-                                 std::string& error) {
+                                 std::string& error, bool otherwise) {
     Impl& d = *impl_;
     LogicFile* file = d.logic_file(path);
     if (file == nullptr) {
@@ -775,7 +816,22 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
         error = "There is no Sequence to run yet: add one first.";
         return BlockId{};
     }
-    const Place place = where_to_add(file->asset, after);
+    Place place = where_to_add(file->asset, after);
+    if (otherwise) {
+        // First in the Otherwise of the If or the Rule.
+        place = Place{};
+        if (const Place step = find_step(file->asset, after);
+            step.list != nullptr && (*step.list)[step.index].kind == StmtKind::If) {
+            place = Place{&(*step.list)[step.index].otherwise, 0};
+        } else if (const Header h = find_header(file->asset, after);
+                   h.rule != nullptr && h.condition == nullptr) {
+            place = Place{&h.rule->otherwise, 0};
+        }
+        if (place.list == nullptr) {
+            error = "Only an If or a Rule has an Otherwise.";
+            return BlockId{};
+        }
+    }
     std::vector<Stmt>* list = place.list;
     const std::size_t at = place.index;
     if (list == nullptr) {
@@ -878,6 +934,75 @@ BlockId Document::add_logic_branch(std::string_view path, BlockId after,
     return BlockId{next};
 }
 
+bool Document::is_logic_test(std::string_view path, BlockId block) const {
+    LogicFile* file = impl_->logic_file(path);
+    if (file == nullptr) {
+        return false;
+    }
+    if (const Place place = find_step(file->asset, block); place.list != nullptr) {
+        const Stmt& s = (*place.list)[place.index];
+        return (s.kind == StmtKind::If || s.kind == StmtKind::WaitUntil) && !s.arguments.empty();
+    }
+    return find_header(file->asset, block).condition != nullptr;
+}
+
+bool Document::toggle_logic_not(std::string_view path, BlockId block) {
+    Impl& d = *impl_;
+    if (!is_logic_test(path, block)) {
+        return false;
+    }
+    LogicFile* file = d.logic_file(path);
+    engine::serialize::Json before = d.snapshot();
+    if (const Place place = find_step(file->asset, block); place.list != nullptr) {
+        flip((*place.list)[place.index].arguments[0]);
+    } else {
+        flip(*find_header(file->asset, block).condition);
+    }
+    d.record("Turn a condition around", std::move(before));
+    return true;
+}
+
+std::optional<bool> Document::logic_any(std::string_view path, BlockId rule) const {
+    LogicFile* file = impl_->logic_file(path);
+    const Header h = file != nullptr ? find_header(file->asset, rule) : Header{};
+    if (h.rule == nullptr || h.condition != nullptr) {
+        return std::nullopt;
+    }
+    return h.rule->conditions.size() == 1 &&
+           h.rule->conditions.front().kind == logic::ExprKind::Any;
+}
+
+bool Document::set_logic_any(std::string_view path, BlockId rule, bool any, std::string& error) {
+    Impl& d = *impl_;
+    const std::optional<bool> now = logic_any(path, rule);
+    if (!now) {
+        error = "Only a Rule has conditions to match.";
+        return false;
+    }
+    if (*now == any) {
+        return true;
+    }
+    LogicFile* file = d.logic_file(path);
+    std::vector<logic::Expr>& conditions = find_header(file->asset, rule).rule->conditions;
+    if (any && conditions.size() < 2) {
+        error = "A Rule needs two conditions or more to match any of them.";
+        return false;
+    }
+    engine::serialize::Json before = d.snapshot();
+    if (any) {
+        // Its id first, while the conditions' ids are still in the asset to be seen.
+        const BlockId id = next_id(file->asset);
+        logic::Expr group = logic::ir::any(std::move(conditions));
+        group.id = id;
+        conditions = {std::move(group)};
+    } else {
+        std::vector<logic::Expr> each = std::move(conditions.front().operands);
+        conditions = std::move(each);
+    }
+    d.record(any ? "Match any condition" : "Match all conditions", std::move(before));
+    return true;
+}
+
 std::vector<LogicEvent> Document::logic_events() const {
     const Impl& d = *impl_;
     std::vector<LogicEvent> events{LogicEvent{"", "game_start", "When the game starts"}};
@@ -935,6 +1060,10 @@ BlockId Document::add_logic_condition(std::string_view path, BlockId block,
     std::vector<logic::Expr>* list = h.transition != nullptr ? &h.transition->conditions
                                      : h.rule != nullptr     ? &h.rule->conditions
                                                              : nullptr;
+    // A Rule matching any of its conditions keeps them in one group: add to it.
+    if (list != nullptr && list->size() == 1 && list->front().kind == logic::ExprKind::Any) {
+        list = &list->front().operands;
+    }
     if (list == nullptr) {
         error = "Conditions go on a Rule or a “Go to”.";
         return BlockId{};
@@ -1054,6 +1183,11 @@ bool Document::remove_logic_block(std::string_view path, BlockId block) {
     std::string what;
     if (h.condition != nullptr) {
         h.conditions->erase(h.conditions->begin() + at);
+        // A group of one is just that condition.
+        if (h.group != nullptr && h.group->operands.size() == 1) {
+            logic::Expr last = std::move(h.group->operands[0]);
+            *h.group = std::move(last);
+        }
         what = "condition";
     } else if (h.transition != nullptr) {
         h.transitions->erase(h.transitions->begin() + at);
