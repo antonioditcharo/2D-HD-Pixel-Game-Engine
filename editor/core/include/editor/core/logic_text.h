@@ -31,6 +31,10 @@ struct LogicLine {
 [[nodiscard]] std::vector<LogicFile> logic_files(Document& document,
                                                  std::vector<engine::serialize::Issue>& issues);
 
+/// One value as it reads in a line: "talks", "speed of hero", "[answer]", "talks + 1".
+[[nodiscard]] std::string describe_value(const engine::logic::Expr& value,
+                                         const Document& document);
+
 /// `asset` as lines: its Rules, then Sequences, then Brains, each with its steps below
 /// it. Objects are looked up in `document`: the game's own (audio, dialogue, game, input,
 /// lighting) by name, and entities through their components.

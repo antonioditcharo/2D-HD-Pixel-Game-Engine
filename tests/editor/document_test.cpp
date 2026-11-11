@@ -1011,6 +1011,92 @@ TEST_CASE("Logic variables: made, set, compared, renamed where used, and deleted
     CHECK(d->check_logic(file).empty());
 }
 
+TEST_CASE("Logic values from variables, event values and properties, with sums") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view file = "logic/sums.drules";
+    REQUIRE(d->create_logic_file(file, error));
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        for (const editor::LogicLine& line : editor::describe(found->asset, *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        }
+        return shown;
+    };
+    const auto source = [&](engine::logic::BlockId block, std::size_t argument,
+                            editor::LogicSource::Kind kind, std::string_view member) {
+        for (const editor::LogicSource& s : d->logic_sources(file, block, argument)) {
+            if (s.kind == kind && s.member == member) {
+                return s;
+            }
+        }
+        FAIL("not offered: " << member);
+        return editor::LogicSource{};
+    };
+    REQUIRE(d->add_logic_variable(file, reflect::ValueKind::Int, error));
+    REQUIRE(d->rename_logic_variable(file, "variable_1", "talks", error));
+    // When an answer is picked: talks takes the answer, then talks + 1.
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(file, editor::LogicEvent{"dialogue", "answered", ""}, error);
+    REQUIRE(rule.is_valid());
+    const engine::logic::BlockId set =
+        d->add_logic_step(file, rule, editor::LogicAction{"", "set_variable", ""}, error);
+    using Kind = editor::LogicSource::Kind;
+    REQUIRE(d->set_logic_source(file, set, 0, source(set, 0, Kind::EventValue, "answer"), error));
+    std::vector<editor::LogicSlot> slots = d->logic_slots(file, set);
+    const auto value_slot = [&] {
+        const auto it = std::find_if(slots.begin(), slots.end(),
+                                     [](const editor::LogicSlot& s) { return s.argument == 0; });
+        REQUIRE(it != slots.end());
+        return *it;
+    };
+    CHECK_FALSE(value_slot().typed);
+    CHECK(value_slot().from == "[answer]");
+    CHECK(lines()[1] == "  Set talks to [answer]");
+    REQUIRE(d->set_logic_source(file, set, 0, source(set, 0, Kind::Variable, "talks"), error));
+    REQUIRE(d->set_logic_arithmetic(file, set, 0, engine::logic::ArithmeticOp::Add, error));
+    slots = d->logic_slots(file, set);
+    CHECK(value_slot().typed);
+    CHECK(value_slot().from == "talks +");
+    CHECK(value_slot().value == reflect::Value{std::int64_t{1}});
+    REQUIRE(d->set_logic_slot(file, set, 0, reflect::Value{std::int64_t{2}}, error));
+    CHECK(lines()[1] == "  Set talks to talks + 2");
+    REQUIRE(d->set_logic_arithmetic(file, set, 0, engine::logic::ArithmeticOp::Multiply, error));
+    CHECK(lines()[1] == "  Set talks to talks × 2");
+    REQUIRE(d->set_logic_arithmetic(file, set, 0, std::nullopt, error));
+    CHECK(lines()[1] == "  Set talks to talks");
+    // Writing a value makes it written again.
+    REQUIRE(d->set_logic_slot(file, set, 0, reflect::Value{std::int64_t{7}}, error));
+    CHECK(lines()[1] == "  Set talks to 7");
+    CHECK_FALSE(d->set_logic_arithmetic(file, set, 0, engine::logic::ArithmeticOp::Add, error));
+
+    // A number from a property: wait as many seconds as the hero's speed.
+    const engine::logic::BlockId wait =
+        d->add_logic_step(file, set, editor::LogicAction{"", "wait", ""}, error);
+    REQUIRE(d->set_logic_source(file, wait, 0, source(wait, 0, Kind::Property, "speed"), error));
+    CHECK(lines()[2] == "  Wait speed of hero seconds");
+    // Only sources of the slot's kind are offered: no text property for a number.
+    for (const editor::LogicSource& s : d->logic_sources(file, wait, 0)) {
+        CHECK(s.member != "name");
+    }
+    CHECK_FALSE(d->set_logic_source(file, wait, 0,
+                                    editor::LogicSource{Kind::Variable, "", "nope", ""}, error));
+    CHECK(error == "That cannot give this value.");
+    // Outside a Rule with values, there are no event values to take.
+    const engine::logic::BlockId start =
+        d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);
+    const engine::logic::BlockId log =
+        d->add_logic_step(file, start, editor::LogicAction{"", "wait", ""}, error);
+    for (const editor::LogicSource& s : d->logic_sources(file, log, 0)) {
+        CHECK(s.kind != Kind::EventValue);
+    }
+    CHECK(d->check_logic(file).empty());
+}
+
 TEST_CASE("Picking in the Diorama style goes through the camera") {
     const Sample sample;
     const auto d = sample.open();

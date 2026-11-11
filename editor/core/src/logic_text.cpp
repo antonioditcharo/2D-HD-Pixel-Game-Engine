@@ -241,6 +241,11 @@ std::vector<LogicFile> logic_files(Document& document, std::vector<serialize::Is
     return document.logic();
 }
 
+std::string describe_value(const Expr& value, const Document& document) {
+    std::vector<LogicLine> unused;
+    return Writer(document, unused).expr(value);
+}
+
 std::vector<LogicLine> describe(const logic::LogicAsset& asset, const Document& document) {
     std::vector<LogicLine> lines;
     Writer w(document, lines);

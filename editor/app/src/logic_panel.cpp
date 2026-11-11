@@ -381,86 +381,171 @@ void LogicPanel::show_fields() {
         const std::size_t argument = slot.argument;
         const QString name = QStringLiteral("logic_slot:%1").arg(argument);
         QWidget* field = nullptr;
-        switch (slot.kind) {
-        case reflect::ValueKind::Text: {
-            const auto* value = std::get_if<std::string>(&slot.value);
-            auto* edit = new QLineEdit(value != nullptr ? text_of(*value) : QString(), fields_);
-            connect(edit, &QLineEdit::textEdited, this, [write, argument](const QString& text) {
-                write(argument, reflect::Value{utf8(text)});
-            });
-            connect(edit, &QLineEdit::editingFinished, this, end);
-            field = edit;
-            break;
-        }
-        case reflect::ValueKind::Float: {
-            auto* spin = new QDoubleSpinBox(fields_);
-            spin->setDecimals(3);
-            spin->setRange(slot.limits.min.value_or(-1.0e6), slot.limits.max.value_or(1.0e6));
-            spin->setSingleStep(slot.limits.step > 0.0 ? slot.limits.step : 0.25);
-            if (const auto* d = std::get_if<double>(&slot.value)) {
-                spin->setValue(*d);
-            } else if (const auto* i = std::get_if<std::int64_t>(&slot.value)) {
-                spin->setValue(static_cast<double>(*i));
+        // A value from elsewhere reads as where it comes from; a written one is a field.
+        if (!slot.typed) {
+            field = new QLabel(text_of(slot.from), fields_);
+        } else {
+            switch (slot.kind) {
+            case reflect::ValueKind::Text: {
+                const auto* value = std::get_if<std::string>(&slot.value);
+                auto* edit = new QLineEdit(value != nullptr ? text_of(*value) : QString(), fields_);
+                connect(edit, &QLineEdit::textEdited, this, [write, argument](const QString& text) {
+                    write(argument, reflect::Value{utf8(text)});
+                });
+                connect(edit, &QLineEdit::editingFinished, this, end);
+                field = edit;
+                break;
             }
-            connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
-                    [write, argument](double v) { write(argument, reflect::Value{v}); });
-            connect(spin, &QDoubleSpinBox::editingFinished, this, end);
-            field = spin;
-            break;
-        }
-        case reflect::ValueKind::Int: {
-            auto* spin = new QSpinBox(fields_);
-            spin->setRange(
-                static_cast<int>(std::max(slot.limits.min.value_or(-1.0e6), double{INT_MIN})),
-                static_cast<int>(std::min(slot.limits.max.value_or(1.0e6), double{INT_MAX})));
-            if (const auto* i = std::get_if<std::int64_t>(&slot.value)) {
-                spin->setValue(static_cast<int>(*i));
+            case reflect::ValueKind::Float: {
+                auto* spin = new QDoubleSpinBox(fields_);
+                spin->setDecimals(3);
+                spin->setRange(slot.limits.min.value_or(-1.0e6), slot.limits.max.value_or(1.0e6));
+                spin->setSingleStep(slot.limits.step > 0.0 ? slot.limits.step : 0.25);
+                if (const auto* d = std::get_if<double>(&slot.value)) {
+                    spin->setValue(*d);
+                } else if (const auto* i = std::get_if<std::int64_t>(&slot.value)) {
+                    spin->setValue(static_cast<double>(*i));
+                }
+                connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+                        [write, argument](double v) { write(argument, reflect::Value{v}); });
+                connect(spin, &QDoubleSpinBox::editingFinished, this, end);
+                field = spin;
+                break;
             }
-            connect(spin, qOverload<int>(&QSpinBox::valueChanged), this,
+            case reflect::ValueKind::Int: {
+                auto* spin = new QSpinBox(fields_);
+                spin->setRange(
+                    static_cast<int>(std::max(slot.limits.min.value_or(-1.0e6), double{INT_MIN})),
+                    static_cast<int>(std::min(slot.limits.max.value_or(1.0e6), double{INT_MAX})));
+                if (const auto* i = std::get_if<std::int64_t>(&slot.value)) {
+                    spin->setValue(static_cast<int>(*i));
+                }
+                connect(
+                    spin, qOverload<int>(&QSpinBox::valueChanged), this,
                     [write, argument](int v) { write(argument, reflect::Value{std::int64_t{v}}); });
-            connect(spin, &QSpinBox::editingFinished, this, end);
-            field = spin;
-            break;
-        }
-        case reflect::ValueKind::Bool: {
-            auto* tick = new QCheckBox(fields_);
-            const auto* yes = std::get_if<bool>(&slot.value);
-            tick->setChecked(yes != nullptr && *yes);
-            connect(tick, &QCheckBox::toggled, this, [write, end, argument](bool on) {
-                write(argument, reflect::Value{on});
-                end();
-            });
-            field = tick;
-            break;
-        }
-        case reflect::ValueKind::Choice: {
-            auto* choose = new QComboBox(fields_);
-            if (slot.choice != nullptr) {
-                for (const reflect::ChoiceEntry& entry : slot.choice->entries) {
-                    choose->addItem(text_of(entry.meta.display_name), text_of(entry.id));
-                }
-                const auto* id = std::get_if<std::string>(&slot.value);
-                const auto* number = std::get_if<std::int64_t>(&slot.value);
-                const reflect::ChoiceEntry* entry = id != nullptr ? slot.choice->find_entry(*id)
-                                                    : number != nullptr
-                                                        ? slot.choice->find_entry(*number)
-                                                        : nullptr;
-                if (entry != nullptr) {
-                    choose->setCurrentIndex(choose->findData(text_of(entry->id)));
-                }
+                connect(spin, &QSpinBox::editingFinished, this, end);
+                field = spin;
+                break;
             }
-            connect(choose, qOverload<int>(&QComboBox::activated), this,
-                    [write, end, choose, argument](int i) {
-                        write(argument, reflect::Value{utf8(choose->itemData(i).toString())});
-                        end();
-                    });
-            field = choose;
-            break;
-        }
+            case reflect::ValueKind::Bool: {
+                auto* tick = new QCheckBox(fields_);
+                const auto* yes = std::get_if<bool>(&slot.value);
+                tick->setChecked(yes != nullptr && *yes);
+                connect(tick, &QCheckBox::toggled, this, [write, end, argument](bool on) {
+                    write(argument, reflect::Value{on});
+                    end();
+                });
+                field = tick;
+                break;
+            }
+            case reflect::ValueKind::Choice: {
+                auto* choose = new QComboBox(fields_);
+                if (slot.choice != nullptr) {
+                    for (const reflect::ChoiceEntry& entry : slot.choice->entries) {
+                        choose->addItem(text_of(entry.meta.display_name), text_of(entry.id));
+                    }
+                    const auto* id = std::get_if<std::string>(&slot.value);
+                    const auto* number = std::get_if<std::int64_t>(&slot.value);
+                    const reflect::ChoiceEntry* entry = id != nullptr ? slot.choice->find_entry(*id)
+                                                        : number != nullptr
+                                                            ? slot.choice->find_entry(*number)
+                                                            : nullptr;
+                    if (entry != nullptr) {
+                        choose->setCurrentIndex(choose->findData(text_of(entry->id)));
+                    }
+                }
+                connect(choose, qOverload<int>(&QComboBox::activated), this,
+                        [write, end, choose, argument](int i) {
+                            write(argument, reflect::Value{utf8(choose->itemData(i).toString())});
+                            end();
+                        });
+                field = choose;
+                break;
+            }
+            }
         }
         field->setObjectName(name);
         field->setMinimumWidth(72);
-        form_->addRow(text_of(slot.label), field);
+        auto* row = new QWidget(fields_);
+        auto* line = new QHBoxLayout(row);
+        line->setContentsMargins(0, 0, 0, 0);
+        if (slot.typed && !slot.from.empty()) {
+            line->addWidget(new QLabel(text_of(slot.from), row)); // "talks +"
+        }
+        field->setParent(row);
+        line->addWidget(field, 1);
+        // Where the value comes from, and sums for numbers.
+        const std::vector<LogicSource> sources = document_->logic_sources(file, block, argument);
+        if (!sources.empty()) {
+            auto* from = new QToolButton(row);
+            from->setObjectName(QStringLiteral("logic_source:%1").arg(argument));
+            from->setText(tr("From\u2026"));
+            from->setToolTip(tr("Write the value, or take it from a variable, the event or a "
+                                "property."));
+            from->setPopupMode(QToolButton::InstantPopup);
+            auto* menu = new QMenu(from);
+            // Later, not from inside the menu's own signal: the menu goes with the fields.
+            const auto later = [this, file, block](auto change) {
+                QTimer::singleShot(0, this, [this, file, block, change] {
+                    std::string error;
+                    if (!change(error)) {
+                        Q_EMIT refused(text_of(error));
+                        return;
+                    }
+                    rebuild();
+                    select(file, block);
+                    Q_EMIT edited();
+                });
+            };
+            std::map<std::string, QMenu*> objects;
+            for (const LogicSource& source : sources) {
+                QMenu* into = menu;
+                if (source.kind == LogicSource::Kind::Property) {
+                    QMenu*& sub = objects[source.object];
+                    if (sub == nullptr) {
+                        sub = menu->addMenu(text_of(source.object));
+                    }
+                    into = sub;
+                }
+                QAction* item = into->addAction(text_of(source.text));
+                item->setObjectName(text_of("source:" + std::to_string(argument) + ":" +
+                                            source.object + "/" + source.member));
+                connect(item, &QAction::triggered, this,
+                        [this, file, block, argument, source, later] {
+                            later([this, file, block, argument, source](std::string& error) {
+                                return document_->set_logic_source(file, block, argument, source,
+                                                                   error);
+                            });
+                        });
+            }
+            if (slot.kind == reflect::ValueKind::Int || slot.kind == reflect::ValueKind::Float) {
+                menu->addSeparator();
+                using Op = engine::logic::ArithmeticOp;
+                for (const auto& [label, id, op] :
+                     {std::tuple{tr("Plus a number"), "add", std::optional<Op>(Op::Add)},
+                      std::tuple{tr("Minus a number"), "subtract", std::optional<Op>(Op::Subtract)},
+                      std::tuple{tr("Times a number"), "multiply", std::optional<Op>(Op::Multiply)},
+                      std::tuple{tr("Divided by a number"), "divide",
+                                 std::optional<Op>(Op::Divide)},
+                      std::tuple{tr("No sum"), "none", std::optional<Op>()}}) {
+                    QAction* item = menu->addAction(label);
+                    item->setObjectName(QStringLiteral("sum:%1:").arg(argument) +
+                                        QString::fromLatin1(id));
+                    item->setEnabled(!slot.typed || !slot.from.empty());
+                    const std::optional<Op> chosen = op;
+                    connect(item, &QAction::triggered, this,
+                            [this, file, block, argument, chosen, later] {
+                                later([this, file, block, argument, chosen](std::string& error) {
+                                    return document_->set_logic_arithmetic(file, block, argument,
+                                                                           chosen, error);
+                                });
+                            });
+                }
+            }
+            from->setMenu(menu);
+            line->addWidget(from);
+        }
+        form_->addRow(text_of(slot.label), row);
     }
 }
 

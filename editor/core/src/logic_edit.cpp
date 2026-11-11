@@ -15,6 +15,7 @@
 
 #include "document_impl.h"
 #include "editor/core/document.h"
+#include "editor/core/logic_text.h"
 
 namespace editor {
 
@@ -386,9 +387,44 @@ std::optional<logic::CompareOp> comparison_of(std::string_view sign) {
 /// makes them.
 bool is_comparison(const logic::Expr& e) {
     return e.kind == logic::ExprKind::Compare && e.operands.size() == 2 &&
-           e.operands[0].kind == logic::ExprKind::Variable &&
-           e.operands[1].kind == logic::ExprKind::Literal;
+           e.operands[0].kind == logic::ExprKind::Variable;
 }
+
+/// The written number inside a value: the value itself if it is written, or the number
+/// added to (or taken from...) something, as set_logic_arithmetic() makes it. Null if
+/// nothing in it is written.
+logic::Expr* written(logic::Expr& e) {
+    if (e.kind == logic::ExprKind::Literal) {
+        return &e;
+    }
+    if (e.kind == logic::ExprKind::Arithmetic && e.operands.size() == 2 &&
+        e.operands[1].kind == logic::ExprKind::Literal) {
+        return &e.operands[1];
+    }
+    return nullptr;
+}
+
+/// Writes `value` into a slot's value: into its written number if it has one, or as a
+/// written value instead of where it came from.
+void write_value(logic::Expr& e, reflect::Value value) {
+    if (logic::Expr* number = written(e)) {
+        number->literal = std::move(value);
+        return;
+    }
+    const BlockId id = e.id;
+    e = logic::ir::literal(std::move(value));
+    e.id = id;
+}
+
+/// The arithmetic operators as the editor writes them, in ArithmeticOp's order.
+constexpr std::array<std::string_view, 4> arithmetic_signs{"+", "\u2212", "\u00d7", "\u00f7"};
+
+struct Header;
+Header find_header(logic::LogicAsset& asset, BlockId id);
+
+/// The value behind slot `argument` of `block` (as logic_slots() numbers them), or null
+/// for slots that are not values (names, a Run's Sequence, a variable chosen, operators).
+logic::Expr* slot_target(logic::LogicAsset& asset, BlockId block, std::size_t argument);
 
 /// Calls `visit` on `e` and every expression inside it.
 template <typename Visit>
@@ -626,6 +662,40 @@ std::vector<logic::Expr> starting_operands(const reflect::FunctionInfo& f) {
     return operands;
 }
 
+logic::Expr* slot_target(logic::LogicAsset& asset, BlockId block, std::size_t argument) {
+    const auto in_test = [argument](logic::Expr& test) -> logic::Expr* {
+        logic::Expr& t = tested(test);
+        if (is_comparison(t)) {
+            return argument == 1 ? &t.operands[1] : nullptr;
+        }
+        if (t.kind == logic::ExprKind::Call && argument < t.operands.size()) {
+            return &t.operands[argument];
+        }
+        return nullptr;
+    };
+    if (const Place place = find_step(asset, block); place.list != nullptr) {
+        Stmt& s = (*place.list)[place.index];
+        switch (s.kind) {
+        case StmtKind::If:
+        case StmtKind::WaitUntil:
+            return s.arguments.empty() ? nullptr : in_test(s.arguments[0]);
+        case StmtKind::Run:
+            return nullptr;
+        case StmtKind::SetVariable:
+            return argument == 0 && !s.arguments.empty() ? &s.arguments[0] : nullptr;
+        case StmtKind::Do:
+        case StmtKind::Set:
+        case StmtKind::Wait:
+        case StmtKind::Repeat:
+        case StmtKind::Log:
+            break;
+        }
+        return argument < s.arguments.size() ? &s.arguments[argument] : nullptr;
+    }
+    const Header h = find_header(asset, block);
+    return h.condition != nullptr ? in_test(*h.condition) : nullptr;
+}
+
 } // namespace
 
 std::vector<LogicSlot> Document::header_slots(logic::LogicAsset& asset, BlockId block) const {
@@ -642,9 +712,6 @@ std::vector<LogicSlot> Document::header_slots(logic::LogicAsset& asset, BlockId 
                 : nullptr;
         if (f != nullptr) {
             for (std::size_t i = 0; i < f->parameters.size() && i < c.operands.size(); ++i) {
-                if (c.operands[i].kind != logic::ExprKind::Literal) {
-                    continue;
-                }
                 const reflect::ParameterInfo& p = f->parameters[i];
                 LogicSlot one = slot(i, p.meta.display_name, p.kind, c.operands[i].literal);
                 one.limits = p.limits;
@@ -668,7 +735,36 @@ std::vector<LogicSlot> Document::header_slots(logic::LogicAsset& asset, BlockId 
     return slots;
 }
 
-std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId step) const {
+std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId block) const {
+    std::vector<LogicSlot> slots = unfilled_slots(path, block);
+    LogicFile* file = impl_->logic_file(path);
+    if (file == nullptr) {
+        return slots;
+    }
+    // Where each value comes from: written, written beside something (talks + 1), or from
+    // a variable, an event value or a property.
+    for (LogicSlot& slot : slots) {
+        logic::Expr* value = slot_target(file->asset, block, slot.argument);
+        if (value == nullptr) {
+            continue;
+        }
+        if (logic::Expr* number = written(*value)) {
+            slot.typed = true;
+            slot.value = number->literal;
+            if (number != value) {
+                slot.from =
+                    describe_value(value->operands[0], *this) + " " +
+                    std::string(arithmetic_signs.at(static_cast<std::size_t>(value->arithmetic)));
+            }
+        } else {
+            slot.typed = false;
+            slot.from = describe_value(*value, *this);
+        }
+    }
+    return slots;
+}
+
+std::vector<LogicSlot> Document::unfilled_slots(std::string_view path, BlockId step) const {
     Impl& d = *impl_;
     LogicFile* file = d.logic_file(path);
     if (file == nullptr) {
@@ -679,9 +775,9 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId step
         return header_slots(file->asset, step);
     }
     const Stmt& s = (*place.list)[place.index];
-    const auto literal = [&s](std::size_t i) {
-        return i < s.arguments.size() && s.arguments[i].kind == logic::ExprKind::Literal;
-    };
+    // Every value is a slot; whether it is written or comes from elsewhere is filled
+    // in at the end (fill_sources()).
+    const auto literal = [&s](std::size_t i) { return i < s.arguments.size(); };
     std::vector<LogicSlot> slots;
     switch (s.kind) {
     case StmtKind::Do:
@@ -752,9 +848,6 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId step
             if (const reflect::FunctionInfo* f =
                     find_function(Lookup{d.registry, *d.world}, c.object, c.member)) {
                 for (std::size_t i = 0; i < f->parameters.size() && i < c.operands.size(); ++i) {
-                    if (c.operands[i].kind != logic::ExprKind::Literal) {
-                        continue;
-                    }
                     const reflect::ParameterInfo& p = f->parameters[i];
                     LogicSlot one = slot(i, p.meta.display_name, p.kind, c.operands[i].literal);
                     one.limits = p.limits;
@@ -862,7 +955,7 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
         if (sign) {
             comparison->compare = *sign;
         } else {
-            comparison->operands[1].literal = std::move(*fitted);
+            write_value(comparison->operands[1], std::move(*fitted));
         }
     } else if (setting != nullptr && argument == 1) {
         // Another variable; a value of another kind starts again from its zero.
@@ -875,12 +968,12 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
         (*place.list)[place.index].member = *text;
     } else if (place.list != nullptr && ((*place.list)[place.index].kind == StmtKind::If ||
                                          (*place.list)[place.index].kind == StmtKind::WaitUntil)) {
-        tested((*place.list)[place.index].arguments[0]).operands[argument].literal =
-            std::move(*fitted);
+        write_value(tested((*place.list)[place.index].arguments[0]).operands[argument],
+                    std::move(*fitted));
     } else if (place.list != nullptr) {
-        (*place.list)[place.index].arguments[argument].literal = std::move(*fitted);
+        write_value((*place.list)[place.index].arguments[argument], std::move(*fitted));
     } else if (h.condition != nullptr) {
-        tested(*h.condition).operands[argument].literal = std::move(*fitted);
+        write_value(tested(*h.condition).operands[argument], std::move(*fitted));
     } else if (h.transition != nullptr) {
         if (argument == 0) {
             h.transition->to = *text;
@@ -1275,6 +1368,148 @@ BlockId Document::add_logic_comparison(std::string_view path, BlockId block,
                        logic::ir::if_then(id.value, std::move(test), {}, {}));
     d.record("Add an If step", std::move(before));
     return id;
+}
+
+std::vector<LogicSource> Document::logic_sources(std::string_view path, BlockId block,
+                                                 std::size_t argument) const {
+    const Impl& d = *impl_;
+    LogicFile* file = impl_->logic_file(path);
+    const std::vector<LogicSlot> slots = logic_slots(path, block);
+    const auto slot = std::find_if(slots.begin(), slots.end(), [argument](const LogicSlot& s) {
+        return s.argument == argument;
+    });
+    if (file == nullptr || slot == slots.end() ||
+        slot_target(file->asset, block, argument) == nullptr) {
+        return {};
+    }
+    const reflect::ValueKind kind = slot->kind;
+    std::vector<LogicSource> sources{
+        LogicSource{LogicSource::Kind::Written, "", "", "A value written here"}};
+    for (const logic::Variable& v : file->asset.variables) {
+        if (v.kind == kind) {
+            sources.push_back(LogicSource{LogicSource::Kind::Variable, "", v.id, v.id});
+        }
+    }
+    // The values the Rule's event carries, for blocks inside a Rule.
+    for (logic::Rule& rule : file->asset.rules) {
+        Header inside;
+        const bool in_rule = rule.id == block || find_condition(rule.conditions, block, inside) ||
+                             find_in(rule.actions, block).list != nullptr ||
+                             find_in(rule.otherwise, block).list != nullptr;
+        if (!in_rule || rule.object.empty()) {
+            continue;
+        }
+        for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, rule.object)) {
+            if (const reflect::EventInfo* event = type->find_event(rule.event)) {
+                for (const reflect::ParameterInfo& p : event->parameters) {
+                    if (p.kind == kind) {
+                        sources.push_back(LogicSource{LogicSource::Kind::EventValue, "", p.id,
+                                                      "[" + p.id + "] (the event's)"});
+                    }
+                }
+            }
+        }
+    }
+    // Properties of what logic can name.
+    for (const std::string& object : logic_objects()) {
+        for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, object)) {
+            for (const reflect::PropertyInfo& p : type->properties) {
+                if (p.kind == kind && !reflect::has_flag(p.flags, reflect::property_flag::hidden)) {
+                    sources.push_back(LogicSource{LogicSource::Kind::Property, object, p.id,
+                                                  p.meta.display_name + " of " + object});
+                }
+            }
+        }
+    }
+    return sources;
+}
+
+bool Document::set_logic_source(std::string_view path, BlockId block, std::size_t argument,
+                                const LogicSource& source, std::string& error) {
+    Impl& d = *impl_;
+    const std::vector<LogicSource> offered = logic_sources(path, block, argument);
+    const bool fits = std::any_of(offered.begin(), offered.end(), [&](const LogicSource& s) {
+        return s.kind == source.kind && s.object == source.object && s.member == source.member;
+    });
+    if (!fits) {
+        error = "That cannot give this value.";
+        return false;
+    }
+    const std::vector<LogicSlot> slots = logic_slots(path, block);
+    const auto slot = std::find_if(slots.begin(), slots.end(), [argument](const LogicSlot& s) {
+        return s.argument == argument;
+    });
+    LogicFile* file = d.logic_file(path);
+    logic::Expr* value = slot_target(file->asset, block, argument);
+    engine::serialize::Json before = d.snapshot();
+    const BlockId id = value->id;
+    switch (source.kind) {
+    case LogicSource::Kind::Written:
+        if (slot->typed) {
+            return true; // written already
+        }
+        *value = logic::ir::literal(slot->choice != nullptr && !slot->choice->entries.empty()
+                                        ? reflect::Value{slot->choice->entries.front().id}
+                                        : zero_of(slot->kind));
+        break;
+    case LogicSource::Kind::Variable:
+        *value = logic::ir::variable(source.member);
+        break;
+    case LogicSource::Kind::EventValue:
+        *value = logic::ir::event_value(source.member);
+        break;
+    case LogicSource::Kind::Property:
+        *value = logic::ir::property(source.object, source.member);
+        break;
+    }
+    value->id = id;
+    d.record("Change where a value comes from", std::move(before));
+    return true;
+}
+
+bool Document::set_logic_arithmetic(std::string_view path, BlockId block, std::size_t argument,
+                                    std::optional<logic::ArithmeticOp> op, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    logic::Expr* value = file != nullptr ? slot_target(file->asset, block, argument) : nullptr;
+    const std::vector<LogicSlot> slots = logic_slots(path, block);
+    const auto slot = std::find_if(slots.begin(), slots.end(), [argument](const LogicSlot& s) {
+        return s.argument == argument;
+    });
+    if (value == nullptr || slot == slots.end()) {
+        error = "That block has no such value.";
+        return false;
+    }
+    if (slot->kind != reflect::ValueKind::Int && slot->kind != reflect::ValueKind::Float) {
+        error = "Only numbers can be added to.";
+        return false;
+    }
+    const bool arithmetic = value->kind == logic::ExprKind::Arithmetic;
+    if (!arithmetic && value->kind == logic::ExprKind::Literal) {
+        error = "Take the value from somewhere first: a written number is just written.";
+        return false;
+    }
+    engine::serialize::Json before = d.snapshot();
+    const BlockId id = value->id;
+    if (!op) {
+        if (!arithmetic) {
+            return true;
+        }
+        logic::Expr base = std::move(value->operands[0]);
+        *value = std::move(base);
+    } else if (arithmetic) {
+        value->arithmetic = *op;
+    } else {
+        logic::Expr base = std::move(*value);
+        base.id = BlockId{};
+        *value = logic::ir::arithmetic(*op, std::move(base),
+                                       logic::ir::literal(slot->kind == reflect::ValueKind::Int
+                                                              ? reflect::Value{std::int64_t{1}}
+                                                              : reflect::Value{1.0}));
+    }
+    value->id = id;
+    d.record("Change a value's sum", std::move(before));
+    return true;
 }
 
 bool Document::is_logic_test(std::string_view path, BlockId block) const {

@@ -46,6 +46,21 @@ struct LogicSlot {
     engine::reflect::Value value;
     engine::reflect::NumericLimits limits;
     const engine::reflect::ChoiceInfo* choice{nullptr}; ///< For a choice.
+    /// Whether `value` is written in the block (and so edited in place), alone or beside
+    /// something (`from`, such as "talks +"). If not, the value comes from `from`: a
+    /// variable, an event value or a property, in plain language.
+    bool typed = true;
+    std::string from;
+};
+
+/// Where a value can come from instead of being written: a variable of the file, a value
+/// the Rule's event carries, or a property of one of the game's objects or entities.
+struct LogicSource {
+    enum class Kind : std::uint8_t { Written, Variable, EventValue, Property };
+    Kind kind = Kind::Written;
+    std::string object; ///< For a property.
+    std::string member; ///< The variable, the event value's id, or the property.
+    std::string text;   ///< In plain language, for menus.
 };
 
 /// An action a new step can do: `member` of `object`, reading as `text`.
@@ -199,6 +214,21 @@ public:
     /// steps. A "Set variable" step comes from logic_actions() (object "", set_variable).
     engine::logic::BlockId add_logic_comparison(std::string_view path, engine::logic::BlockId block,
                                                 std::string_view variable, std::string& error);
+    /// Where slot `argument` of `block` can take its value from, of its kind: written
+    /// here, the file's variables, the values its Rule's event carries, and the
+    /// properties of the game's objects and the scene's entities.
+    [[nodiscard]] std::vector<LogicSource>
+    logic_sources(std::string_view path, engine::logic::BlockId block, std::size_t argument) const;
+    /// Takes slot `argument`'s value from `source` (one logic_sources() offers). Writing a
+    /// value into the slot with set_logic_slot() makes it written again.
+    bool set_logic_source(std::string_view path, engine::logic::BlockId block, std::size_t argument,
+                          const LogicSource& source, std::string& error);
+    /// Adds a written number to a numeric value that comes from somewhere (talks + 1), or
+    /// changes how (−, ×, ÷), or with nothing, takes it away. The number is then the
+    /// slot's written value.
+    bool set_logic_arithmetic(std::string_view path, engine::logic::BlockId block,
+                              std::size_t argument, std::optional<engine::logic::ArithmeticOp> op,
+                              std::string& error);
     /// Every event a Rule can start on: the game starting, and the events of the game's
     /// objects and of the scene's named entities' components.
     [[nodiscard]] std::vector<LogicEvent> logic_events() const;
@@ -258,6 +288,9 @@ public:
 
 private:
     struct Impl;
+    /// logic_slots() before their sources are filled in.
+    [[nodiscard]] std::vector<LogicSlot> unfilled_slots(std::string_view path,
+                                                        engine::logic::BlockId block) const;
     /// The slots of a block that is not a step (see logic_slots()).
     [[nodiscard]] std::vector<LogicSlot> header_slots(engine::logic::LogicAsset& asset,
                                                       engine::logic::BlockId block) const;

@@ -760,3 +760,53 @@ TEST_CASE("The Logic view makes variables, compares them and sets them") {
           QStringLiteral("talks is still used: delete the blocks that use it first."));
     CHECK(e.window.document()->logic().at(0).asset.variables.size() == 1);
 }
+
+TEST_CASE("The Logic view takes values from the event, variables and sums") {
+    const Editor e;
+    editor::LogicPanel* panel = e.window.logic_panel();
+    QTreeWidget* tree = e.window.logic_view();
+    auto* add = panel->findChild<QToolButton*>(QStringLiteral("logic_add"));
+    REQUIRE(add != nullptr);
+    const auto choose = [&](const QString& name) {
+        Q_EMIT add->menu()->aboutToShow();
+        auto* entry = add->menu()->findChild<QAction*>(name);
+        REQUIRE(entry != nullptr);
+        entry->trigger();
+        QApplication::processEvents();
+    };
+    const auto from = [&](const QString& name) {
+        auto* button = panel->findChild<QToolButton*>(QStringLiteral("logic_source:0"));
+        REQUIRE(button != nullptr);
+        auto* entry = button->menu()->findChild<QAction*>(name);
+        REQUIRE(entry != nullptr);
+        entry->trigger();
+        for (int i = 0; i < 3; ++i) { // the deferred rebuild
+            QApplication::processEvents();
+        }
+    };
+    choose(QStringLiteral("add_file"));
+    choose(QStringLiteral("variable:int"));
+    choose(QStringLiteral("rule:dialogue/answered"));
+    choose(QStringLiteral("action:/set_variable"));
+    REQUIRE(tree->currentItem() != nullptr);
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to 0"));
+    // From the event: the answer picked.
+    from(QStringLiteral("source:0:/answer"));
+    REQUIRE(tree->currentItem() != nullptr);
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to [answer]"));
+    auto* shown = panel->findChild<QLabel*>(QStringLiteral("logic_slot:0"));
+    REQUIRE(shown != nullptr);
+    CHECK(shown->text() == QStringLiteral("[answer]"));
+    // From the variable itself, plus a number: the number is a field again.
+    from(QStringLiteral("source:0:/variable_1"));
+    from(QStringLiteral("sum:0:add"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to variable_1 + 1"));
+    auto* number = panel->findChild<QSpinBox*>(QStringLiteral("logic_slot:0"));
+    REQUIRE(number != nullptr);
+    number->setValue(3);
+    QApplication::processEvents();
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to variable_1 + 3"));
+    auto* problems = panel->findChild<QLabel*>(QStringLiteral("logic_problems"));
+    REQUIRE(problems != nullptr);
+    CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));
+}
