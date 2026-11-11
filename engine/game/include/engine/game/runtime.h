@@ -67,6 +67,8 @@ struct ProjectSettings {
     /// Logic changes them with the "lighting" object.
     double ambient_light = 0.55;
     double sun_light = 0.45;
+    /// How dark the soft shadow under each sprite is in the Diorama style, 0 (none) to 1.
+    double sprite_shadow = 0.35;
     /// Post-processing for the finished frame: tilt-shift, bloom, grading, vignette. The
     /// default changes nothing. In the project file, the group "look".
     render::Look look;

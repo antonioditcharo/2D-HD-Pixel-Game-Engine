@@ -14,6 +14,8 @@
 #include "post_final_frag_spirv.h"
 #include "post_vert_dxil.h"
 #include "post_vert_spirv.h"
+#include "shadow_frag_dxil.h"
+#include "shadow_frag_spirv.h"
 #include "sprite_frag_dxil.h"
 #include "sprite_frag_spirv.h"
 #include "sprite_vert_dxil.h"
@@ -847,6 +849,10 @@ struct WorldRenderer::Native {
     std::vector<PointLight> lights;
     std::vector<WorldVertex> vertices;
     std::vector<const Texture*> textures; ///< One per quad.
+    // Shadow decals, drawn after everything else (shadow.frag.hlsl).
+    SDL_GPUGraphicsPipeline* shadow_pipeline{nullptr};
+    std::unique_ptr<Texture> shadow_mask; ///< A soft round blob.
+    std::vector<WorldVertex> shadows;
 };
 
 WorldRenderer::WorldRenderer(Device& device, std::unique_ptr<Native> native)
@@ -859,6 +865,9 @@ WorldRenderer::~WorldRenderer() {
     }
     SDL_ReleaseGPUSampler(native_->device, native_->sampler);
     SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->pipeline);
+    if (native_->shadow_pipeline != nullptr) {
+        SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->shadow_pipeline);
+    }
 }
 
 std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
@@ -905,6 +914,7 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
     SDL_GPUShader* fragment_shader = SDL_CreateGPUShader(gpu, &fragment_info);
 
     SDL_GPUGraphicsPipeline* pipeline = nullptr;
+    SDL_GPUGraphicsPipeline* shadow_pipeline = nullptr;
     if (vertex_shader == nullptr || fragment_shader == nullptr) {
         device.last_error_ = sdl_error("Creating the world shaders failed");
     } else {
@@ -940,6 +950,35 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
         info.target_info.has_depth_stencil_target = true;
         info.target_info.depth_stencil_format = depth_format;
         pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &info);
+
+        // Shadows: the same vertices, a pixel shader that darkens, multiplying the target;
+        // tested against depth but not written, so they lie on what is already drawn.
+        SDL_GPUShaderCreateInfo shadow_info = fragment_info;
+        shadow_info.code = spirv ? shadow_frag_spirv.data() : shadow_frag_dxil.data();
+        shadow_info.code_size = spirv ? shadow_frag_spirv.size() : shadow_frag_dxil.size();
+        shadow_info.num_uniform_buffers = 0;
+        SDL_GPUShader* shadow_shader = SDL_CreateGPUShader(gpu, &shadow_info);
+        if (shadow_shader != nullptr && pipeline != nullptr) {
+            SDL_GPUColorTargetDescription multiply = color;
+            multiply.blend_state.enable_blend = true;
+            multiply.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+            multiply.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_COLOR;
+            multiply.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+            multiply.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+            multiply.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+            multiply.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+            SDL_GPUGraphicsPipelineCreateInfo shadow = info;
+            shadow.fragment_shader = shadow_shader;
+            shadow.target_info.color_target_descriptions = &multiply;
+            shadow.depth_stencil_state.enable_depth_write = false;
+            shadow.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+            shadow_pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &shadow);
+        }
+        release(gpu, shadow_shader);
+        if (shadow_pipeline == nullptr && pipeline != nullptr) {
+            SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
+            pipeline = nullptr;
+        }
     }
     if (pipeline == nullptr && vertex_shader != nullptr && fragment_shader != nullptr) {
         device.last_error_ = sdl_error("Creating the world pipeline failed");
@@ -958,15 +997,36 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
     sampler_info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     sampler_info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     SDL_GPUSampler* sampler = SDL_CreateGPUSampler(gpu, &sampler_info);
-    if (sampler == nullptr) {
-        device.last_error_ = sdl_error("Creating the world sampler failed");
+    // The shadow blob: opaque in the middle, fading out to the rim of a circle.
+    constexpr std::uint32_t mask_size = 32;
+    std::vector<std::uint8_t> mask(std::size_t{mask_size} * mask_size * 4, 255);
+    for (std::uint32_t y = 0; y < mask_size; ++y) {
+        for (std::uint32_t x = 0; x < mask_size; ++x) {
+            const float dx = ((static_cast<float>(x) + 0.5F) / mask_size * 2.0F) - 1.0F;
+            const float dy = ((static_cast<float>(y) + 0.5F) / mask_size * 2.0F) - 1.0F;
+            const float r = std::sqrt((dx * dx) + (dy * dy));
+            const float a = std::clamp((1.0F - r) / 0.4F, 0.0F, 1.0F); // soft outer 40 %
+            mask[(((std::size_t{y} * mask_size) + x) * 4) + 3] =
+                static_cast<std::uint8_t>(std::lround(a * 255.0F));
+        }
+    }
+    std::unique_ptr<Texture> shadow_mask = device.create_texture(mask_size, mask_size, mask);
+    if (sampler == nullptr || shadow_mask == nullptr) {
+        if (sampler == nullptr) {
+            device.last_error_ = sdl_error("Creating the world sampler failed");
+        } else {
+            SDL_ReleaseGPUSampler(gpu, sampler);
+        }
         SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(gpu, shadow_pipeline);
         return nullptr;
     }
 
     auto native = std::make_unique<Native>();
     native->device = gpu;
     native->pipeline = pipeline;
+    native->shadow_pipeline = shadow_pipeline;
+    native->shadow_mask = std::move(shadow_mask);
     native->sampler = sampler;
     native->depth_format = depth_format;
     return std::unique_ptr<WorldRenderer>(new WorldRenderer(device, std::move(native)));
@@ -993,6 +1053,24 @@ void WorldRenderer::begin(RenderTarget& target, Color clear, const Mat4& view_pr
                                                                 lights.size(), max_point_lights)));
     native_->vertices.clear();
     native_->textures.clear();
+    native_->shadows.clear();
+}
+
+void WorldRenderer::draw_shadow(const std::array<Vec3, 4>& corners, float darkness) {
+    if (native_->target == nullptr || !(darkness > 0.0F)) {
+        return;
+    }
+    const float d = std::min(darkness, 1.0F);
+    const auto corner = [d](const Vec3& p, float u, float v) {
+        return WorldVertex{p.x,  p.y,  p.z,  u,    v,    d,    d,    d,
+                           1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F};
+    };
+    const WorldVertex tl = corner(corners[0], 0.0F, 0.0F);
+    const WorldVertex tr = corner(corners[1], 1.0F, 0.0F);
+    const WorldVertex br = corner(corners[2], 1.0F, 1.0F);
+    const WorldVertex bl = corner(corners[3], 0.0F, 1.0F);
+    const WorldVertex quad[6] = {tl, tr, bl, tr, br, bl};
+    native_->shadows.insert(native_->shadows.end(), std::begin(quad), std::end(quad));
 }
 
 void WorldRenderer::draw(const Texture& texture, const std::array<Vec3, 4>& corners, Rect source,
@@ -1068,6 +1146,9 @@ bool WorldRenderer::end() {
         }
     }
 
+    // Shadows go after the quads in the same buffer.
+    const auto opaque_count = static_cast<std::uint32_t>(n.vertices.size());
+    n.vertices.insert(n.vertices.end(), n.shadows.begin(), n.shadows.end());
     const auto vertex_count = static_cast<std::uint32_t>(n.vertices.size());
     const std::uint32_t bytes = vertex_count * static_cast<std::uint32_t>(sizeof(WorldVertex));
     SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(n.device);
@@ -1186,6 +1267,15 @@ bool WorldRenderer::end() {
             ++stats_.draw_calls;
             first = last;
         }
+        if (vertex_count > opaque_count) {
+            SDL_BindGPUGraphicsPipeline(pass, n.shadow_pipeline);
+            SDL_GPUTextureSamplerBinding mask{};
+            mask.texture = n.shadow_mask->native().texture;
+            mask.sampler = n.sampler;
+            SDL_BindGPUFragmentSamplers(pass, 0, &mask, 1);
+            SDL_DrawGPUPrimitives(pass, vertex_count - opaque_count, 1, opaque_count, 0);
+            ++stats_.draw_calls;
+        }
     }
     SDL_EndGPURenderPass(pass);
     const bool submitted = submit_paced(device_.native(), commands);
@@ -1195,6 +1285,7 @@ bool WorldRenderer::end() {
         return false;
     }
     stats_.quads = n.textures.size();
+    stats_.shadows = n.shadows.size() / 6;
     return true;
 }
 

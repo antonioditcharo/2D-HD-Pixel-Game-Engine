@@ -343,6 +343,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     diorama.camera_clamp = false;
     diorama.ambient_light = 0.2;
     diorama.sun_light = 1.5;
+    diorama.sprite_shadow = 0.8;
     write_json(folder.path / game::project_file, game::project_to_json(diorama));
     issues.clear();
     const game::ProjectSettings again =
@@ -355,6 +356,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK_FALSE(again.camera_clamp);
     CHECK(again.ambient_light == 0.2);
     CHECK(again.sun_light == 1.5);
+    CHECK(again.sprite_shadow == 0.8);
 
     // Out-of-range values and a wrong style refuse the project; unknown entries do not.
     serialize::Json json = game::project_to_json(settings);

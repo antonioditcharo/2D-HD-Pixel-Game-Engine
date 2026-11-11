@@ -259,7 +259,15 @@ struct DioramaLight {
     render::Vec3 sun{-0.4F, 1.0F, 0.6F}; ///< Towards the sun; need not be normalised.
     float ambient = 0.55F;
     float diffuse = 0.45F;
+    /// How dark the soft shadow under each sprite is, 0 (none) to 1. Shadows lie on the
+    /// top of the highest tile under the sprite's feet; with no tile there, none is drawn.
+    float sprite_shadow = 0.35F;
 };
+
+/// The top of the highest visible tile under map point (x, y), in tiles above the
+/// ground: a block's height, or about 0 for flat maps. Nothing if no tile is there.
+[[nodiscard]] std::optional<float> ground_top(const world::World& world, double x, double y,
+                                              std::uint32_t ppu);
 
 /// How bright a face with `normal` is under `light`, from 0 to 1 (and above, if the light
 /// adds up to more).

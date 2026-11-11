@@ -65,6 +65,7 @@ MyGame/
 | `camera_pitch`, `camera_distance`, `camera_fov` | The Diorama camera, which follows the hero: degrees looking down, tiles away, and vertical field of view | 35 (5 to 85), 12 (1 to 200), 30 (5 to 90) |
 | `camera_clamp` | The camera stops at the map's edges (§3, Drawing) | `true` |
 | `look` | The frame's post-processing: tilt-shift (Diorama style only: it imitates a lens photographing a miniature, so flat Classic 2D ignores it), bloom, grading and vignette ([rendering.md](rendering.md) §8). A group of named settings; unknown ones are reported, values out of range refuse the project | Changes nothing |
+| `sprite_shadow` | How dark the soft shadow at each sprite's feet is in the Diorama style ([scene2d.md](scene2d.md) §7) | 0.35; 0 to 1 |
 | `ambient_light`, `sun_light` | The Diorama style's light at the start: from everywhere, and from the sun ([scene2d.md](scene2d.md) §7). Logic changes them with the `lighting` object | 0.55, 0.45; each 0 to 2 |
 
 - Problems are reported in plain language with where they are, for example

@@ -283,3 +283,49 @@ TEST_CASE("Point lights fall off with distance and light only what faces them") 
     // 16 lights of 0.01 at 0.5625: 0.09 of 255 = 23; all 20 would be 29.
     CHECK(std::abs(int{sum.r} - 23) <= 1);
 }
+
+TEST_CASE("Shadows darken what is drawn, softly, and hide behind nearer things") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const auto target = device->create_render_target(16, 16);
+    const auto world = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(world != nullptr);
+    const auto white = solid(*device, Color{255, 255, 255, 255});
+    const auto blue_texture = solid(*device, blue);
+    const Mat4 camera = Mat4::orthographic(-8, 8, -8, 8, 1, 20) *
+                        Mat4::look_at(Vec3{0, 0, 10}, Vec3{0, 0, 0}, Vec3{0, 1, 0});
+    const Vec3 eye{0, 0, 10};
+    // A white wall filling the view; a shadow of darkness 0.5 over its middle 8 x 8.
+    world->begin(*target, background, camera, eye);
+    world->draw(*white, facing(-8, -8, 8, 8, 0), Rect{0, 0, 1, 1});
+    world->draw_shadow(facing(-4, -4, 4, 4, 0.01F), 0.5F);
+    REQUIRE(world->end());
+    CHECK(world->last_stats().shadows == 1);
+    std::vector<std::uint8_t> pixels = target->read_pixels();
+    // The middle of the blob is fully dark: white times 0.5.
+    CHECK(near_colour(pixel(pixels, 16, 8, 8), Color{128, 128, 128, 255}, 1));
+    CHECK(near_colour(pixel(pixels, 16, 7, 7), Color{128, 128, 128, 255}, 1));
+    // Its rim fades: lighter than the middle, darker than the wall.
+    const Color rim = pixel(pixels, 16, 4, 8);
+    CHECK(rim.r > 128);
+    CHECK(rim.r < 255);
+    // Beyond its square, and in its square's corners beyond the circle, the wall is white.
+    CHECK(pixel(pixels, 16, 2, 8) == Color{255, 255, 255, 255});
+    CHECK(pixel(pixels, 16, 4, 4) == Color{255, 255, 255, 255});
+
+    // A nearer quad hides the shadow; darkness 0 draws nothing.
+    world->begin(*target, background, camera, eye);
+    world->draw(*white, facing(-8, -8, 8, 8, 0), Rect{0, 0, 1, 1});
+    world->draw(*blue_texture, facing(0, 0, 8, 8, 1), Rect{0, 0, 1, 1});
+    world->draw_shadow(facing(-4, -4, 4, 4, 0.01F), 1.0F);
+    world->draw_shadow(facing(-8, -8, 8, 8, 0.01F), 0.0F);
+    REQUIRE(world->end());
+    CHECK(world->last_stats().shadows == 1);
+    pixels = target->read_pixels();
+    CHECK(pixel(pixels, 16, 9, 6) == blue);                              // nearer: unshadowed
+    CHECK(near_colour(pixel(pixels, 16, 6, 9), Color{0, 0, 0, 255}, 1)); // darkness 1
+    CHECK(pixel(pixels, 16, 0, 15) == Color{255, 255, 255, 255});
+}

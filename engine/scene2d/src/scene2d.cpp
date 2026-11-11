@@ -886,6 +886,39 @@ std::vector<render::PointLight> diorama_lights(const world::World& world, double
     return lights;
 }
 
+std::optional<float> ground_top(const world::World& world, double x, double y, std::uint32_t ppu) {
+    const reflect::TypeInfo* type = world.registry().find_type<Tilemap>();
+    if (type == nullptr || !std::isfinite(x) || !std::isfinite(y)) {
+        return std::nullopt;
+    }
+    const double units = static_cast<double>(std::max<std::uint32_t>(ppu, 1));
+    std::optional<float> top;
+    world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        const Tilemap* map = ref.as<Tilemap>();
+        const Transform2D* t = world.get<Transform2D>(entity);
+        std::string error;
+        const TileGrid* grid = map != nullptr ? map->grid(error) : nullptr;
+        if (t == nullptr || grid == nullptr || !map->visible) {
+            return;
+        }
+        const double tile =
+            (map->tile_size == 0 ? units : static_cast<double>(map->tile_size)) / units;
+        const double column = std::floor((x - t->x) / tile);
+        const double row = std::floor((y - t->y) / tile);
+        if (column < 0.0 || row < 0.0 || column >= static_cast<double>(grid->width) ||
+            row >= static_cast<double>(grid->height) ||
+            grid->at(static_cast<std::uint32_t>(column), static_cast<std::uint32_t>(row)) < 0) {
+            return;
+        }
+        // As draw_diorama() places it: the block's height, plus its layer's lift.
+        const float height =
+            std::isfinite(map->height) ? static_cast<float>(std::max(map->height, 0.0)) : 0.0F;
+        const float here = height + (static_cast<float>(t->layer) * 0.002F);
+        top = top ? std::max(*top, here) : here;
+    });
+    return top;
+}
+
 DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                        render::WorldRenderer& renderer, render::RenderTarget& target,
                        const DioramaCamera& camera, render::Color clear, const DioramaLight& light,
@@ -1028,6 +1061,20 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
             // Upright, facing the camera, with the pivot on the map position.
             const render::Vec3 base{static_cast<float>(transform->x), lift,
                                     static_cast<float>(transform->y)};
+            // A soft shadow at its feet, on the tile it stands on (just inside its row).
+            if (light.sprite_shadow > 0.0F) {
+                if (const std::optional<float> floor =
+                        ground_top(world, transform->x, transform->y - 0.001, camera.ppu)) {
+                    const float half_w = std::max(width * 0.4F, 0.15F);
+                    const float half_d = half_w * 0.5F;
+                    const float y = *floor + 0.004F;
+                    renderer.draw_shadow({render::Vec3{base.x - half_w, y, base.z - half_d},
+                                          render::Vec3{base.x + half_w, y, base.z - half_d},
+                                          render::Vec3{base.x + half_w, y, base.z + half_d},
+                                          render::Vec3{base.x - half_w, y, base.z + half_d}},
+                                         std::min(light.sprite_shadow, 1.0F));
+                }
+            }
             const auto px = static_cast<float>(sprite->pivot_x);
             const auto py = static_cast<float>(sprite->pivot_y);
             const render::Vec3 r = o.right;

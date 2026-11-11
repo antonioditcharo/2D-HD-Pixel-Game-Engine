@@ -39,10 +39,10 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 17> known_project_keys{
+constexpr std::array<std::string_view, 18> known_project_keys{
     "format",     "version",      "name",          "start_scene", "ppu",          "width",
     "height",     "background",   "render_style",  "gravity",     "camera_pitch", "camera_distance",
-    "camera_fov", "camera_clamp", "ambient_light", "sun_light",   "look"};
+    "camera_fov", "camera_clamp", "ambient_light", "sun_light",   "look",         "sprite_shadow"};
 
 /// The look a project's frames get: tilt-shift imitates a lens photographing a miniature,
 /// so it belongs to the Diorama style; flat Classic 2D keeps the rest of the look.
@@ -273,6 +273,7 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
     number("camera_fov", settings.camera_fov, 5.0, 90.0);
     number("ambient_light", settings.ambient_light, 0.0, 2.0);
     number("sun_light", settings.sun_light, 0.0, 2.0);
+    number("sprite_shadow", settings.sprite_shadow, 0.0, 1.0);
     if (const auto look = doc.find("look"); look != doc.end()) {
         if (!look->is_object()) {
             issues.push_back(
@@ -366,6 +367,7 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["camera_clamp"] = settings.camera_clamp;
     json["ambient_light"] = settings.ambient_light;
     json["sun_light"] = settings.sun_light;
+    json["sprite_shadow"] = settings.sprite_shadow;
     serialize::Json look = serialize::Json::object();
     look["tilt_shift"] = settings.look.tilt_shift;
     for (const LookNumber& number : look_numbers) {
@@ -827,6 +829,7 @@ bool Runtime::draw() {
             std::clamp(std::isfinite(r.lighting.ambient) ? r.lighting.ambient : 0.55, 0.0, 2.0));
         light.diffuse = static_cast<float>(
             std::clamp(std::isfinite(r.lighting.sun) ? r.lighting.sun : 0.45, 0.0, 2.0));
+        light.sprite_shadow = static_cast<float>(std::clamp(r.settings.sprite_shadow, 0.0, 1.0));
         scene2d::draw_diorama(*r.world, *r.textures, *r.world_renderer, world_target, orbit,
                               r.settings.background, light);
     } else {

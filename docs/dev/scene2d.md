@@ -172,6 +172,11 @@ the style ([game.md](game.md) §2).
   and in their tint. Lights add to the ambient and sun light, so they show best when
   those are low: the game's `lighting` object sets them ([game.md](game.md) §3). Classic
   2D does not draw lights yet.
+- **Shadows** (`plan/04` §5.4, "Blob"): each sprite casts a soft round shadow at its
+  feet, `sprite_shadow` dark in the middle (0.35 by default; 0 turns them off), lying on
+  the top of the highest tile under it (`ground_top()`), so on blocks too. Where no tile
+  is under a sprite, it casts none, rather than darkening the sky. Shadows from the sun's
+  direction (silhouettes) come later.
 - **Depth** sorts everything; there is no draw order to manage. **Fog** fades distant
   things into the haze.
 - **What the camera shows** (`diorama_view_extent()`): the ground between where the
@@ -199,6 +204,7 @@ the others run anywhere:
 | Diorama (GPU) | Ground under the point looked at, lit from above to the exact shade; sky beyond the map; a sprite standing above the point with the ground in front, shaded as it faces the camera; still facing it a quarter turn later; fog; block faces counted; broken maps and missing images counted |
 | Diorama camera and light | `brightness()` for faces up, sideways and down, with any length of normal; the eye's position from pitch and distance; the point at the centre; north up the screen; pitch kept below 90 degrees |
 | Camera on the map | `map_bounds()` over maps with offsets, larger tiles and empty maps; `clamp_view()` in the middle, at corners, with a view larger than the map, off-centre and infinite edges, and with broken numbers |
+| Shadows | `ground_top()` on flat ground (with its layer's lift), on a block, nowhere, and on a hidden map; drawn with and without shadows, the only pixels that change are around the sprite's feet, and they only get darker; off the map, none |
 | Lights | `diorama_lights()`: nearest first; disabled, radius 0 and intensity 0 skipped; height clamped to 16; map (x, y) at world (x, z); colour times intensity; at most 16, the nearest |
 | A Light on the ground (GPU) | In the dark, the ground under a lamp 1 tile up with radius 2 is exactly 0.5625 of red; dimmer further off; black beyond the radius; black with the lamp off |
 | Diorama view extent | For 12 cameras (pitch 20 to 85, field of view 10 to 60), the extent's bottom, top and sides projected through `diorama_view_projection()` land on the screen's edges within 0.01 %; the top is infinite when it looks above the horizon |

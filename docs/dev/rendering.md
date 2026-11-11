@@ -154,6 +154,12 @@ world->end();
   village; [player.md](player.md) §3).
 - **Fog:** linear with distance from the eye, from `start` to `end`, towards the fog
   colour; off when `end` is not past `start`.
+- **Shadow decals:** `draw_shadow(corners, darkness)` queues a soft round shadow, drawn
+  after every quad by a second pipeline that multiplies what is there (it only darkens),
+  depth-tested but not depth-written, so it lies on surfaces and hides behind nearer
+  ones. Tested: exactly half as bright at the middle with darkness 0.5, a soft rim, the
+  corners of its square untouched, hidden behind a nearer quad, and darkness 0 drawing
+  nothing.
 - **Batching:** one draw call per run of quads sharing a texture, as for sprites.
 - Translucent quads (blended, sorted back to front) are not supported yet: every texel is
   either fully drawn or cut out.

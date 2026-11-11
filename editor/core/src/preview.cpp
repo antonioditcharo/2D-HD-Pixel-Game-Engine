@@ -81,6 +81,7 @@ std::optional<engine::assets::Image> Preview::render(Document& document, double 
         scene2d::DioramaLight light;
         light.ambient = static_cast<float>(std::clamp(settings.ambient_light, 0.0, 2.0));
         light.diffuse = static_cast<float>(std::clamp(settings.sun_light, 0.0, 2.0));
+        light.sprite_shadow = static_cast<float>(std::clamp(settings.sprite_shadow, 0.0, 1.0));
         scene2d::draw_diorama(document.world(), *p.textures, *p.world, target, camera,
                               settings.background, light);
     } else {

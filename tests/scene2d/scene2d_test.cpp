@@ -861,3 +861,76 @@ TEST_CASE("A Light lights the Diorama ground around it, per pixel") {
     light->enabled = false;
     CHECK(pixel(draw(), 17, 8, 8) == Color{0, 0, 0, 255});
 }
+
+TEST_CASE("Sprites cast a soft shadow on the tile they stand on") {
+    const Fixture f;
+    const auto w = f.make_world();
+    // Flat ground 2 x 2 around the origin, and a block 1.5 high from (2, 0).
+    const world::Entity ground = w->create("ground");
+    scene2d::Transform2D* at = w->add<scene2d::Transform2D>(ground);
+    at->x = -1.0;
+    at->y = -1.0;
+    at->layer = -1;
+    scene2d::Tilemap* map = w->add<scene2d::Tilemap>(ground);
+    map->tileset = f.red_image.to_string();
+    map->tiles = "0,0\n0,0";
+    const world::Entity block = w->create("block");
+    w->add<scene2d::Transform2D>(block)->x = 2.0;
+    scene2d::Tilemap* blocks = w->add<scene2d::Tilemap>(block);
+    blocks->tileset = f.red_image.to_string();
+    blocks->tiles = "0";
+    blocks->height = 1.5;
+    CHECK(scene2d::ground_top(*w, 0.5, 0.5, 2).value_or(-9.0F) == doctest::Approx(-0.002));
+    CHECK(scene2d::ground_top(*w, 2.5, 0.5, 2).value_or(-9.0F) == doctest::Approx(1.5));
+    CHECK_FALSE(scene2d::ground_top(*w, 5.0, 5.0, 2).has_value());
+    blocks->visible = false;
+    CHECK_FALSE(scene2d::ground_top(*w, 2.5, 0.5, 2).has_value());
+    blocks->visible = true;
+
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    Fixture::place(*w, "hero", 0.0, 0.0, f.blue_image);
+    const auto target = device->create_render_target(17, 17);
+    const auto renderer = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(renderer != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    scene2d::DioramaCamera camera;
+    camera.pitch = 45.0;
+    camera.distance = 4.0;
+    camera.ppu = 2;
+    const auto draw = [&](float shadow) {
+        scene2d::DioramaLight light;
+        light.sprite_shadow = shadow;
+        scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
+        return target->read_pixels();
+    };
+    const std::vector<std::uint8_t> plain = draw(0.0F);
+    const std::vector<std::uint8_t> shaded = draw(0.6F);
+    CHECK(renderer->last_stats().shadows == 1);
+    std::size_t darker = 0;
+    for (std::uint32_t y = 0; y < 17; ++y) {
+        for (std::uint32_t x = 0; x < 17; ++x) {
+            const Color a = pixel(plain, 17, x, y);
+            const Color b = pixel(shaded, 17, x, y);
+            if (a == b) {
+                continue;
+            }
+            CAPTURE(x);
+            CAPTURE(y);
+            CHECK(b.r <= a.r); // only ever darker
+            CHECK(b.g <= a.g);
+            CHECK(b.b <= a.b);
+            CHECK(std::abs(static_cast<int>(x) - 8) <= 4); // only around the feet
+            CHECK(std::abs(static_cast<int>(y) - 8) <= 4);
+            ++darker;
+        }
+    }
+    CHECK(darker > 0);
+    // Off the map, nothing to stand on: no shadow.
+    w->get<scene2d::Transform2D>(w->find_named("hero").at(0))->x = 6.0;
+    static_cast<void>(draw(0.6F));
+    CHECK(renderer->last_stats().shadows == 0);
+}

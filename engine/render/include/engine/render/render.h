@@ -329,13 +329,19 @@ public:
     /// to it as `surface` says, per pixel.
     void draw(const Texture& texture, const std::array<Vec3, 4>& corners, Rect source,
               std::array<float, 4> color = {1.0F, 1.0F, 1.0F, 1.0F}, const Surface& surface = {});
+    /// Queues a soft round shadow over the quad with these corners (as draw() takes
+    /// them): what is already there is darkened by up to `darkness` (0 to 1) in the
+    /// middle, fading out to the rim. Shadows are drawn after every quad, and only where
+    /// something nearer is not (they are depth-tested, not depth-written).
+    void draw_shadow(const std::array<Vec3, 4>& corners, float darkness);
     /// Sends the frame to the GPU. Returns false, with the device's last_error() set, if it
     /// could not.
     bool end();
 
     struct Stats {
         std::size_t quads = 0;
-        std::size_t draw_calls = 0; ///< One per run of quads sharing a texture.
+        std::size_t shadows = 0;
+        std::size_t draw_calls = 0; ///< One per run of quads sharing a texture, one for shadows.
     };
     [[nodiscard]] Stats last_stats() const noexcept { return stats_; }
 
