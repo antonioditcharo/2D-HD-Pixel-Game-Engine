@@ -64,8 +64,8 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
         map->tile_size == 0 ? std::max(document->settings().ppu, 1U) : map->tile_size;
     const int columns = static_cast<int>(picture->width / size);
     const int rows = static_cast<int>(picture->height / size);
-    const int per_row = 6;
-    const auto add = [this, per_row](QToolButton* button, std::int32_t tile) {
+    constexpr int per_row = 6;
+    const auto add = [this](QToolButton* button, std::int32_t tile) {
         button->setCheckable(true);
         button->setObjectName(QStringLiteral("tile:%1").arg(tile));
         connect(button, &QToolButton::clicked, this, [this, tile] {
