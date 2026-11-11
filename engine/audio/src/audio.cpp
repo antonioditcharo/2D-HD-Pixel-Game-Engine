@@ -375,5 +375,15 @@ const std::string& AudioEngine::last_error() const noexcept {
 } // namespace engine::audio
 
 // stb_vorbis's implementation, last: it defines short macros that must not reach our code.
+// MSVC's optimizer reports "potentially uninitialized" locals inside it (C4701, C4703);
+// those warnings come from code generation, which /external:W0 does not cover, so they are
+// turned off for stb_vorbis's functions alone.
 #undef STB_VORBIS_HEADER_ONLY
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma warning(push)
+#pragma warning(disable : 4701 4703)
+#endif
 #include <stb_vorbis.c> // NOLINT(bugprone-suspicious-include)
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma warning(pop)
+#endif
