@@ -80,6 +80,7 @@ logic::LogicAsset sample_asset() {
         {
             ir::log(2, ir::literal(reflect::Value{std::string("caf\xC3\xA9 \"quoted\"\n")})),
             ir::wait(3, ir::literal(reflect::Value{2.0})),
+            ir::wait_until(40, ir::variable("flag")),
             ir::if_then(
                 4,
                 ir::with_id(
@@ -347,8 +348,8 @@ TEST_CASE("Invalid logic documents are reported with their place") {
         {R"({"format": "sparxel.logic", "version": 1, "name": "x",
              "rules": [{"block": 1, "event": "e", "do": [{"kind": "jump", "block": 2}]}]})",
          false,
-         {{"/rules/0/do/0/kind",
-           "'jump' is not one of: do, set, set_variable, wait, if, repeat, run, log."}}},
+         {{"/rules/0/do/0/kind", "'jump' is not one of: do, set, set_variable, wait, wait_until, "
+                                 "if, repeat, run, log."}}},
         {R"({"format": "sparxel.logic", "version": 1, "name": "x",
              "rules": [{"block": 0, "event": "e"}]})",
          false,

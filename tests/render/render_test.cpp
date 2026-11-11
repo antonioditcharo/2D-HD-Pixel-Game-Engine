@@ -146,6 +146,34 @@ TEST_CASE("Source rectangles, tints, alpha blending and draw order") {
     CHECK(blended.b == 0);
 }
 
+TEST_CASE("begin_over() draws over what the target holds") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const auto target = device->create_render_target(8, 8);
+    const auto sprites = render::SpriteRenderer::create(*device);
+    const auto texture = checker(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(sprites != nullptr);
+    REQUIRE(texture != nullptr);
+    sprites->begin(*target, Color{10, 20, 30, 255});
+    sprites->draw(*texture, Rect{0, 0, 1, 1}, Rect{0, 0, 4, 4}); // red, top-left
+    REQUIRE(sprites->end());
+    sprites->begin_over(*target);
+    sprites->draw(*texture, Rect{0, 1, 1, 1}, Rect{4, 4, 4, 4}); // blue, bottom-right
+    REQUIRE(sprites->end());
+    std::vector<std::uint8_t> pixels = target->read_pixels();
+    CHECK(pixel(pixels, 8, 1, 1) == Color{255, 0, 0, 255});  // kept
+    CHECK(pixel(pixels, 8, 6, 1) == Color{10, 20, 30, 255}); // kept
+    CHECK(pixel(pixels, 8, 6, 6) == Color{0, 0, 255, 255});  // drawn over
+    // And begin() after it clears again.
+    sprites->begin(*target, Color{0, 0, 0, 255});
+    REQUIRE(sprites->end());
+    pixels = target->read_pixels();
+    CHECK(pixel(pixels, 8, 1, 1) == Color{0, 0, 0, 255});
+}
+
 TEST_CASE("Sprites sharing a texture are batched into one draw call") {
     render::Device* device = gpu();
     if (device == nullptr) {

@@ -4,7 +4,7 @@
 > images, a scene and Rules) opens and runs: a hero walks with the keyboard or a gamepad,
 > turning and animating as it goes, stopped by walls and people; Rules react to the game
 > starting, to buttons, to talking to people, to walking through doorways and to
-> animations finishing; the player's progress saves to slots and loads back exactly; and
+> animations finishing; people say things in message boxes ([ui.md](ui.md)); the player's progress saves to slots and loads back exactly; and
 > the game draws pixel-perfect into a window that follows the hero. No-code logic reaches the world's entities by name or GUID, through all their
 > components. Every behaviour below is covered by tests.
 >
@@ -12,7 +12,8 @@
 > [`runtime.h`](../../engine/game/include/engine/game/runtime.h),
 > [`behaviours.h`](../../engine/game/include/engine/game/behaviours.h),
 > [`logic_world.h`](../../engine/game/include/engine/game/logic_world.h),
-> [`save.h`](../../engine/game/include/engine/game/save.h) and
+> [`save.h`](../../engine/game/include/engine/game/save.h),
+> [`dialogue.h`](../../engine/game/include/engine/game/dialogue.h) and
 > [`clock.h`](../../engine/game/include/engine/game/clock.h). Tests:
 > [`tests/game/`](../../tests/game/).
 
@@ -105,30 +106,33 @@ while (game && game->frame(seconds_since_last_frame)) {}
 draws and presents. It returns false when the player closes the window. Each `step()`:
 
 1. **Input.** The step's controls, from the recording or from the operating system.
-2. **Movement.** Every enabled Top-down Mover walks, stopped by walls and Solid Bodies,
+2. **Movement.** While a message is open ([ui.md](ui.md) §3), movement and physics see
+   no controls held, so the player stands still. Every enabled Top-down Mover walks, stopped by walls and Solid Bodies,
    and Walk Animations update (§4). Physics Bodies then take a step of the simulation, and
    those that start touching send **"touched"** ([physics.md](physics.md)). Then Trigger Areas send **"entered"** and
    **"exited"** for the movers that walked in or out.
 3. **Input events.** Each action pressed this step emits `input.pressed` with the action,
    so *"When Interact is pressed"* Rules run. For Interact, each enabled mover (in GUID
    order) then reaches the Interactable it faces, which sends **"interacted"** (§4).
+   While a message is open, Interact instead turns its page or closes it, and does
+   neither.
 4. **Logic update.** Events that scripts emitted since the last update are delivered,
-   then Sequences whose wait is over resume.
+   every Brain runs, then Sequences whose wait is over resume.
 5. **Animation.** Sprite animations advance ([scene2d.md](scene2d.md) §3). Each one that
    reached its end sends its entity's **"finished"** event, so *"When the torch's
    animation finishes"* Rules run.
 6. **Saving and loading** that logic asked for during the step (§8).
 
-This follows the order in `plan/05` §5 so far; physics, Brains and "continuously" Rules
-take their places in it as they arrive.
+This follows the order in `plan/05` §5 so far; "continuously" Rules take their place in
+it when they arrive.
 
 ### Drawing
 
 `draw()` renders the world with `scene2d::draw_world()`, or in the Diorama style with
 `scene2d::draw_diorama()` and the project's camera settings ([scene2d.md](scene2d.md)).
-The camera follows the first entity with a Top-down Mover, so the hero stays centred. The
-window shows the image pixel-perfect with black bars around it ([rendering.md](rendering.md)
-§4).
+The camera follows the first entity with a Top-down Mover, so the hero stays centred. An
+open message box is drawn over the world ([ui.md](ui.md) §3). The window shows the image
+pixel-perfect with black bars around it ([rendering.md](rendering.md) §4).
 
 ## 4. Behaviours
 
@@ -268,7 +272,7 @@ A save (`Runtime::save()`, format `"sparxel.save"` version 1, `plan/03` §10) ho
 scratch world. A save from another game or a newer version, or a broken world, is
 refused and **changes nothing** (tested). Otherwise the world is replaced, waiting
 Sequences stop (`Vm::stop_all()`; a save does not hold them, so save where none is
-running, as RPGs do at save points), and the variables are restored. A variable that no
+running, as RPGs do at save points), open messages close, and the variables are restored. A variable that no
 longer exists, or now holds another kind of value, keeps its current value and is
 reported; the rest still loads. Movers standing in Trigger Areas count as already
 inside, so loading does not set off "entered". Saving straight after loading gives the
@@ -295,7 +299,7 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 | Diagonals | Right and down for one second move 4/√2 tiles on each axis; a disabled mover stays put |
 | Walls | Walking right stops with the hitbox on the wall (x = 2.625 for a wall at 3); adding down slides along it at the diagonal speed |
 | Bodies, triggers, interaction | Boxes touching versus overlapping; sweeping against boxes in every direction; a villager stopping the hero at its edge, and not when disabled; a doorway reporting a mover already inside, a mover walking in and out once each, exits in GUID order, and everyone leaving when disabled; the reach in each facing, the nearest of two, disabled ones and the mover itself skipped |
-| Talking and doorways | In the runtime: Interact facing the elder runs its "interacted" Rule after the Interact input Rule; walking left runs the doorway's "entered" Rule with `who` = "hero" at exactly 4.2 tiles, and "exited" after leaving it |
+| Talking and doorways | In the runtime: Interact facing the elder runs its "interacted" Rule after the Interact input Rule, and the next Interact closes what the elder said; walking left runs the doorway's "entered" Rule with `who` = "hero" at exactly 4.2 tiles, and "exited" after leaving it |
 | Facing and walking | Every facing rule; exact frames of the cycle, back and forth and starting over, at 6 frames per second; the standing frame; clamped settings; the runtime turning the hero left and animating it |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
@@ -308,13 +312,12 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 
 ## 10. Next increments
 
-1. **Dialogue:** a message box with text and choices, shown by a "Say" action, that pauses
-   the player until it is closed, so talking to the elder shows words on screen.
+1. **Choices in dialogue** and the rest of [ui.md](ui.md) §5.
 2. **Hot reload while playing:** pass asset changes to the texture cache and reload
    changed logic.
 3. **Spawning and destroying from logic,** with entities created by Rules addressable by
    GUID.
 4. **"Who" picking** (`plan/05` §2): *"all objects tagged Enemy"*, *"the other object"* in
    a touch event.
-5. **A `sparxel-run` player executable** that opens a project folder, and Play in the
-   editor (`plan/03` §8).
+5. **Play in the editor** (`plan/03` §8), starting the runtime that `sparxel-player`
+   already runs ([player.md](player.md)).

@@ -11,6 +11,7 @@
 #include "engine/foundation/reflect.h"
 #include "engine/game/behaviours.h"
 #include "engine/game/clock.h"
+#include "engine/game/dialogue.h"
 #include "engine/game/save.h"
 #include "engine/game/sound.h"
 #include "engine/input/input.h"
@@ -151,6 +152,9 @@ public:
     [[nodiscard]] std::filesystem::path save_folder() const;
     /// Problems with what logic asked for (saving, loading, playing sounds), oldest first.
     [[nodiscard]] const std::vector<std::string>& problems() const noexcept;
+    /// What logic said with the dialogue object, and whether a message is showing.
+    [[nodiscard]] const DialogueObject& dialogue() const noexcept;
+    [[nodiscard]] DialogueObject& dialogue() noexcept;
     /// The audio engine; null with AudioMode::Off or when no sound output was found.
     [[nodiscard]] audio::AudioEngine* audio() noexcept;
 

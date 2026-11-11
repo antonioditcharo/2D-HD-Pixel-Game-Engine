@@ -184,6 +184,7 @@ A `LogicAsset` is what one logic file in a project holds, and compiles to one sc
 | `Set` | Sets a property of an object |
 | `SetVariable` | Sets a variable |
 | `Wait` | Waits a number of seconds |
+| `WaitUntil` | Waits until a condition holds: checked at once (no wait if it already holds), then once per update. Compiles to `while not (…) do sx.wait(0) end` |
 | `If` | Runs one list of steps or the other |
 | `Repeat` | Runs steps a number of times |
 | `Run` | Runs another sequence and waits until it ends |
@@ -213,7 +214,7 @@ flow:
   its time in the state, takes at most one transition (On Exit, switch, time back to 0,
   On Enter), and runs the While In steps of the state it is in. Scripts run in load
   order, Brains by name, so the order is fixed.
-- **Brains cannot wait.** A Wait step, or Running a sequence (which may wait), anywhere in
+- **Brains cannot wait.** A Wait or Wait until step, or Running a sequence (which may wait), anywhere in
   a Brain is a compile error that says to start the sequence from a rule.
 - **Saved with the game:** a Brain's state, time and whether it has started are variables
   of its script (`@brain.<name>.state`, `.time`, `.on`), so `variables()` and saved games
@@ -290,7 +291,7 @@ results.
 
 In order:
 
-1. **More blocks:** parallel steps, "wait until", For each, and text joining.
+1. **More blocks:** parallel steps, For each, and text joining.
 2. **Brain runner** (state machines) and **"why didn't this fire?"** support, which
    re-evaluates a rule's conditions one by one using their block ids.
 3. **Bytecode caching** per asset, so exported games skip compilation.

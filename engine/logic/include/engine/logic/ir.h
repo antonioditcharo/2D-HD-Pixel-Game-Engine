@@ -71,6 +71,7 @@ enum class StmtKind : std::uint8_t {
     Repeat,      ///< Run `body` `arguments[0]` times.
     Run,         ///< Run sequence `member` and wait until it ends.
     Log,         ///< Write `arguments[0]` to the log.
+    WaitUntil,   ///< Wait until condition `arguments[0]` holds, checked once per update.
 };
 
 struct Stmt {
@@ -196,6 +197,7 @@ namespace ir {
 [[nodiscard]] Stmt set(std::uint64_t id, std::string object, std::string property_id, Expr value);
 [[nodiscard]] Stmt set_variable(std::uint64_t id, std::string variable_id, Expr value);
 [[nodiscard]] Stmt wait(std::uint64_t id, Expr seconds);
+[[nodiscard]] Stmt wait_until(std::uint64_t id, Expr condition);
 [[nodiscard]] Stmt if_then(std::uint64_t id, Expr condition, std::vector<Stmt> body,
                            std::vector<Stmt> otherwise = {});
 [[nodiscard]] Stmt repeat(std::uint64_t id, Expr count, std::vector<Stmt> body);

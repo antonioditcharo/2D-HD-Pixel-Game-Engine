@@ -61,7 +61,9 @@
       "do": [
         {
           "block": 2,
-          "kind": "log",
+          "kind": "do",
+          "member": "say",
+          "object": "dialogue",
           "values": [
             {
               "kind": "literal",
@@ -77,7 +79,9 @@
       "do": [
         {
           "block": 4,
-          "kind": "log",
+          "kind": "do",
+          "member": "say",
+          "object": "dialogue",
           "values": [
             {
               "kind": "literal",
@@ -127,7 +131,9 @@
       "do": [
         {
           "block": 8,
-          "kind": "log",
+          "kind": "do",
+          "member": "say",
+          "object": "dialogue",
           "values": [
             {
               "kind": "literal",

@@ -5,6 +5,7 @@ find_package(SDL3 CONFIG REQUIRED)
 add_library(engine_game STATIC
     src/behaviours.cpp
     src/clock.cpp
+    src/dialogue.cpp
     src/logic_world.cpp
     src/runtime.cpp
     src/save.cpp
@@ -25,6 +26,7 @@ target_link_libraries(engine_game
         engine::input
         engine::audio
         engine::physics
+        engine::ui
     PRIVATE
         SDL3::SDL3
 )

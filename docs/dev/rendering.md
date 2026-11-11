@@ -51,6 +51,9 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
   8 × 8 becomes four clean 4 × 4 blocks, with no blurred edges (tested pixel by pixel).
 - **Tint** multiplies the texture's colour; its alpha fades the sprite.
 - **Alpha blending,** with sprites drawn in the order given, so later ones are on top.
+- **Clearing or keeping:** `begin(target, colour)` clears the target first;
+  `begin_over(target)` keeps what it holds, to draw over a finished frame, such as text
+  and message boxes over the world ([ui.md](ui.md)).
 - **Batching:** one draw call per run of consecutive sprites that share a texture. 1,000
   sprites from one texture are one draw call; alternating textures cost a call per run, to
   keep the order. Packing sprites into atlases (the asset pipeline's job) keeps runs long.

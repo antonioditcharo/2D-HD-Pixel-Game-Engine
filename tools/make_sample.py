@@ -197,6 +197,10 @@ def main():
     def log(block, value):
         return {"block": block, "kind": "log", "values": [text(value)]}
 
+    def say(block, value):
+        return {"block": block, "kind": "do", "object": "dialogue", "member": "say",
+                "values": [text(value)]}
+
     logic = {
         "format": "sparxel.logic",
         "version": 1,
@@ -204,9 +208,9 @@ def main():
         "variables": [{"id": "talks", "kind": "whole_number"}],
         "rules": [
             {"block": 1, "event": "game_start",
-             "do": [log(2, "Welcome to the village! Arrow keys to walk, Z to talk.")]},
+             "do": [say(2, "Welcome to the village! Arrow keys to walk, Z to talk.")]},
             {"block": 3, "object": "elder", "event": "interacted",
-             "do": [log(4, "Elder: Welcome, traveller. The road east leads home."),
+             "do": [say(4, "Elder: Welcome, traveller. The road east leads home."),
                     {"block": 5, "kind": "do", "object": "audio", "member": "play_sound",
                      "values": [text("sfx/chime.wav")]},
                     {"block": 6, "kind": "set_variable", "member": "talks",
@@ -214,7 +218,7 @@ def main():
                                  "operands": [{"kind": "variable", "member": "talks"},
                                               text(1)]}]}]},
             {"block": 7, "object": "gate", "event": "entered",
-             "do": [log(8, "The gate creaks. Beyond it, the road home.")]},
+             "do": [say(8, "The gate creaks. Beyond it, the road home.")]},
         ],
         "brains": [
             {"block": 20, "name": "weather",

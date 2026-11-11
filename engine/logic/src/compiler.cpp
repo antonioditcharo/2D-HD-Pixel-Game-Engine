@@ -142,6 +142,12 @@ Stmt wait(std::uint64_t id, Expr seconds) {
     return stmt;
 }
 
+Stmt wait_until(std::uint64_t id, Expr condition) {
+    Stmt stmt = statement(StmtKind::WaitUntil, id);
+    stmt.arguments.push_back(std::move(condition));
+    return stmt;
+}
+
 Stmt if_then(std::uint64_t id, Expr condition, std::vector<Stmt> body,
              std::vector<Stmt> otherwise) {
     Stmt stmt = statement(StmtKind::If, id);
@@ -516,7 +522,7 @@ private:
             return; // reported when compiled
         }
         for (const Stmt& stmt : list) {
-            if (stmt.kind == StmtKind::Wait) {
+            if (stmt.kind == StmtKind::Wait || stmt.kind == StmtKind::WaitUntil) {
                 error(stmt.id, "A brain cannot wait. Start a sequence from a rule instead.");
             } else if (stmt.kind == StmtKind::Run) {
                 error(stmt.id, "A brain cannot run a sequence, which may wait. Start it from a "
@@ -979,6 +985,16 @@ private:
                               "The time to wait");
                 if (code) {
                     emit(stmt.id, trace() + "sx.wait(" + *code + ")");
+                }
+            }
+            return;
+        case StmtKind::WaitUntil:
+            // Checked now, then once per update: a condition that already holds does not
+            // wait at all.
+            if (const Expr* condition = single_argument(stmt)) {
+                const std::optional<std::string> code = condition_code(stmt.id, *condition);
+                if (code) {
+                    emit(stmt.id, trace() + "while not (" + *code + ") do sx.wait(0) end");
                 }
             }
             return;

@@ -457,6 +457,8 @@ TEST_CASE("Invalid logic is reported on the block, in plain language") {
          "The variable 'count' must be a whole number, but is 1.5."},
         {logic::Stmt{logic::StmtKind::Wait, logic::BlockId{1}, "", "", {}, {}, {}}, 1,
          "This block needs exactly one value."},
+        {ir::wait_until(1, ir::variable("count")), 1,
+         "A condition must be yes or no (true or false), but the value given is a whole number."},
         {ir::log(0, text("no id")), 0,
          "A block has no id. Every statement, sequence and rule needs one."},
     };
@@ -611,6 +613,38 @@ TEST_CASE("A script's variables can be read and restored, as saved games need") 
     CHECK(world.vm.variables("story")[3].second == reflect::Value{std::int64_t{3}});
 }
 
+TEST_CASE("Wait until checks its condition at once, then once per update") {
+    World world;
+    logic::LogicAsset asset;
+    asset.name = "gate";
+    asset.variables.push_back(
+        logic::Variable{"open", reflect::ValueKind::Bool, "", reflect::Value{false}});
+    asset.sequences.push_back(
+        logic::Sequence{logic::BlockId{1},
+                        "wait_for_gate",
+                        {ir::log(2, text("waiting")), ir::wait_until(3, ir::variable("open")),
+                         ir::log(4, text("through"))}});
+    asset.sequences.push_back(logic::Sequence{
+        logic::BlockId{5},
+        "already_open",
+        {ir::wait_until(6, ir::negate(ir::variable("open"))), ir::log(7, text("no wait"))}});
+    const logic::ScriptId script = world.load(asset);
+    REQUIRE(world.vm.start(script, logic::sequence_entry("wait_for_gate")));
+    CHECK(world.log == std::vector<std::string>{"waiting"});
+    for (int i = 0; i < 3; ++i) {
+        world.vm.update(0.25);
+    }
+    CHECK(world.log == std::vector<std::string>{"waiting"});
+    CHECK(world.vm.task_count() == 1);
+    // A condition that holds already does not wait, not even for the next update.
+    REQUIRE(world.vm.start(script, logic::sequence_entry("already_open")));
+    CHECK(world.log == std::vector<std::string>{"waiting", "no wait"});
+    REQUIRE(world.vm.set_variable("gate", "open", reflect::Value{true}));
+    world.vm.update(0.0);
+    CHECK(world.log == std::vector<std::string>{"waiting", "no wait", "through"});
+    CHECK(world.vm.task_count() == 0);
+}
+
 TEST_CASE("stop_all() ends waiting sequences but keeps Rules") {
     World world;
     logic::LogicAsset asset;
@@ -737,7 +771,7 @@ TEST_CASE("Brain mistakes are reported at their blocks") {
     logic::BrainState first;
     first.id = logic::BlockId{2};
     first.name = "idle";
-    first.on_enter = {ir::wait(3, number(1.0))};
+    first.on_enter = {ir::wait(3, number(1.0)), ir::wait_until(8, yes_no(true))};
     first.while_in = {ir::if_then(4, yes_no(true), {ir::run(5, "anything")})};
     first.transitions.push_back(logic::Transition{logic::BlockId{6}, "nowhere", {}, -1.0});
     logic::BrainState twin = first;
@@ -755,6 +789,7 @@ TEST_CASE("Brain mistakes are reported at their blocks") {
         "6: There is no state called 'nowhere' to go to.",
         "6: The time in the state before leaving must be 0 seconds or more.",
         "3: A brain cannot wait. Start a sequence from a rule instead.",
+        "8: A brain cannot wait. Start a sequence from a rule instead.",
         "5: A brain cannot run a sequence, which may wait. Start it from a rule instead.",
     };
     CHECK(errors == expected);

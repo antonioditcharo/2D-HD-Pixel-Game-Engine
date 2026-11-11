@@ -3,6 +3,7 @@
 #include "engine/foundation/text.h"
 #include "engine/game/logic_world.h"
 #include "engine/logic/compiler.h"
+#include "engine/ui/text.h"
 
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_stdinc.h>
@@ -61,6 +62,32 @@ constexpr std::array<std::string_view, 13> known_project_keys{
         return path.size() >= suffix.size() && path.substr(path.size() - suffix.size()) == suffix;
     };
     return ends_with(".drules") || ends_with(".dsequence");
+}
+
+/// Where the message box goes in a target of `width` x `height` pixels: three lines of
+/// text at the bottom, fewer on very small screens.
+struct MessageLayout {
+    float x = 0.0F;
+    float y = 0.0F;
+    float width = 0.0F;
+    float height = 0.0F;
+    int lines = 1;
+    int text_width = 0;
+};
+
+constexpr float message_margin = 4.0F;
+constexpr float message_padding = 5.0F;
+
+MessageLayout message_layout(std::uint32_t width, std::uint32_t height) {
+    const int line = ui::PixelFont::builtin().line_height();
+    MessageLayout layout;
+    layout.lines = std::clamp(((static_cast<int>(height) / 3) - 10) / line, 1, 3);
+    layout.height = static_cast<float>((layout.lines * line) - 1) + (2.0F * message_padding);
+    layout.x = message_margin;
+    layout.width = std::max(static_cast<float>(width) - (2.0F * message_margin), 1.0F);
+    layout.y = static_cast<float>(height) - message_margin - layout.height;
+    layout.text_width = std::max(static_cast<int>(layout.width - (2.0F * message_padding)), 1);
+    return layout;
 }
 
 } // namespace
@@ -262,6 +289,7 @@ void register_types(reflect::Registry& registry) {
     register_behaviours(registry);
     register_save_types(registry);
     register_audio_types(registry);
+    register_dialogue_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -271,7 +299,8 @@ void register_types(reflect::Registry& registry) {
 struct Runtime::Impl {
     explicit Impl(ProjectSettings project, const fs::path& root)
         : settings(std::move(project)), assets(root / "assets"),
-          state(input::InputMap::rpg_preset()), input_object(&state) {}
+          state(input::InputMap::rpg_preset()), input_object(&state),
+          idle(input::InputMap::rpg_preset()) {}
 
     // Members are destroyed in reverse order: GPU objects before the device, the window
     // before the device, and the VM before the input and world it reaches into.
@@ -283,6 +312,9 @@ struct Runtime::Impl {
     input::InputObject input_object;
     std::unique_ptr<PhysicsLink> physics;
     SaveObject save_object;
+    DialogueObject dialogue;
+    std::size_t page = 0;   ///< Of the message showing.
+    input::InputState idle; ///< No controls held: what movement sees while a message is open.
     std::unique_ptr<audio::AudioEngine> audio_engine;
     AudioObject audio_object;
     std::vector<std::string> problems;
@@ -299,6 +331,8 @@ struct Runtime::Impl {
     std::unique_ptr<render::SpriteRenderer> sprites;
     std::unique_ptr<render::WorldRenderer> world_renderer; ///< For the Diorama style.
     std::unique_ptr<scene2d::TextureCache> textures;
+    std::unique_ptr<render::Texture> font;  ///< The built-in font's atlas.
+    std::unique_ptr<render::Texture> white; ///< One white pixel, for boxes.
 };
 
 Runtime::Runtime(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -389,6 +423,10 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         issues.push_back(
             serialize::Issue{"", "The audio object could not be made available to logic."});
     }
+    if (!r.vm->bind("dialogue", reflect::ObjectRef::of(r.dialogue))) {
+        issues.push_back(
+            serialize::Issue{"", "The dialogue object could not be made available to logic."});
+    }
     if (!r.vm->bind("game", reflect::ObjectRef::of(r.save_object))) {
         issues.push_back(
             serialize::Issue{"", "The game object could not be made available to logic."});
@@ -459,6 +497,14 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
             return nullptr;
         }
         r.textures = std::make_unique<scene2d::TextureCache>(*r.device, r.assets);
+        const ui::PixelFont& font = ui::PixelFont::builtin();
+        r.font = r.device->create_texture(font.atlas_width(), font.atlas_height(), font.atlas());
+        const std::array<std::uint8_t, 4> white{255, 255, 255, 255};
+        r.white = r.device->create_texture(1, 1, white);
+        if (r.font == nullptr || r.white == nullptr) {
+            issues.push_back(serialize::Issue{"", r.device->last_error()});
+            return nullptr;
+        }
     }
 
     r.vm->emit("", "game_start");
@@ -475,11 +521,15 @@ void Runtime::step() {
         r.keep_running = input::pump_events(r.state) && r.keep_running;
     }
 
+    // While a message is open, the player stands still and Interact turns its pages.
+    const bool talking = r.dialogue.is_open();
+    const input::InputState& moves = talking ? r.idle : r.state;
+
     // 2. Movement, with walls, bodies and walk animations; then trigger areas.
     const double dt = r.clock.step_seconds();
-    move_characters(*r.world, r.state, dt, r.settings.ppu);
+    move_characters(*r.world, moves, dt, r.settings.ppu);
     // Physics: dynamic bodies move, and bodies that start touching tell Rules.
-    for (const auto& [first, second] : r.physics->step(*r.world, r.state, dt, r.settings.ppu)) {
+    for (const auto& [first, second] : r.physics->step(*r.world, moves, dt, r.settings.ppu)) {
         for (const auto& [touched, other] : {std::pair{first, second}, std::pair{second, first}}) {
             const std::vector<std::string> who = names_of(*r.world, other);
             const std::array<reflect::Value, 1> payload{
@@ -499,9 +549,30 @@ void Runtime::step() {
     // 3. Events: each pressed action runs the Rules listening for it. Interact also
     //    reaches what each mover faces, in mover GUID order.
     for (const std::string& action : r.state.pressed_actions()) {
+        if (talking && action == "interact") {
+            // The next page, or the next message; the last one closing tells Rules.
+            const std::string* message = r.dialogue.current();
+            const MessageLayout layout = message_layout(r.settings.width, r.settings.height);
+            const std::size_t lines =
+                message == nullptr
+                    ? 0
+                    : ui::wrap(ui::PixelFont::builtin(), *message, layout.text_width).size();
+            const std::size_t pages =
+                std::max<std::size_t>(1, (lines + static_cast<std::size_t>(layout.lines) - 1) /
+                                             static_cast<std::size_t>(layout.lines));
+            if (r.page + 1 < pages) {
+                ++r.page;
+            } else {
+                r.page = 0;
+                if (r.dialogue.close_current()) {
+                    r.vm->emit("dialogue", "closed");
+                }
+            }
+            continue;
+        }
         const std::array<reflect::Value, 1> payload{reflect::Value{action}};
         r.vm->emit("input", "pressed", payload);
-        if (action != "interact") {
+        if (action != "interact" || talking) {
             continue;
         }
         std::vector<std::pair<Guid, world::Entity>> movers;
@@ -597,10 +668,34 @@ bool Runtime::draw() {
         orbit.ppu = r.settings.ppu;
         scene2d::draw_diorama(*r.world, *r.textures, *r.world_renderer, *r.target, orbit,
                               r.settings.background);
-        return true;
+    } else {
+        scene2d::draw_world(*r.world, *r.textures, *r.sprites, *r.target, camera,
+                            r.settings.background);
     }
-    scene2d::draw_world(*r.world, *r.textures, *r.sprites, *r.target, camera,
-                        r.settings.background);
+
+    // The message box, over everything.
+    if (const std::string* message = r.dialogue.current()) {
+        const MessageLayout box = message_layout(r.target->width(), r.target->height());
+        const ui::PixelFont& font = ui::PixelFont::builtin();
+        const std::vector<std::string> lines = ui::wrap(font, *message, box.text_width);
+        r.sprites->begin_over(*r.target);
+        const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
+        r.sprites->draw(*r.white, one, render::Rect{box.x, box.y, box.width, box.height},
+                        render::Color{230, 232, 240, 255});
+        r.sprites->draw(
+            *r.white, one,
+            render::Rect{box.x + 1.0F, box.y + 1.0F, box.width - 2.0F, box.height - 2.0F},
+            render::Color{18, 20, 40, 240});
+        const std::size_t first = r.page * static_cast<std::size_t>(box.lines);
+        for (std::size_t i = first;
+             i < lines.size() && i < first + static_cast<std::size_t>(box.lines); ++i) {
+            ui::draw_text(*r.sprites, *r.font, font, lines[i], box.x + message_padding,
+                          box.y + message_padding +
+                              static_cast<float>(static_cast<int>(i - first) * font.line_height()),
+                          render::Color{255, 255, 255, 255});
+        }
+        r.sprites->end();
+    }
     return true;
 }
 
@@ -712,8 +807,11 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
         }
     }
 
-    // Replace the world, stop what was running, and restore the variables.
+    // Replace the world, stop what was running and close messages, and restore the
+    // variables.
     r.vm->stop_all();
+    r.dialogue.clear();
+    r.page = 0;
     for (const world::Entity root : r.world->roots()) {
         r.world->destroy(root);
     }
@@ -794,6 +892,14 @@ std::filesystem::path Runtime::save_folder() const {
 
 const std::vector<std::string>& Runtime::problems() const noexcept {
     return impl_->problems;
+}
+
+const DialogueObject& Runtime::dialogue() const noexcept {
+    return impl_->dialogue;
+}
+
+DialogueObject& Runtime::dialogue() noexcept {
+    return impl_->dialogue;
 }
 
 audio::AudioEngine* Runtime::audio() noexcept {

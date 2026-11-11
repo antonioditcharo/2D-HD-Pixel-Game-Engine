@@ -4,6 +4,7 @@
 
 #include "engine/game/logic_world.h"
 #include "engine/game/runtime.h"
+#include "engine/ui/text.h"
 
 #include <doctest/doctest.h>
 
@@ -41,6 +42,7 @@ namespace reflect = engine::reflect;
 namespace render = engine::render;
 namespace scene2d = engine::scene2d;
 namespace serialize = engine::serialize;
+namespace ui = engine::ui;
 namespace world = engine::world;
 namespace ir = engine::logic::ir;
 namespace fs = std::filesystem;
@@ -189,18 +191,23 @@ struct Project {
             logic::BlockId{5}, "torch", "finished", {}, {ir::log(6, text("torch done"))}, {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{40}, "crate", "touched", {}, {ir::log(41, ir::event_value("who"))}, {}});
-        rules.rules.push_back(
-            logic::Rule{logic::BlockId{7},
-                        "elder",
-                        "interacted",
-                        {},
-                        {ir::log(8, text("talk")),
-                         ir::set_variable(13, "visits",
-                                          ir::arithmetic(logic::ArithmeticOp::Add,
-                                                         ir::variable("visits"), whole(1)))},
-                        {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{7},
+            "elder",
+            "interacted",
+            {},
+            {ir::log(8, text("talk")), ir::do_action(14, "dialogue", "say", {text("Hi.")}),
+             ir::set_variable(
+                 13, "visits",
+                 ir::arithmetic(logic::ArithmeticOp::Add, ir::variable("visits"), whole(1))),
+             // Say, and wait until the player has read it.
+             ir::wait_until(44, ir::negate(ir::call("dialogue", "is_open"))),
+             ir::log(45, text("after"))},
+            {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{9}, "door", "entered", {}, {ir::log(10, ir::event_value("who"))}, {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{42}, "dialogue", "closed", {}, {ir::log(43, text("closed"))}, {}});
         rules.rules.push_back(
             logic::Rule{logic::BlockId{11}, "door", "exited", {}, {ir::log(12, text("bye"))}, {}});
         write_json(folder.path / "assets/logic/main.drules", serialize::logic_to_json(rules));
@@ -569,6 +576,8 @@ TEST_CASE("Talking to people and walking through doorways runs their Rules") {
     input::Recording replay;
     replay.record(1, key(input::Key::Z), true); // Interact, facing down at the elder
     replay.record(2, key(input::Key::Z), false);
+    replay.record(3, key(input::Key::Z), true); // Interact again: closes the elder's message
+    replay.record(4, key(input::Key::Z), false);
     replay.record(5, key(input::Key::Left), true);
     const auto runtime = project.open(no_graphics(&replay));
     const world::World& w = runtime->world();
@@ -578,8 +587,11 @@ TEST_CASE("Talking to people and walking through doorways runs their Rules") {
     for (int i = 0; i < 5; ++i) {
         runtime->step();
     }
-    // The input Rule for Interact runs first, then the elder's.
-    CHECK(runtime->log() == std::vector<std::string>{"start", "hello", "talk"});
+    // The input Rule for Interact runs first, then the elder's, which says a line. The
+    // second Interact closes it: it neither runs the input Rule nor talks again.
+    CHECK(runtime->log() == std::vector<std::string>{"start", "hello", "talk", "closed", "after"});
+    CHECK(runtime->dialogue().said() == std::vector<std::string>{"Hi."});
+    CHECK_FALSE(runtime->dialogue().is_open());
 
     // Walking left from x = 0: the hitbox reaches the doorway (x -5.5 to -4.5) after
     // 4.125 tiles, and leaves it after 5.875 tiles, at 4 tiles per second.
@@ -587,17 +599,18 @@ TEST_CASE("Talking to people and walking through doorways runs their Rules") {
     for (int i = 0; i < 61; ++i) {
         runtime->step(); // to x = -4.0667: not yet inside
     }
-    CHECK(runtime->log() == std::vector<std::string>{"start", "hello", "talk", "torch done"});
+    CHECK(runtime->log() ==
+          std::vector<std::string>{"start", "hello", "talk", "closed", "after", "torch done"});
     for (int i = 0; i < 2; ++i) {
         runtime->step(); // to x = -4.2
     }
-    CHECK(runtime->log() ==
-          std::vector<std::string>{"start", "hello", "talk", "torch done", "hero"});
+    CHECK(runtime->log() == std::vector<std::string>{"start", "hello", "talk", "closed", "after",
+                                                     "torch done", "hero"});
     for (int i = 0; i < 30; ++i) {
         runtime->step(); // to x = -6.2
     }
-    CHECK(runtime->log() ==
-          std::vector<std::string>{"start", "hello", "talk", "torch done", "hero", "bye"});
+    CHECK(runtime->log() == std::vector<std::string>{"start", "hello", "talk", "closed", "after",
+                                                     "torch done", "hero", "bye"});
     CHECK(runtime->vm().errors().empty());
 }
 
@@ -1016,4 +1029,104 @@ TEST_CASE("Physics: crates fall onto solid floors, are pushed, and say what they
         runtime->step();
         CHECK(transform_of(*runtime, "crate").x == doctest::Approx(52.5).epsilon(0.002));
     }
+}
+
+TEST_CASE("Dialogue: the player stands still until the message is closed") {
+    const Project project;
+    input::Recording replay;
+    replay.record(1, key(input::Key::Z), true); // talk to the elder
+    replay.record(2, key(input::Key::Z), false);
+    replay.record(2, key(input::Key::Left), true); // try to walk away while it shows
+    replay.record(10, key(input::Key::Z), true);   // close it
+    const auto runtime = project.open(no_graphics(&replay));
+    const world::Entity hero = runtime->world().find_named("hero").at(0);
+    runtime->world().get<scene2d::Transform2D>(hero)->y = 1.75; // just above the elder
+    for (int i = 0; i < 10; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->dialogue().is_open());
+    CHECK(runtime->log().back() == "talk");         // the elder's Rule is still waiting
+    CHECK(transform_of(*runtime, "hero").x == 0.0); // stood still
+    CHECK(transform_of(*runtime, "hero").y == 1.75);
+    CHECK_FALSE(runtime->world().get<game::TopDownMover>(hero)->moving);
+    runtime->step(); // step 10: Interact closes it
+    CHECK_FALSE(runtime->dialogue().is_open());
+    // The "closed" Rule runs, then the elder's Rule, waiting until then, goes on.
+    CHECK(runtime->log().at(runtime->log().size() - 2) == "closed");
+    CHECK(runtime->log().back() == "after");
+    runtime->step(); // and the player walks again
+    CHECK(transform_of(*runtime, "hero").x < 0.0);
+}
+
+TEST_CASE("The message box is drawn over the game") {
+    if (test_support::gpu() == nullptr) {
+        return;
+    }
+    const Project project;
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    const std::array<reflect::Value, 1> by{reflect::Value{std::string("hero")}};
+    CHECK(game::emit(runtime->vm(), runtime->world(), runtime->world().find_named("elder").at(0),
+                     "interacted", by));
+    REQUIRE(runtime->dialogue().is_open());
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    // In a 32 x 32 game the box holds one line: 18 high, from (4, 10) to (28, 28).
+    CHECK(pixel(pixels, 32, 4, 10) == render::Color{230, 232, 240, 255}); // its border
+    CHECK(pixel(pixels, 32, 27, 27) == render::Color{230, 232, 240, 255});
+    CHECK(pixel(pixels, 32, 3, 10) == background); // outside it
+    const render::Color inside = pixel(pixels, 32, 6, 12);
+    CHECK(inside.r < 50); // the dark fill, nearly opaque over the game
+    CHECK(inside.g < 50);
+    CHECK(inside.b >= inside.r);
+    std::size_t white = 0; // the text, in white
+    for (std::uint32_t y = 15; y < 24; ++y) {
+        for (std::uint32_t x = 9; x < 27; ++x) {
+            white += pixel(pixels, 32, x, y) == render::Color{255, 255, 255, 255} ? 1 : 0;
+        }
+    }
+    CHECK(white > 10);
+}
+
+TEST_CASE("Dialogue: long messages take one Interact per page, and messages queue") {
+    const Project project;
+    input::Recording replay;
+    for (std::uint64_t press = 0; press < 20; ++press) {
+        replay.record(1 + (2 * press), key(input::Key::Z), true);
+        replay.record(2 + (2 * press), key(input::Key::Z), false);
+    }
+    const auto runtime = project.open(no_graphics(&replay));
+    const std::string long_line = "Welcome, traveller. The road east leads home.";
+    runtime->dialogue().say(long_line);
+    runtime->dialogue().say("Hi.");
+    // A 32 x 32 game shows one line of 14 pixels at a time.
+    const std::size_t pages = ui::wrap(ui::PixelFont::builtin(), long_line, 14).size();
+    REQUIRE(pages > 3);
+    runtime->step(); // step 0: no press yet
+    for (std::size_t page = 0; page < pages; ++page) {
+        REQUIRE(runtime->dialogue().current() != nullptr);
+        CHECK(*runtime->dialogue().current() == long_line);
+        runtime->step(); // a press
+        runtime->step(); // a release
+    }
+    REQUIRE(runtime->dialogue().current() != nullptr);
+    CHECK(*runtime->dialogue().current() == "Hi.");
+    // Nothing closed yet, and no press reached the Interact Rule ("hello"); the torch's
+    // Sequence finished meanwhile.
+    CHECK(runtime->log() == std::vector<std::string>{"start", "torch done"});
+    runtime->step();
+    CHECK_FALSE(runtime->dialogue().is_open());
+    CHECK(runtime->log() == std::vector<std::string>{"start", "torch done", "closed"});
+}
+
+TEST_CASE("Dialogue: loading a save closes open messages") {
+    const Project project;
+    const auto runtime = project.open(no_graphics(nullptr));
+    const serialize::Json saved = runtime->save();
+    runtime->dialogue().say("Hi.");
+    std::vector<serialize::Issue> issues;
+    REQUIRE(runtime->load(saved, issues));
+    CHECK_FALSE(runtime->dialogue().is_open());
+    CHECK(runtime->log() == std::vector<std::string>{"start"}); // no "closed" Rule ran
 }

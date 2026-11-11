@@ -200,11 +200,12 @@ constexpr Names<logic::ExprKind, 10> expr_kind_names{{
     {logic::ExprKind::Arithmetic, "arithmetic"},
 }};
 
-constexpr Names<logic::StmtKind, 8> stmt_kind_names{{
+constexpr Names<logic::StmtKind, 9> stmt_kind_names{{
     {logic::StmtKind::Do, "do"},
     {logic::StmtKind::Set, "set"},
     {logic::StmtKind::SetVariable, "set_variable"},
     {logic::StmtKind::Wait, "wait"},
+    {logic::StmtKind::WaitUntil, "wait_until"},
     {logic::StmtKind::If, "if"},
     {logic::StmtKind::Repeat, "repeat"},
     {logic::StmtKind::Run, "run"},

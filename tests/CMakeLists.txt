@@ -137,6 +137,20 @@ engine_configure_test_target(engine_physics_tests)
 
 add_test(NAME physics COMMAND engine_physics_tests)
 
+add_executable(engine_ui_tests
+    test_main.cpp
+    ui/text_test.cpp
+)
+target_link_libraries(engine_ui_tests PRIVATE
+    engine::ui
+    doctest::doctest
+)
+target_compile_definitions(engine_ui_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+target_include_directories(engine_ui_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+engine_configure_test_target(engine_ui_tests)
+
+add_test(NAME ui COMMAND engine_ui_tests)
+
 add_executable(engine_game_tests
     test_main.cpp
     game/behaviours_test.cpp

@@ -28,7 +28,8 @@ sparxel-player samples/hello --headless --frames 120 --no-audio --screenshot fra
 - In a window, the game runs in real time; closing the window ends it. The window shows
   the game's internal resolution at the largest whole-number scale that fits
   ([rendering.md](rendering.md) §4), and its title is the game's name.
-- **What it prints:** every line logic writes with Log blocks, on standard output, and
+- **What it prints:** every line logic writes with Log blocks and every message
+  characters say (as `said: …`, [ui.md](ui.md) §3), on standard output, and
   every problem (a project issue, a sound that cannot play, a save that fails) on
   standard error, so creators see them while testing.
 - Exit codes: 0 after playing, 1 if the game cannot start (the reasons are printed), 2 for
@@ -46,7 +47,7 @@ the engine does today:
 | `art/tiles.png` | Grass, path and wall tiles: the ground map, and a solid wall map one tile high, so in the Diorama style the wall stands as blocks |
 | `art/elder.png` | An elder who is a Solid Body and an Interactable |
 | `sfx/chime.wav` | Played when the player talks to the elder |
-| `logic/main.drules` | Rules for the start, talking (counting talks in a variable) and the gate (a Trigger Area); and a Brain, `weather`, turning sunny and rainy |
+| `logic/main.drules` | Rules for the start (a welcome message on screen), talking (the elder's words in a message box, counting talks in a variable) and the gate (a Trigger Area, with a message); and a Brain, `weather`, turning sunny and rainy |
 
 Switch `"render_style"` in `project.sparxel.json` to `"diorama"` to see the same village
 in 3D.
@@ -60,7 +61,7 @@ in 3D.
 
 | Test | Checks |
 |---|---|
-| `player_classic_2d`, `player_diorama` | CTest plays a copy of the sample headless for 120 frames in each style: it must start, report no problems, and print the welcome and the Brain's first line |
+| `player_classic_2d`, `player_diorama` | CTest plays a copy of the sample headless for 120 frames in each style: it must start, report no problems, and print the welcome message (`said: Welcome to the village`) and the Brain's first line |
 | The sample in the Diorama style | Renders the village in 3D and checks that no path pixel appears alone in the grass. That once happened: in perspective, a texture coordinate on a tile's edge rounded into the next tile of the atlas. World quads now keep their coordinates a hundredth of a texel inside the tile ([rendering.md](rendering.md) §7); the test fails without that |
 
 ## 4. Next increments

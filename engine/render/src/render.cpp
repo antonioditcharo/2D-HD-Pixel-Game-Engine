@@ -433,6 +433,7 @@ struct SpriteRenderer::Native {
     // The frame being recorded.
     RenderTarget* target{nullptr};
     Color clear;
+    bool keep = false; ///< Draw over what the target holds instead of clearing it.
     std::vector<Vertex> vertices;
     std::vector<const Texture*> textures; ///< One per sprite.
 };
@@ -543,8 +544,14 @@ std::unique_ptr<SpriteRenderer> SpriteRenderer::create(Device& device) {
 void SpriteRenderer::begin(RenderTarget& target, Color clear) {
     native_->target = &target;
     native_->clear = clear;
+    native_->keep = false;
     native_->vertices.clear();
     native_->textures.clear();
+}
+
+void SpriteRenderer::begin_over(RenderTarget& target) {
+    begin(target, Color{});
+    native_->keep = true;
 }
 
 void SpriteRenderer::draw(const Texture& texture, Rect source, Rect destination, Color tint) {
@@ -631,7 +638,7 @@ bool SpriteRenderer::end() {
     color.clear_color =
         SDL_FColor{static_cast<float>(n.clear.r) / 255.0F, static_cast<float>(n.clear.g) / 255.0F,
                    static_cast<float>(n.clear.b) / 255.0F, static_cast<float>(n.clear.a) / 255.0F};
-    color.load_op = SDL_GPU_LOADOP_CLEAR;
+    color.load_op = n.keep ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
     color.store_op = SDL_GPU_STOREOP_STORE;
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &color, 1, nullptr);
     if (vertex_count > 0) {

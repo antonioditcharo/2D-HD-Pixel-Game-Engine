@@ -5,7 +5,8 @@
 //                  [--screenshot file.png]
 //
 // With no folder, it plays the folder it is started in. Lines that logic writes with Log
-// blocks are printed, and so are problems, so creators see them while testing.
+// blocks are printed, and so are what characters say ("said: ...") and problems, so
+// creators see them while testing.
 //
 // See docs/dev/player.md.
 
@@ -109,6 +110,7 @@ int main(int argc, char** argv) {
     }
 
     std::size_t logged = 0;
+    std::size_t said = 0;
     std::size_t problems = 0;
     std::uint64_t frame = 0;
     auto last = std::chrono::steady_clock::now();
@@ -122,6 +124,7 @@ int main(int argc, char** argv) {
         }
         const bool keep_running = runtime->frame(seconds);
         print_new(runtime->log(), logged, stdout, "");
+        print_new(runtime->dialogue().said(), said, stdout, "said: ");
         print_new(runtime->problems(), problems, stderr, "problem: ");
         ++frame;
         if (!keep_running || (args->frames && frame >= *args->frames)) {

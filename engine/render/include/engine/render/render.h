@@ -208,6 +208,9 @@ public:
 
     /// Starts a frame into `target`, cleared to `clear`.
     void begin(RenderTarget& target, Color clear);
+    /// Starts drawing over what `target` already holds, for interfaces and text on top of
+    /// a frame.
+    void begin_over(RenderTarget& target);
     /// Queues a sprite: the `source` pixels of `texture`, drawn to `destination`, multiplied
     /// by `tint`. Does nothing outside begin() and end().
     void draw(const Texture& texture, Rect source, Rect destination,
