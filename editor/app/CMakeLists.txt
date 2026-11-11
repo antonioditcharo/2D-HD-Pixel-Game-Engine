@@ -8,6 +8,8 @@ add_library(editor_app STATIC
     src/main_window.h
     src/scene_view.cpp
     src/scene_view.h
+    src/tile_palette.cpp
+    src/tile_palette.h
 )
 add_library(editor::app ALIAS editor_app)
 set_target_properties(editor_app PROPERTIES AUTOMOC ON)

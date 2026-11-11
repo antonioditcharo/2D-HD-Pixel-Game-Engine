@@ -15,7 +15,7 @@
 
 The editor is where a creator makes a game without writing code (`plan/06`). This first
 version covers the loop every later tool plugs into: open a project, see the scene, select
-something, change it, undo, save, play, export.
+something, change it, paint its maps, undo, save, play, export.
 
 ![The editor with the sample village open and the elder selected](editor-v0.1.png)
 
@@ -30,6 +30,7 @@ sparxel-editor samples/hello
 | **Scene** (middle) | The scene drawn by the engine, as the game draws it: the project's resolution, style, lighting and look, at the largest whole-number scale that fits. In Classic 2D, **click** selects what is drawn on top (sprites before maps) and **drag** moves it, to whole pixels, as one undo step. Drag with the right or middle button, or use the arrow keys, to move the camera |
 | **Entities** (left) | Every entity, children under their parents. Selecting one selects it everywhere |
 | **Assets** (left) | The project's `assets/` folder: pictures, sounds, scenes and logic |
+| **Tiles** (left) | With a tilemap selected, its tileset's tiles and an eraser. Choosing one puts the scene in **paint mode** (Classic 2D): the left button paints the tile into the cell under the cursor, the right button erases, the middle button still moves the camera. Each stroke is one undo step; painting past the map's right or bottom edge grows it. Choosing the tile again, Escape, or selecting something else stops painting |
 | **Inspector** (right) | The selected entity's name, and a group for each component with a field for each property: a tick box for yes/no, number fields with the property's range, step and unit, a list for choices, and a list of the project's pictures for an image or tileset. Read-only properties are shown but cannot be changed; *Show advanced settings* adds the advanced ones. Each group can be removed, and *Add a component…* lists those the entity does not have |
 | **Commands** | Open, Save (Ctrl+S), Undo and Redo (with what they will undo, for example *Undo Change Speed of hero*), New entity (where the camera looks), Delete, **Play** (F5: saves, then starts `sparxel-player` on the project) and **Export** (saves, asks for an empty folder, then exports: [export.md](export.md)) |
 
@@ -72,15 +73,17 @@ them.
 |---|---|
 | Opening | The sample's settings, scene and its 7 entities in order; component types sorted by name, behaviours included; a missing project refused |
 | Properties | An edit changes the world and marks the scene changed, labelled *Change Speed of hero*; typing three values is one undo step back to the original; after a field loses focus the next change is its own step; a new edit clears redo; a value of the wrong kind and a component the entity lacks are refused, with nothing changed |
+| Painting | A stroke over three cells is one undo step; painting past the right edge grows the map, with empty cells between; cells above or left of its corner, and entities without a tilemap, are refused; erasing; a new stroke after `end_merge()` is its own step |
 | Entities and components | Create, add a component (twice refused), rename, delete and undo (same GUID and components back), remove a component and undo; a drag of five moves is one step; undoing everything returns to the scene as opened |
 | Saving | The scene file is written; reopening finds the edit; saving keeps the history |
 | Picking | The hero's exact picture bounds; the hero, the elder, the ground and the walls (drawn after the ground) at points, and nothing outside the map |
 | Preview (GPU) | The sample drawn at 320 × 180 with the hero's robe and the wall's stone at exact pixels, and the hero moved 2 tiles after an edit |
-| The application | Opening the sample: title, list and a 320 × 180 scene. Selecting in the list fills the inspector; a number field edits the world; undo puts it and the field back; renaming in the inspector renames in the list; field labels are never squeezed out of sight. Clicking the hero in the scene selects it; dragging moves it 2 tiles right and 1 down to the nearest pixel, as one undo step; clicking the ground selects it. A new entity gets a Light from *Add a component…*; saving writes it; deleting and exporting (which saves first) work; exporting over a project is refused |
+| The application | Opening the sample: title, list and a 320 × 180 scene. Selecting in the list fills the inspector; a number field edits the world; undo puts it and the field back; renaming in the inspector renames in the list; field labels are never squeezed out of sight. Clicking the hero in the scene selects it; dragging moves it 2 tiles right and 1 down to the nearest pixel, as one undo step; clicking the ground selects it. Painting: the ground's palette has its three tiles and an eraser; a left-button stroke paints a path four tiles long without changing the selection; a right-button click erases; each undoes on its own; Escape and selecting something else stop painting. A new entity gets a Light from *Add a component…*; saving writes it; deleting and exporting (which saves first) work; exporting over a project is refused |
 
 ## 5. Next increments
 
-1. **Painting tilemaps** and placing assets by dragging them into the scene.
+1. **Placing assets** by dragging them from the assets list into the scene, and
+   rectangle and fill tools for painting.
 2. **The logic editors:** Rules, Sequences and Brains as blocks (`plan/05`).
 3. **Selection and gizmos in the Diorama style,** picking through the 3D camera.
 4. **Docking layouts** with Qt Advanced Docking System (ADR-005), saved per user.

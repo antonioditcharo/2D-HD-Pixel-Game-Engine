@@ -45,6 +45,23 @@ void SceneView::set_selection(engine::Guid entity) {
     update();
 }
 
+void SceneView::set_painting(engine::Guid tilemap, std::optional<std::int32_t> tile) {
+    paint_map_ = tilemap;
+    paint_tile_ = tile;
+    setCursor(tile ? Qt::CrossCursor : Qt::ArrowCursor);
+}
+
+void SceneView::paint_at(QPoint widget_point) {
+    if (document_ == nullptr) {
+        return;
+    }
+    const QPointF at = to_map(widget_point);
+    if (document_->paint_tile(paint_map_, at.x(), at.y(), stroke_tile_)) {
+        Q_EMIT moved();
+        refresh();
+    }
+}
+
 void SceneView::set_camera(double x, double y) {
     camera_x_ = x;
     camera_y_ = y;
@@ -139,6 +156,15 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
 void SceneView::mousePressEvent(QMouseEvent* event) {
     setFocus();
     drag_from_ = event->position().toPoint();
+    if (paint_tile_ && document_ != nullptr &&
+        document_->settings().style == engine::game::RenderStyle::Classic2D &&
+        (event->button() == Qt::LeftButton || event->button() == Qt::RightButton)) {
+        drag_ = Drag::Paint;
+        stroke_tile_ = event->button() == Qt::LeftButton ? *paint_tile_ : -1;
+        document_->end_merge(); // each stroke is one undo step
+        paint_at(drag_from_);
+        return;
+    }
     if (event->button() == Qt::LeftButton && document_ != nullptr &&
         document_->settings().style == engine::game::RenderStyle::Classic2D) {
         const QPointF at = to_map(drag_from_);
@@ -168,6 +194,10 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
     const double ppu = std::max(1U, document_->settings().ppu);
     const double per_pixel = 1.0 / (ppu * scale());
     const QPoint delta = event->position().toPoint() - drag_from_;
+    if (drag_ == Drag::Paint) {
+        paint_at(event->position().toPoint());
+        return;
+    }
     if (drag_ == Drag::Entity) {
         // To whole pixels of the picture, as the game draws it.
         const double x = std::round((entity_from_.x() + delta.x() * per_pixel) * ppu) / ppu;
@@ -183,7 +213,7 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void SceneView::mouseReleaseEvent(QMouseEvent* /*event*/) {
-    if (drag_ == Drag::Entity && document_ != nullptr) {
+    if ((drag_ == Drag::Entity || drag_ == Drag::Paint) && document_ != nullptr) {
         document_->end_merge();
     }
     drag_ = Drag::None;
@@ -203,6 +233,11 @@ void SceneView::keyPressEvent(QKeyEvent* event) {
         break;
     case Qt::Key_Down:
         set_camera(camera_x_, camera_y_ + step);
+        break;
+    case Qt::Key_Escape:
+        if (paint_tile_) {
+            Q_EMIT stop_painting();
+        }
         break;
     default:
         QWidget::keyPressEvent(event);

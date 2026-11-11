@@ -229,6 +229,54 @@ bool Document::move_entity(Guid entity, double x, double y) {
     return true;
 }
 
+bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(tilemap);
+    auto* map = e.is_valid() ? d.world->get<scene2d::Tilemap>(e) : nullptr;
+    const auto* transform = e.is_valid() ? d.world->get<scene2d::Transform2D>(e) : nullptr;
+    if (map == nullptr || transform == nullptr || tile < -1 || !std::isfinite(x) ||
+        !std::isfinite(y)) {
+        return false;
+    }
+    std::string error;
+    const scene2d::TileGrid* parsed = map->grid(error);
+    if (parsed == nullptr) {
+        return false; // broken text: fix it first, rather than lose it
+    }
+    const double units = static_cast<double>(std::max<std::uint32_t>(d.settings.ppu, 1));
+    const double tile_size =
+        (map->tile_size == 0 ? units : static_cast<double>(map->tile_size)) / units;
+    const double column = std::floor((x - transform->x) / tile_size);
+    const double row = std::floor((y - transform->y) / tile_size);
+    const auto side = static_cast<double>(scene2d::max_tilemap_side);
+    if (column < 0.0 || row < 0.0 || column >= side || row >= side) {
+        return false;
+    }
+    const auto cx = static_cast<std::uint32_t>(column);
+    const auto cy = static_cast<std::uint32_t>(row);
+    if (parsed->at(cx, cy) == tile && cx < parsed->width && cy < parsed->height) {
+        return true; // already so
+    }
+    if (tile < 0 && (cx >= parsed->width || cy >= parsed->height)) {
+        return true; // erasing outside the map: nothing to do
+    }
+    // A copy, grown as needed.
+    scene2d::TileGrid grid;
+    grid.width = std::max(parsed->width, cx + 1);
+    grid.height = std::max(parsed->height, cy + 1);
+    grid.cells.assign(std::size_t{grid.width} * grid.height, -1);
+    for (std::uint32_t r = 0; r < parsed->height; ++r) {
+        for (std::uint32_t c = 0; c < parsed->width; ++c) {
+            grid.cells[(std::size_t{r} * grid.width) + c] = parsed->at(c, r);
+        }
+    }
+    grid.cells[(std::size_t{cy} * grid.width) + cx] = tile;
+    serialize::Json before = d.snapshot();
+    map->tiles = scene2d::format_tiles(grid);
+    d.record("Paint " + d.name_of(tilemap), std::move(before), tilemap, "tilemap/paint");
+    return true;
+}
+
 Guid Document::create_entity(std::string_view name, double x, double y) {
     Impl& d = *impl_;
     serialize::Json before = d.snapshot();

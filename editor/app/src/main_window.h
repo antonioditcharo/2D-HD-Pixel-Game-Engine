@@ -21,6 +21,7 @@ namespace editor {
 
 class Inspector;
 class SceneView;
+class TilePalette;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -44,6 +45,7 @@ public:
     [[nodiscard]] SceneView* scene_view() const noexcept { return view_; }
     [[nodiscard]] QTreeWidget* outliner() const noexcept { return outliner_; }
     [[nodiscard]] Inspector* inspector() const noexcept { return inspector_; }
+    [[nodiscard]] TilePalette* tile_palette() const noexcept { return palette_; }
 
     // The commands, for menus, tool buttons and tests.
     bool save();
@@ -76,6 +78,7 @@ private:
     QTreeView* asset_tree_ = nullptr;
     QFileSystemModel* asset_model_ = nullptr;
     Inspector* inspector_ = nullptr;
+    TilePalette* palette_ = nullptr;
     QAction* save_ = nullptr;
     QAction* undo_ = nullptr;
     QAction* redo_ = nullptr;

@@ -12,9 +12,11 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <cstdlib>
 #include <filesystem>
@@ -24,6 +26,7 @@
 #include "inspector.h"
 #include "main_window.h"
 #include "scene_view.h"
+#include "tile_palette.h"
 
 namespace fs = std::filesystem;
 namespace game = engine::game;
@@ -216,4 +219,68 @@ TEST_CASE("New entities get components from the inspector, and saving and export
     fs::remove_all(out, ignored);
     // Exporting where something already is refuses, saying why, and changes nothing.
     CHECK_FALSE(e.window.export_to(e.sample.path));
+}
+
+TEST_CASE("Painting a tilemap from the palette, a stroke at a time") {
+    Editor e;
+    const Guid ground = e.guid("ground");
+    e.window.select(ground);
+    QApplication::processEvents();
+    editor::TilePalette* palette = e.window.tile_palette();
+    // The sample's tileset has three tiles (grass, path, stone), and the eraser.
+    auto* path = palette->findChild<QToolButton*>(QStringLiteral("tile:1"));
+    REQUIRE(path != nullptr);
+    CHECK(palette->findChild<QToolButton*>(QStringLiteral("tile:2")) != nullptr);
+    CHECK(palette->findChild<QToolButton*>(QStringLiteral("tile:3")) == nullptr);
+    REQUIRE(palette->findChild<QToolButton*>(QStringLiteral("tile:erase")) != nullptr);
+    path->click();
+    editor::SceneView* view = e.window.scene_view();
+    CHECK(view->painting());
+    CHECK(path->isChecked());
+
+    const auto cell = [&](std::uint32_t x, std::uint32_t y) {
+        std::string error;
+        const scene2d::TileGrid* grid =
+            e.window.document()
+                ->world()
+                .get<scene2d::Tilemap>(e.window.document()->world().find(ground))
+                ->grid(error);
+        REQUIRE(grid != nullptr);
+        return grid->at(x, y);
+    };
+    // A stroke from (3.5, 2.5) to (6.5, 2.5) paints a path four tiles long.
+    const QPoint from = view->from_map(3.5, 2.5);
+    const QPoint to = view->from_map(6.5, 2.5);
+    mouse(view, QEvent::MouseButtonPress, from, Qt::LeftButton);
+    for (int i = 1; i <= 12; ++i) {
+        mouse(view, QEvent::MouseMove, from + ((to - from) * i) / 12, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, to, Qt::LeftButton);
+    for (std::uint32_t x = 3; x <= 6; ++x) {
+        CHECK(cell(x, 2) == 1);
+    }
+    CHECK(cell(7, 2) == 0);
+    CHECK(e.window.selection() == ground); // painting does not select
+    // The right button erases, as its own stroke.
+    mouse(view, QEvent::MouseButtonPress, view->from_map(4.5, 2.5), Qt::RightButton);
+    mouse(view, QEvent::MouseButtonRelease, view->from_map(4.5, 2.5), Qt::RightButton);
+    CHECK(cell(4, 2) == -1);
+    e.window.undo(); // the erasing
+    CHECK(cell(4, 2) == 1);
+    e.window.undo(); // the whole first stroke
+    CHECK(cell(3, 2) == 0);
+    CHECK(cell(6, 2) == 0);
+
+    // Escape stops painting; so does selecting something else.
+    path = palette->findChild<QToolButton*>(QStringLiteral("tile:1"));
+    REQUIRE(path != nullptr);
+    path->click();
+    CHECK(view->painting());
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(view, &escape);
+    CHECK_FALSE(view->painting());
+    CHECK_FALSE(path->isChecked());
+    path->click();
+    e.window.select(e.guid("hero"));
+    CHECK_FALSE(view->painting());
 }

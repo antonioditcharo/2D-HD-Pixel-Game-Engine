@@ -201,6 +201,60 @@ TEST_CASE("Entities and components are created, renamed and removed, and come ba
     CHECK_FALSE(d->dirty());
 }
 
+TEST_CASE("Painting tiles: cells change, the map grows, and a stroke is one step") {
+    const Sample sample;
+    const auto d = sample.open();
+    const Guid ground = guid_of(*d, "ground");
+    const auto cell = [&](std::uint32_t x, std::uint32_t y) {
+        std::string error;
+        const scene2d::TileGrid* grid =
+            d->world().get<scene2d::Tilemap>(d->world().find(ground))->grid(error);
+        REQUIRE(grid != nullptr);
+        return grid->at(x, y);
+    };
+    const auto size = [&] {
+        std::string error;
+        const scene2d::TileGrid* grid =
+            d->world().get<scene2d::Tilemap>(d->world().find(ground))->grid(error);
+        REQUIRE(grid != nullptr);
+        return std::pair{grid->width, grid->height};
+    };
+    CHECK(cell(3, 2) == 0); // grass
+    CHECK(size() == std::pair{20U, 12U});
+    // A stroke across three cells, with path (tile 1).
+    REQUIRE(d->paint_tile(ground, 3.5, 2.5, 1));
+    REQUIRE(d->paint_tile(ground, 4.2, 2.9, 1));
+    REQUIRE(d->paint_tile(ground, 5.99, 2.0, 1));
+    CHECK(cell(3, 2) == 1);
+    CHECK(cell(4, 2) == 1);
+    CHECK(cell(5, 2) == 1);
+    CHECK(cell(6, 2) == 0);
+    CHECK(d->undo_label() == "Paint ground");
+    // Beyond the right edge, the map grows; above or left of its corner is refused.
+    REQUIRE(d->paint_tile(ground, 22.5, 0.5, 2));
+    CHECK(size() == std::pair{23U, 12U});
+    CHECK(cell(22, 0) == 2);
+    CHECK(cell(21, 0) == -1); // the new cells between are empty
+    CHECK_FALSE(d->paint_tile(ground, -0.5, 3.0, 1));
+    CHECK_FALSE(d->paint_tile(ground, 3.0, -0.5, 1));
+    CHECK_FALSE(d->paint_tile(guid_of(*d, "hero"), 3.0, 3.0, 1)); // not a tilemap
+    // Erasing.
+    REQUIRE(d->paint_tile(ground, 4.5, 2.5, -1));
+    CHECK(cell(4, 2) == -1);
+    // The whole stroke undoes at once.
+    REQUIRE(d->undo());
+    CHECK(cell(3, 2) == 0);
+    CHECK(cell(5, 2) == 0);
+    CHECK(size() == std::pair{20U, 12U});
+    // A new stroke after end_merge() is its own step.
+    REQUIRE(d->redo());
+    d->end_merge();
+    REQUIRE(d->paint_tile(ground, 7.5, 7.5, 2));
+    REQUIRE(d->undo());
+    CHECK(cell(7, 7) == 0);
+    CHECK(cell(3, 2) == 1);
+}
+
 TEST_CASE("Saving writes the scene; reopening finds the edits") {
     const Sample sample;
     const Guid lamp_guid = [&] {

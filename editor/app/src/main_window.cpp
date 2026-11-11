@@ -26,6 +26,7 @@
 #include "editor/exporter/exporter.h"
 #include "inspector.h"
 #include "scene_view.h"
+#include "tile_palette.h"
 
 namespace editor {
 
@@ -112,6 +113,16 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     addDockWidget(Qt::RightDockWidgetArea, inspector_dock);
     resizeDocks({entities, inspector_dock}, {240, 340}, Qt::Horizontal);
 
+    // Left, below: the tiles of the selected tilemap, to paint with.
+    palette_ = new TilePalette(this);
+    auto* tiles = new QDockWidget(tr("Tiles"), this);
+    tiles->setObjectName(QStringLiteral("tiles_dock"));
+    tiles->setWidget(palette_);
+    addDockWidget(Qt::LeftDockWidgetArea, tiles);
+    connect(palette_, &TilePalette::chosen_changed, this,
+            [this](std::optional<std::int32_t> tile) { view_->set_painting(selection_, tile); });
+    connect(view_, &SceneView::stop_painting, this, [this] { palette_->choose(std::nullopt); });
+
     build_actions();
     connect(advanced, &QCheckBox::toggled, inspector_, &Inspector::set_show_advanced);
     connect(outliner_, &QTreeWidget::itemSelectionChanged, this, [this] {
@@ -194,6 +205,7 @@ void MainWindow::select(engine::Guid entity) {
     selection_ = entity;
     view_->set_selection(entity);
     inspector_->show_entity(document_.get(), entity);
+    palette_->show_tilemap(document_.get(), entity); // also stops painting
     // The list follows, without echoing back.
     const QSignalBlocker quiet(outliner_);
     outliner_->clearSelection();

@@ -66,6 +66,11 @@ public:
                       const engine::reflect::Value& value, std::string& error);
     /// Moves an entity's Position to (x, y). Moves of one entity merge, as a drag does.
     bool move_entity(engine::Guid entity, double x, double y);
+    /// Paints `tile` (-1 erases) into the cell of `tilemap` at map point (x, y). The map
+    /// grows to the right and down to reach it, up to scene2d::max_tilemap_side; cells
+    /// above or left of its corner are refused. A stroke of painting on one map is one
+    /// undo step (end_merge() ends it). Returns false if nothing could be painted there.
+    bool paint_tile(engine::Guid tilemap, double x, double y, std::int32_t tile);
     /// Creates an entity with a Position at (x, y). Returns its GUID.
     engine::Guid create_entity(std::string_view name, double x, double y);
     bool delete_entity(engine::Guid entity);

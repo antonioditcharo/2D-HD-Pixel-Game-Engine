@@ -12,6 +12,7 @@
 #include <QWidget>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include "editor/core/document.h"
 #include "editor/core/preview.h"
@@ -27,6 +28,10 @@ public:
     /// Shows `document`, with the camera on the middle of its map.
     void set_document(Document* document);
     void set_selection(engine::Guid entity);
+    /// Paint mode: the left button paints `tile` into `tilemap`, the right button erases;
+    /// nullopt leaves it.
+    void set_painting(engine::Guid tilemap, std::optional<std::int32_t> tile);
+    [[nodiscard]] bool painting() const noexcept { return paint_tile_.has_value(); }
     /// Draws the scene again (after an edit).
     void refresh();
 
@@ -43,8 +48,10 @@ public:
 
 Q_SIGNALS:
     void selected(engine::Guid entity);
-    /// An entity was dragged to a new place.
+    /// The scene was changed here: an entity dragged, or tiles painted.
     void moved();
+    /// Escape was pressed while painting.
+    void stop_painting();
     void problem(const QString& message);
 
 protected:
@@ -65,7 +72,12 @@ private:
     double camera_x_ = 0.0;
     double camera_y_ = 0.0;
     // A drag in progress.
-    enum class Drag : std::uint8_t { None, Entity, Camera } drag_ = Drag::None;
+    enum class Drag : std::uint8_t { None, Entity, Camera, Paint } drag_ = Drag::None;
+    /// Paints the drag's tile at a widget point.
+    void paint_at(QPoint widget_point);
+    engine::Guid paint_map_;
+    std::optional<std::int32_t> paint_tile_;
+    std::int32_t stroke_tile_ = -1; ///< What this drag paints: the tile, or -1 to erase.
     QPoint drag_from_;
     QPointF entity_from_;
 };
