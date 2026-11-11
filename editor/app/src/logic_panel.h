@@ -5,7 +5,8 @@
 // as fields that change it as you type. Add puts in a step (after the selected one, or
 // first under a selected Rule, Sequence or Brain state), a condition, a Rule on any event,
 // a Sequence, a Brain, a state, a "Go to", or a new logic file; Delete removes any of
-// them; Up and Down move steps.
+// them; Up and Down (or dragging) move steps; Group puts a condition and the next into a
+// group of their own, inside groups to any depth, and Split undoes one.
 // Below, the compiler says whether the file still runs. Every edit is a step of the
 // Document's undo.
 //
@@ -99,6 +100,7 @@ private:
     QPushButton* up_ = nullptr;
     QPushButton* down_ = nullptr;
     QPushButton* not_ = nullptr;
+    QPushButton* group_ = nullptr;
     QCheckBox* any_ = nullptr;
     QLabel* problems_ = nullptr;
 };

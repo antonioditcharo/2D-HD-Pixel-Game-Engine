@@ -186,18 +186,34 @@ public:
                                             std::string& error);
 
     /// True if `block` is a test that toggle_logic_not() can turn around: a condition of a
-    /// Rule or a "Go to", or the test of an If or a Wait until step.
+    /// Rule or a "Go to" (not a group of them), or the test of an If or a Wait until step.
     [[nodiscard]] bool is_logic_test(std::string_view path, engine::logic::BlockId block) const;
     /// Turns a test into its opposite ("not"), or back.
     bool toggle_logic_not(std::string_view path, engine::logic::BlockId block);
-    /// Whether the Rule `rule` runs when any of its conditions holds (true) or only when
-    /// all do (false); nothing if `rule` is not a Rule.
+    /// Whether the Rule or group of conditions `block` holds when any of its conditions
+    /// does (true) or only when all do (false); nothing if `block` is neither.
     [[nodiscard]] std::optional<bool> logic_any(std::string_view path,
-                                                engine::logic::BlockId rule) const;
-    /// Makes the Rule run when any of its conditions holds ("or"; it needs two or more),
-    /// or only when all do. Conditions added later join them.
-    bool set_logic_any(std::string_view path, engine::logic::BlockId rule, bool any,
+                                                engine::logic::BlockId block) const;
+    /// Makes the Rule or group `block` hold when any of its conditions does ("or"; a Rule
+    /// needs two or more), or only when all do. Conditions added to a Rule later join them.
+    bool set_logic_any(std::string_view path, engine::logic::BlockId block, bool any,
                        std::string& error);
+    /// True if `block` is a group of conditions ("any of these" or "all of these").
+    [[nodiscard]] bool is_logic_group(std::string_view path, engine::logic::BlockId block) const;
+    /// True if group_logic_conditions() would group `condition`; if not, `error` says why.
+    [[nodiscard]] bool can_group_logic_condition(std::string_view path,
+                                                 engine::logic::BlockId condition,
+                                                 std::string& error) const;
+    /// Puts `condition` and the condition after it into a group of their own, matched the
+    /// other way from the list they were in: "any of these" among conditions that must all
+    /// hold, "all of these" inside an "any of these". Groups go inside groups to any depth.
+    /// Returns the group's block (invalid, with `error`, if there is no condition after it).
+    engine::logic::BlockId group_logic_conditions(std::string_view path,
+                                                  engine::logic::BlockId condition,
+                                                  std::string& error);
+    /// Splits the group `group`: its conditions take its place in the list it was in.
+    bool ungroup_logic_conditions(std::string_view path, engine::logic::BlockId group,
+                                  std::string& error);
     /// Adds a variable to the logic file: "variable_1" (or the next free), of `kind`
     /// (yes/no, a whole number, a number or text), starting at no, 0 or empty text.
     bool add_logic_variable(std::string_view path, engine::reflect::ValueKind kind,
@@ -211,7 +227,7 @@ public:
     /// Deletes a variable that nothing uses (refused, with `error`, while something does).
     bool remove_logic_variable(std::string_view path, std::string_view name, std::string& error);
     /// Compares `variable` with a value ("talks = 0"; its operator and value are then
-    /// edited in place): as a condition of the Rule or "Go to" `block` is (or is a
+    /// edited in place): as a condition of the Rule, "Go to" or group `block` is (or is a
     /// condition of), or anywhere else as a new If step, placed as add_logic_step() places
     /// steps. A "Set variable" step comes from logic_actions() (object "", set_variable).
     engine::logic::BlockId add_logic_comparison(std::string_view path, engine::logic::BlockId block,
@@ -254,7 +270,8 @@ public:
     engine::logic::BlockId add_logic_rule(std::string_view path, const LogicEvent& event,
                                           std::string& error);
     /// Adds `condition`, its values the defaults, to the Rule or "Go to" `block` is (or
-    /// is a condition of). All of a Rule's conditions must hold.
+    /// is a condition of); into the group when `block` is a group or one of its
+    /// conditions. All of a Rule's conditions must hold unless it matches any of them.
     engine::logic::BlockId add_logic_condition(std::string_view path, engine::logic::BlockId block,
                                                const LogicAction& condition, std::string& error);
     /// Adds a Sequence named "sequence_1" (or the next number free).

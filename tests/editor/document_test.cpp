@@ -932,6 +932,129 @@ TEST_CASE("Logic conditions turned around, matched any of, and Otherwise branche
     CHECK(d->check_logic(file).empty());
 }
 
+TEST_CASE("Logic condition groups go inside groups, flip any/all, and split") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view file = "logic/groups.drules";
+    REQUIRE(d->create_logic_file(file, error));
+    const auto asset = [&]() -> const engine::logic::LogicAsset& {
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        return found->asset;
+    };
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        for (const editor::LogicLine& line : editor::describe(asset(), *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        }
+        return shown;
+    };
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);
+    const editor::LogicAction has_save{"game", "has_save", ""};
+    const engine::logic::BlockId open =
+        d->add_logic_condition(file, rule, editor::LogicAction{"dialogue", "is_open", ""}, error);
+    const engine::logic::BlockId one = d->add_logic_condition(file, rule, has_save, error);
+    const engine::logic::BlockId two = d->add_logic_condition(file, rule, has_save, error);
+    REQUIRE(two.is_valid());
+    REQUIRE(d->set_logic_slot(file, two, 0, reflect::Value{std::int64_t{2}}, error));
+
+    // The last condition has nothing after it to be grouped with.
+    CHECK_FALSE(d->group_logic_conditions(file, two, error).is_valid());
+    CHECK(error == "A condition is grouped with the one after it: there is none.");
+    // Among conditions that must all hold, a group is "any of these".
+    const engine::logic::BlockId outer = d->group_logic_conditions(file, open, error);
+    REQUIRE(outer.is_valid());
+    CHECK(d->undo_label() == "Group two conditions");
+    CHECK(d->logic_any(file, outer) == std::optional<bool>(true));
+    CHECK(d->logic_any(file, rule) == std::optional<bool>(false)); // two conditions on it
+    CHECK_FALSE(d->is_logic_test(file, outer)); // not one test: Not leaves it alone
+    CHECK_FALSE(d->toggle_logic_not(file, outer));
+    // Its two conditions are all of it: grouping them again would say nothing new.
+    CHECK_FALSE(d->group_logic_conditions(file, open, error).is_valid());
+    CHECK(error == "These are all of the group's conditions: match them the other way instead.");
+    // A condition added with the group (or one of its conditions) selected goes into it.
+    const engine::logic::BlockId three = d->add_logic_condition(file, one, has_save, error);
+    REQUIRE(three.is_valid());
+    REQUIRE(d->set_logic_slot(file, three, 0, reflect::Value{std::int64_t{3}}, error));
+    // Inside "any of these", a group is "all of these".
+    const engine::logic::BlockId inner = d->group_logic_conditions(file, one, error);
+    REQUIRE(inner.is_valid());
+    CHECK(d->logic_any(file, inner) == std::optional<bool>(false));
+    const std::vector<std::string> nested{
+        "When the game starts",
+        "  If any of these:",
+        "    a message is open (dialogue)",
+        "    All of these:",
+        "      slot 1 has a save (game)",
+        "      slot 3 has a save (game)",
+        "  If slot 2 has a save (game)",
+    };
+    CHECK(lines() == nested);
+    {
+        const engine::logic::Rule& r = asset().rules.at(0);
+        REQUIRE(r.conditions.size() == 2);
+        CHECK(r.conditions[0].kind == engine::logic::ExprKind::Any);
+        REQUIRE(r.conditions[0].operands.size() == 2);
+        CHECK(r.conditions[0].operands[1].kind == engine::logic::ExprKind::All);
+        CHECK(r.conditions[0].operands[1].operands.size() == 2);
+    }
+    CHECK(d->check_logic(file).empty());
+    // Deep inside, a condition is still turned around and its values still edit.
+    REQUIRE(d->toggle_logic_not(file, three));
+    REQUIRE(d->set_logic_slot(file, three, 0, reflect::Value{std::int64_t{4}}, error));
+    CHECK(lines()[5] == "      not slot 4 has a save (game)");
+    // The inner group matched the other way; and back.
+    REQUIRE(d->set_logic_any(file, inner, true, error));
+    CHECK(lines()[3] == "    Any of these:");
+    CHECK(d->undo_label() == "Match any condition");
+    REQUIRE(d->set_logic_any(file, inner, false, error));
+    CHECK(lines() == std::vector<std::string>{
+                         "When the game starts",
+                         "  If any of these:",
+                         "    a message is open (dialogue)",
+                         "    All of these:",
+                         "      slot 1 has a save (game)",
+                         "      not slot 4 has a save (game)",
+                         "  If slot 2 has a save (game)",
+                     });
+    // Deleting one of the inner two leaves just the other, in the group's place.
+    REQUIRE(d->remove_logic_block(file, three));
+    CHECK(lines()[3] == "    slot 1 has a save (game)");
+    CHECK(d->check_logic(file).empty());
+    REQUIRE(d->undo());
+    // Split: the inner group's conditions take its place; then the outer's.
+    CHECK_FALSE(d->ungroup_logic_conditions(file, one, error));
+    CHECK(error == "Only a group of conditions can be split.");
+    REQUIRE(d->ungroup_logic_conditions(file, inner, error));
+    CHECK(d->undo_label() == "Split a group of conditions");
+    REQUIRE(d->ungroup_logic_conditions(file, outer, error));
+    CHECK(lines() == std::vector<std::string>{
+                         "When the game starts",
+                         "  If a message is open (dialogue)",
+                         "  If slot 1 has a save (game)",
+                         "  If not slot 4 has a save (game)",
+                         "  If slot 2 has a save (game)",
+                     });
+    CHECK(d->check_logic(file).empty());
+    // Undo brings both groups back, as they were.
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    CHECK(lines()[3] == "    All of these:");
+    // A Rule with just one group matches any of its conditions when the group does; the
+    // Rule's own switch flips that group.
+    REQUIRE(d->remove_logic_block(file, two));
+    CHECK(d->logic_any(file, rule) == std::optional<bool>(true));
+    REQUIRE(d->set_logic_any(file, outer, false, error));
+    CHECK(lines()[1] == "  If all of these:");
+    CHECK(d->logic_any(file, rule) == std::optional<bool>(false));
+    REQUIRE(d->set_logic_any(file, rule, true, error));
+    CHECK(lines()[1] == "  If any of these:");
+    CHECK(d->check_logic(file).empty());
+}
+
 TEST_CASE("Logic variables: made, set, compared, renamed where used, and deleted") {
     const Sample sample;
     const auto d = sample.open();

@@ -715,6 +715,92 @@ TEST_CASE("The Logic view turns conditions around, matches any of them, and adds
     CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));
 }
 
+TEST_CASE("The Logic view groups conditions inside groups and splits them") {
+    const Editor e;
+    editor::LogicPanel* panel = e.window.logic_panel();
+    QTreeWidget* tree = e.window.logic_view();
+    auto* add = panel->findChild<QToolButton*>(QStringLiteral("logic_add"));
+    auto* group = panel->findChild<QPushButton*>(QStringLiteral("logic_group"));
+    auto* any = panel->findChild<QCheckBox*>(QStringLiteral("logic_any"));
+    auto* problems = panel->findChild<QLabel*>(QStringLiteral("logic_problems"));
+    REQUIRE(add != nullptr);
+    REQUIRE(group != nullptr);
+    REQUIRE(any != nullptr);
+    REQUIRE(problems != nullptr);
+    const auto choose = [&](const QString& name) {
+        Q_EMIT add->menu()->aboutToShow();
+        auto* entry = add->menu()->findChild<QAction*>(name);
+        REQUIRE(entry != nullptr);
+        entry->trigger();
+        QApplication::processEvents();
+    };
+    const auto item = [&](const QString& text) -> QTreeWidgetItem* {
+        for (QTreeWidgetItemIterator it(tree); *it != nullptr; ++it) {
+            if ((*it)->text(0) == text) {
+                return *it;
+            }
+        }
+        return nullptr;
+    };
+    const QString start = QStringLiteral("When the game starts");
+    choose(QStringLiteral("add_file"));
+    choose(QStringLiteral("rule:/game_start"));
+    CHECK_FALSE(group->isEnabled()); // a Rule is not grouped
+    choose(QStringLiteral("condition:dialogue/is_open"));
+    tree->setCurrentItem(item(start));
+    choose(QStringLiteral("condition:game/has_save"));
+    tree->setCurrentItem(item(start));
+    choose(QStringLiteral("condition:dialogue/is_open"));
+    CHECK_FALSE(group->isEnabled()); // the last condition: none after it
+
+    // The first with the second: "any of these", selected, with Split and its own switch.
+    tree->setCurrentItem(item(start)->child(0));
+    REQUIRE(tree->currentItem()->text(0) == QStringLiteral("If a message is open (dialogue)"));
+    CHECK(group->isEnabled());
+    CHECK(group->text() == QStringLiteral("Group"));
+    group->click();
+    QApplication::processEvents();
+    QTreeWidgetItem* outer = tree->currentItem();
+    REQUIRE(outer != nullptr);
+    CHECK(outer->text(0) == QStringLiteral("If any of these:"));
+    CHECK(outer->childCount() == 2);
+    CHECK(group->text() == QStringLiteral("Split"));
+    CHECK(any->isVisibleTo(panel));
+    CHECK(any->isChecked());
+    CHECK(any->text() == QStringLiteral("Holds when any of its conditions does (not all)"));
+
+    // A condition added with the group selected joins it; two of its three, "all of these".
+    choose(QStringLiteral("condition:game/has_save"));
+    outer = item(QStringLiteral("If any of these:"));
+    REQUIRE(outer != nullptr);
+    REQUIRE(outer->childCount() == 3);
+    tree->setCurrentItem(outer->child(1));
+    group->click();
+    QApplication::processEvents();
+    QTreeWidgetItem* inner = tree->currentItem();
+    REQUIRE(inner != nullptr);
+    CHECK(inner->text(0) == QStringLiteral("All of these:"));
+    CHECK(inner->parent() == item(QStringLiteral("If any of these:")));
+    CHECK(inner->childCount() == 2);
+    CHECK_FALSE(any->isChecked());
+    // Matched the other way, with its switch.
+    any->click();
+    QApplication::processEvents();
+    inner = item(QStringLiteral("Any of these:"));
+    REQUIRE(inner != nullptr);
+    CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));
+    // Split: its two take its place.
+    tree->setCurrentItem(inner);
+    CHECK(group->text() == QStringLiteral("Split"));
+    group->click();
+    QApplication::processEvents();
+    CHECK(item(QStringLiteral("Any of these:")) == nullptr);
+    CHECK(item(QStringLiteral("If any of these:"))->childCount() == 3);
+    REQUIRE(tree->currentItem() != nullptr); // the first of its conditions, where it was
+    CHECK(tree->currentItem() == item(QStringLiteral("If any of these:"))->child(1));
+    CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));
+}
+
 TEST_CASE("The Logic view makes variables, compares them and sets them") {
     const Editor e;
     editor::LogicPanel* panel = e.window.logic_panel();

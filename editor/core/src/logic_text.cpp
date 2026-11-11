@@ -153,6 +153,33 @@ public:
         lines_.push_back(LogicLine{depth, std::move(text), block, otherwise});
     }
 
+    /// True for a group of conditions made in the editor: it and each of its conditions
+    /// have their own block, so each gets its own line.
+    static bool grouped(const Expr& e) {
+        return (e.kind == ExprKind::Any || e.kind == ExprKind::All) && e.id.is_valid() &&
+               !e.operands.empty() &&
+               std::all_of(e.operands.begin(), e.operands.end(),
+                           [](const Expr& each) { return each.id.is_valid(); });
+    }
+
+    /// A condition of a Rule at `depth`: "If …", or a group's line and its conditions'
+    /// lines below it, groups inside groups included. A condition without a block of its
+    /// own shows as `fallback` (the Rule's).
+    void condition(const Expr& e, int depth, logic::BlockId fallback, bool top) {
+        if (!grouped(e)) {
+            line(depth, (top ? "If " : "") + expr(e), e.id.is_valid() ? e.id : fallback);
+            return;
+        }
+        const bool any = e.kind == ExprKind::Any;
+        line(depth,
+             top ? (any ? "If any of these:" : "If all of these:")
+                 : (any ? "Any of these:" : "All of these:"),
+             e.id);
+        for (const Expr& each : e.operands) {
+            condition(each, depth + 1, fallback, false);
+        }
+    }
+
     void steps(const std::vector<Stmt>& list, int depth) {
         for (const Stmt& s : list) {
             step(s, depth);
@@ -252,22 +279,7 @@ std::vector<LogicLine> describe(const logic::LogicAsset& asset, const Document& 
     for (const logic::Rule& rule : asset.rules) {
         w.line(0, w.event_text(rule.object, rule.event), rule.id);
         for (const Expr& condition : rule.conditions) {
-            // A group of conditions made in the editor (each with its own block): a line
-            // for the group, and one for each, so each can be selected.
-            const bool grouped =
-                (condition.kind == ExprKind::Any || condition.kind == ExprKind::All) &&
-                condition.id.is_valid() && !condition.operands.empty() &&
-                std::all_of(condition.operands.begin(), condition.operands.end(),
-                            [](const Expr& e) { return e.id.is_valid(); });
-            if (grouped) {
-                w.line(1, condition.kind == ExprKind::Any ? "If any of these:" : "If all of these:",
-                       condition.id);
-                for (const Expr& each : condition.operands) {
-                    w.line(2, w.expr(each), each.id);
-                }
-                continue;
-            }
-            w.line(1, "If " + w.expr(condition), condition.id.is_valid() ? condition.id : rule.id);
+            w.condition(condition, 1, rule.id, true);
         }
         w.steps(rule.actions, 1);
         if (!rule.otherwise.empty()) {

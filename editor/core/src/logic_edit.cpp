@@ -463,29 +463,45 @@ struct Header {
     }
 };
 
-bool find_condition(std::vector<logic::Expr>& conditions, BlockId id, Header& h) {
+/// True for an "any of these" or "all of these" group of conditions.
+bool is_group(const logic::Expr& e) noexcept {
+    return e.kind == logic::ExprKind::Any || e.kind == logic::ExprKind::All;
+}
+
+/// Finds the condition `id` in `conditions`, or inside the groups among them, at any depth.
+/// `group` is the group that holds `conditions` (null for a Rule's or a "Go to"'s own list).
+bool find_condition(std::vector<logic::Expr>& conditions, BlockId id, Header& h,
+                    logic::Expr* group = nullptr) {
     for (std::size_t i = 0; i < conditions.size(); ++i) {
         logic::Expr& c = conditions[i];
         if (c.id == id) {
             h.condition = &c;
             h.conditions = &conditions;
+            h.group = group;
             h.index = i;
             return true;
         }
-        // Inside a group of conditions: one level down.
-        if (c.kind == logic::ExprKind::Any || c.kind == logic::ExprKind::All) {
-            for (std::size_t j = 0; j < c.operands.size(); ++j) {
-                if (c.operands[j].id == id) {
-                    h.condition = &c.operands[j];
-                    h.conditions = &c.operands;
-                    h.group = &c;
-                    h.index = j;
-                    return true;
-                }
-            }
+        if (is_group(c) && find_condition(c.operands, id, h, &c)) {
+            return true;
         }
     }
     return false;
+}
+
+/// Where a condition added at `h` goes: into the selected group, beside the selected
+/// condition, or on the selected Rule or "Go to" (into its one "any of these" group when
+/// it matches any). Null when `h` holds no conditions.
+std::vector<logic::Expr>* conditions_at(const Header& h) {
+    if (h.condition != nullptr) {
+        return is_group(*h.condition) ? &h.condition->operands : h.conditions;
+    }
+    std::vector<logic::Expr>* list = h.transition != nullptr ? &h.transition->conditions
+                                     : h.rule != nullptr     ? &h.rule->conditions
+                                                             : nullptr;
+    if (list != nullptr && list->size() == 1 && list->front().kind == logic::ExprKind::Any) {
+        list = &list->front().operands;
+    }
+    return list;
 }
 
 /// The test inside a condition: itself, or what its "not" turns around.
@@ -1454,15 +1470,9 @@ BlockId Document::add_logic_comparison(std::string_view path, BlockId block,
                             : logic::ir::event_value(found->member);
     logic::Expr test = logic::ir::compare(logic::CompareOp::Equal, std::move(value),
                                           logic::ir::literal(zero_of(found->value)));
-    // On a Rule or a "Go to" (or one of their conditions): a condition of it.
+    // On a Rule or a "Go to" (or one of their conditions or groups): a condition of it.
     const Header h = find_header(file->asset, block);
-    std::vector<logic::Expr>* list = h.transition != nullptr ? &h.transition->conditions
-                                     : h.rule != nullptr     ? &h.rule->conditions
-                                                             : nullptr;
-    if (list != nullptr && list->size() == 1 && list->front().kind == logic::ExprKind::Any) {
-        list = &list->front().operands;
-    }
-    if (list != nullptr) {
+    if (std::vector<logic::Expr>* list = conditions_at(h); list != nullptr) {
         engine::serialize::Json before = d.snapshot();
         test.id = id;
         list->push_back(std::move(test));
@@ -1690,7 +1700,9 @@ bool Document::is_logic_test(std::string_view path, BlockId block) const {
         const Stmt& s = (*place.list)[place.index];
         return (s.kind == StmtKind::If || s.kind == StmtKind::WaitUntil) && !s.arguments.empty();
     }
-    return find_header(file->asset, block).condition != nullptr;
+    // A group is not one test: it matches any or all of its conditions instead.
+    const Header h = find_header(file->asset, block);
+    return h.condition != nullptr && !is_group(*h.condition);
 }
 
 bool Document::toggle_logic_not(std::string_view path, BlockId block) {
@@ -1709,33 +1721,52 @@ bool Document::toggle_logic_not(std::string_view path, BlockId block) {
     return true;
 }
 
-std::optional<bool> Document::logic_any(std::string_view path, BlockId rule) const {
+std::optional<bool> Document::logic_any(std::string_view path, BlockId block) const {
     LogicFile* file = impl_->logic_file(path);
-    const Header h = file != nullptr ? find_header(file->asset, rule) : Header{};
-    if (h.rule == nullptr || h.condition != nullptr) {
+    const Header h = file != nullptr ? find_header(file->asset, block) : Header{};
+    if (h.condition != nullptr) {
+        if (!is_group(*h.condition)) {
+            return std::nullopt;
+        }
+        return h.condition->kind == logic::ExprKind::Any;
+    }
+    if (h.rule == nullptr) {
         return std::nullopt;
     }
     return h.rule->conditions.size() == 1 &&
            h.rule->conditions.front().kind == logic::ExprKind::Any;
 }
 
-bool Document::set_logic_any(std::string_view path, BlockId rule, bool any, std::string& error) {
+bool Document::set_logic_any(std::string_view path, BlockId block, bool any, std::string& error) {
     Impl& d = *impl_;
-    const std::optional<bool> now = logic_any(path, rule);
+    const std::optional<bool> now = logic_any(path, block);
     if (!now) {
-        error = "Only a Rule has conditions to match.";
+        error = "Only a Rule or a group has conditions to match.";
         return false;
     }
     if (*now == any) {
         return true;
     }
     LogicFile* file = d.logic_file(path);
-    std::vector<logic::Expr>& conditions = find_header(file->asset, rule).rule->conditions;
+    const Header h = find_header(file->asset, block);
+    engine::serialize::Json before = d.snapshot();
+    if (h.condition != nullptr) {
+        // A group: the same conditions, matched the other way.
+        h.condition->kind = any ? logic::ExprKind::Any : logic::ExprKind::All;
+        d.record(any ? "Match any condition" : "Match all conditions", std::move(before));
+        return true;
+    }
+    std::vector<logic::Expr>& conditions = h.rule->conditions;
+    if (any && conditions.size() == 1 && conditions.front().kind == logic::ExprKind::All) {
+        // One "all of these" group: it becomes the "any of these".
+        conditions.front().kind = logic::ExprKind::Any;
+        d.record("Match any condition", std::move(before));
+        return true;
+    }
     if (any && conditions.size() < 2) {
         error = "A Rule needs two conditions or more to match any of them.";
         return false;
     }
-    engine::serialize::Json before = d.snapshot();
     if (any) {
         // Its id first, while the conditions' ids are still in the asset to be seen.
         const BlockId id = next_id(file->asset);
@@ -1747,6 +1778,68 @@ bool Document::set_logic_any(std::string_view path, BlockId rule, bool any, std:
         conditions = std::move(each);
     }
     d.record(any ? "Match any condition" : "Match all conditions", std::move(before));
+    return true;
+}
+
+bool Document::is_logic_group(std::string_view path, BlockId block) const {
+    LogicFile* file = impl_->logic_file(path);
+    const Header h = file != nullptr ? find_header(file->asset, block) : Header{};
+    return h.condition != nullptr && is_group(*h.condition);
+}
+
+bool Document::can_group_logic_condition(std::string_view path, BlockId condition,
+                                         std::string& error) const {
+    LogicFile* file = impl_->logic_file(path);
+    const Header h = file != nullptr ? find_header(file->asset, condition) : Header{};
+    if (h.condition == nullptr || h.index + 1 >= h.conditions->size()) {
+        error = "A condition is grouped with the one after it: there is none.";
+        return false;
+    }
+    if (h.group != nullptr && h.conditions->size() == 2) {
+        error = "These are all of the group's conditions: match them the other way instead.";
+        return false;
+    }
+    return true;
+}
+
+BlockId Document::group_logic_conditions(std::string_view path, BlockId condition,
+                                         std::string& error) {
+    if (!can_group_logic_condition(path, condition, error)) {
+        return BlockId{};
+    }
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const Header h = find_header(file->asset, condition);
+    // The other way from the list it is in: "or" inside "and", "and" inside "or".
+    const bool inside_any = h.group != nullptr && h.group->kind == logic::ExprKind::Any;
+    const BlockId id = next_id(file->asset);
+    engine::serialize::Json before = d.snapshot();
+    const auto at = h.conditions->begin() + static_cast<std::ptrdiff_t>(h.index);
+    std::vector<logic::Expr> pair{std::move(*at), std::move(*(at + 1))};
+    logic::Expr group =
+        inside_any ? logic::ir::all(std::move(pair)) : logic::ir::any(std::move(pair));
+    group.id = id;
+    *at = std::move(group);
+    h.conditions->erase(at + 1);
+    d.record("Group two conditions", std::move(before));
+    return id;
+}
+
+bool Document::ungroup_logic_conditions(std::string_view path, BlockId group, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const Header h = file != nullptr ? find_header(file->asset, group) : Header{};
+    if (h.condition == nullptr || !is_group(*h.condition)) {
+        error = "Only a group of conditions can be split.";
+        return false;
+    }
+    engine::serialize::Json before = d.snapshot();
+    // Its conditions take its place, in order.
+    std::vector<logic::Expr> each = std::move(h.condition->operands);
+    const auto at = h.conditions->begin() + static_cast<std::ptrdiff_t>(h.index);
+    h.conditions->insert(h.conditions->erase(at), std::make_move_iterator(each.begin()),
+                         std::make_move_iterator(each.end()));
+    d.record("Split a group of conditions", std::move(before));
     return true;
 }
 
@@ -1804,13 +1897,7 @@ BlockId Document::add_logic_condition(std::string_view path, BlockId block,
     Impl& d = *impl_;
     LogicFile* file = d.logic_file(path);
     const Header h = file != nullptr ? find_header(file->asset, block) : Header{};
-    std::vector<logic::Expr>* list = h.transition != nullptr ? &h.transition->conditions
-                                     : h.rule != nullptr     ? &h.rule->conditions
-                                                             : nullptr;
-    // A Rule matching any of its conditions keeps them in one group: add to it.
-    if (list != nullptr && list->size() == 1 && list->front().kind == logic::ExprKind::Any) {
-        list = &list->front().operands;
-    }
+    std::vector<logic::Expr>* list = conditions_at(h);
     if (list == nullptr) {
         error = "Conditions go on a Rule or a “Go to”.";
         return BlockId{};

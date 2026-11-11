@@ -128,7 +128,7 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
     add_->setObjectName(QStringLiteral("logic_add"));
     add_->setText(tr("Add"));
     add_->setToolTip(tr("Add a step (after the selected one, or first under the selected "
-                        "Rule, Sequence or state), a condition to the selected Rule or "
+                        "Rule, Sequence or state), a condition to the selected Rule, group or "
                         "\u201cGo to\u201d, a Rule, a Sequence, a Brain, a state, a "
                         "\u201cGo to\u201d, or a new logic file."));
     add_->setPopupMode(QToolButton::InstantPopup);
@@ -142,9 +142,11 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
     not_ = new QPushButton(tr("Not"), this);
     not_->setObjectName(QStringLiteral("logic_not"));
     not_->setToolTip(tr("Turn the selected condition into its opposite, or back."));
-    for (QWidget* button :
-         {static_cast<QWidget*>(add_), static_cast<QWidget*>(delete_), static_cast<QWidget*>(up_),
-          static_cast<QWidget*>(down_), static_cast<QWidget*>(not_)}) {
+    group_ = new QPushButton(tr("Group"), this);
+    group_->setObjectName(QStringLiteral("logic_group"));
+    for (QWidget* button : {static_cast<QWidget*>(add_), static_cast<QWidget*>(delete_),
+                            static_cast<QWidget*>(up_), static_cast<QWidget*>(down_),
+                            static_cast<QWidget*>(not_), static_cast<QWidget*>(group_)}) {
         buttons->addWidget(button);
     }
     buttons->addStretch(1);
@@ -190,6 +192,31 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
             rebuild();
             Q_EMIT edited();
         }
+    });
+    connect(group_, &QPushButton::clicked, this, [this] {
+        const auto [path, block] = current();
+        if (document_ == nullptr) {
+            return;
+        }
+        std::string error;
+        if (document_->is_logic_group(path, block)) {
+            // Its first condition stays selected where the group was.
+            const QList<QTreeWidgetItem*> chosen = tree_->selectedItems();
+            const BlockId first = !chosen.isEmpty() && chosen.front()->childCount() > 0
+                                      ? block_of(chosen.front()->child(0))
+                                      : BlockId{};
+            if (!document_->ungroup_logic_conditions(path, block, error)) {
+                Q_EMIT refused(text_of(error));
+                return;
+            }
+            rebuild();
+            if (first.is_valid()) {
+                select(path, first);
+            }
+            Q_EMIT edited();
+            return;
+        }
+        added(path, document_->group_logic_conditions(path, block, error), error);
     });
     connect(any_, &QCheckBox::clicked, this, [this](bool on) {
         const auto [path, block] = current();
@@ -639,8 +666,20 @@ void LogicPanel::update_buttons() {
     up_->setEnabled(step);
     down_->setEnabled(step);
     not_->setEnabled(open && document_->is_logic_test(path, block));
+    // Group: the selected condition with the one after it; or split the selected group.
+    const bool group = open && document_->is_logic_group(path, block);
+    std::string why;
+    group_->setText(group ? tr("Split") : tr("Group"));
+    group_->setToolTip(group ? tr("Split the selected group: its conditions take its place.")
+                             : tr("Group the selected condition with the one after it: "
+                                  "\u201cany of these\u201d among conditions that must all "
+                                  "hold, \u201call of these\u201d inside \u201cany of "
+                                  "these\u201d."));
+    group_->setEnabled(group || (open && document_->can_group_logic_condition(path, block, why)));
     const std::optional<bool> any = open ? document_->logic_any(path, block) : std::nullopt;
     any_->setVisible(any.has_value());
+    any_->setText(group ? tr("Holds when any of its conditions does (not all)")
+                        : tr("Run when any of its conditions holds (not all)"));
     {
         const QSignalBlocker quiet(any_);
         any_->setChecked(any.value_or(false));
