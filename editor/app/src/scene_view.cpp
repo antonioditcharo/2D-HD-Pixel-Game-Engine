@@ -51,12 +51,52 @@ void SceneView::set_painting(engine::Guid tilemap, std::optional<std::int32_t> t
     setCursor(tile ? Qt::CrossCursor : Qt::ArrowCursor);
 }
 
+bool SceneView::diorama() const {
+    return document_ != nullptr &&
+           document_->settings().style == engine::game::RenderStyle::Diorama;
+}
+
+std::array<double, 2> SceneView::ndc(QPoint widget_point) const {
+    if (image_.isNull()) {
+        return {0.0, 0.0};
+    }
+    const double s = scale();
+    const QPoint o = origin();
+    const double ix = (widget_point.x() - o.x() + 0.5) / s;
+    const double iy = (widget_point.y() - o.y() + 0.5) / s;
+    return {((ix / image_.width()) * 2.0) - 1.0, 1.0 - ((iy / image_.height()) * 2.0)};
+}
+
+QPoint SceneView::from_ndc(double ndc_x, double ndc_y) const {
+    const double s = scale();
+    const QPoint o = origin();
+    return {o.x() + static_cast<int>(std::lround((ndc_x + 1.0) / 2.0 * image_.width() * s)),
+            o.y() + static_cast<int>(std::lround((1.0 - ndc_y) / 2.0 * image_.height() * s))};
+}
+
+std::optional<QPointF> SceneView::map_point(QPoint widget_point) const {
+    if (document_ == nullptr || image_.isNull()) {
+        return std::nullopt;
+    }
+    if (!diorama()) {
+        return to_map(widget_point);
+    }
+    const std::array<double, 2> at = ndc(widget_point);
+    const auto hit = scene2d::ground_hit(scene2d::diorama_ray(
+        diorama_camera(document_->settings(), camera_x_, camera_y_),
+        static_cast<float>(image_.width()) / static_cast<float>(image_.height()), at[0], at[1]));
+    if (!hit) {
+        return std::nullopt;
+    }
+    return QPointF((*hit)[0], (*hit)[1]);
+}
+
 void SceneView::paint_at(QPoint widget_point) {
     if (document_ == nullptr) {
         return;
     }
-    const QPointF at = to_map(widget_point);
-    if (document_->paint_tile(paint_map_, at.x(), at.y(), stroke_tile_)) {
+    const std::optional<QPointF> at = map_point(widget_point);
+    if (at && document_->paint_tile(paint_map_, at->x(), at->y(), stroke_tile_)) {
         Q_EMIT moved();
         refresh();
     }
@@ -138,9 +178,21 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
     const int s = scale();
     const QPoint o = origin();
     painter.drawImage(QRect(o, image_.size() * s), image_);
-    // The selection's outline, in Classic 2D where the picture is where the map says.
-    if (document_ != nullptr &&
-        document_->settings().style == engine::game::RenderStyle::Classic2D) {
+    // The selection's outline: in 3D, around the billboard as the camera sees it.
+    if (diorama()) {
+        const engine::world::Entity e = document_->world().find(selection_);
+        if (const auto rect =
+                e.is_valid()
+                    ? diorama_sprite_rect(
+                          document_->world(), document_->assets(), e,
+                          diorama_camera(document_->settings(), camera_x_, camera_y_),
+                          static_cast<float>(image_.width()) / static_cast<float>(image_.height()))
+                    : std::nullopt) {
+            painter.setPen(QPen(QColor(255, 220, 60), 2));
+            painter.drawRect(
+                QRect(from_ndc((*rect)[0], (*rect)[3]), from_ndc((*rect)[2], (*rect)[1])));
+        }
+    } else if (document_ != nullptr) {
         const engine::world::Entity e = document_->world().find(selection_);
         if (e.is_valid()) {
             if (const auto box = sprite_bounds(document_->world(), document_->assets(), e,
@@ -157,7 +209,6 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
     setFocus();
     drag_from_ = event->position().toPoint();
     if (paint_tile_ && document_ != nullptr &&
-        document_->settings().style == engine::game::RenderStyle::Classic2D &&
         (event->button() == Qt::LeftButton || event->button() == Qt::RightButton)) {
         drag_ = Drag::Paint;
         stroke_tile_ = event->button() == Qt::LeftButton ? *paint_tile_ : -1;
@@ -165,20 +216,32 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
         paint_at(drag_from_);
         return;
     }
-    if (event->button() == Qt::LeftButton && document_ != nullptr &&
-        document_->settings().style == engine::game::RenderStyle::Classic2D) {
-        const QPointF at = to_map(drag_from_);
-        const engine::world::Entity e = pick(document_->world(), document_->assets(), at.x(),
-                                             at.y(), document_->settings().ppu);
+    if (event->button() == Qt::LeftButton && document_ != nullptr && !image_.isNull()) {
+        engine::world::Entity e;
+        if (diorama()) {
+            const std::array<double, 2> at = ndc(drag_from_);
+            e = pick_diorama(document_->world(), document_->assets(),
+                             diorama_camera(document_->settings(), camera_x_, camera_y_),
+                             static_cast<float>(image_.width()) /
+                                 static_cast<float>(image_.height()),
+                             at[0], at[1]);
+        } else {
+            const QPointF at = to_map(drag_from_);
+            e = pick(document_->world(), document_->assets(), at.x(), at.y(),
+                     document_->settings().ppu);
+        }
         const engine::Guid guid = e.is_valid() ? document_->world().guid(e) : engine::Guid{};
         selection_ = guid;
         Q_EMIT selected(guid);
         // Characters and props are dragged; maps stay where they are.
         const auto* transform =
             e.is_valid() ? document_->world().get<scene2d::Transform2D>(e) : nullptr;
-        if (transform != nullptr && document_->world().get<scene2d::Sprite>(e) != nullptr) {
+        const std::optional<QPointF> ground = map_point(drag_from_);
+        if (transform != nullptr && document_->world().get<scene2d::Sprite>(e) != nullptr &&
+            ground) {
             drag_ = Drag::Entity;
             entity_from_ = QPointF(transform->x, transform->y);
+            ground_from_ = *ground;
             document_->end_merge();
         }
         update();
@@ -199,9 +262,15 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
     if (drag_ == Drag::Entity) {
-        // To whole pixels of the picture, as the game draws it.
-        const double x = std::round((entity_from_.x() + delta.x() * per_pixel) * ppu) / ppu;
-        const double y = std::round((entity_from_.y() + delta.y() * per_pixel) * ppu) / ppu;
+        // By as much as the map point under the cursor moved (on the ground, in 3D), to
+        // whole pixels of the picture, as the game draws it.
+        const std::optional<QPointF> ground = map_point(event->position().toPoint());
+        if (!ground) {
+            return;
+        }
+        const QPointF moved_by = *ground - ground_from_;
+        const double x = std::round((entity_from_.x() + moved_by.x()) * ppu) / ppu;
+        const double y = std::round((entity_from_.y() + moved_by.y()) * ppu) / ppu;
         if (document_->move_entity(selection_, x, y)) {
             Q_EMIT moved();
             refresh();

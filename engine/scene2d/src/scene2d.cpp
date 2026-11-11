@@ -823,6 +823,45 @@ Box diorama_view_extent(const DioramaCamera& camera, double aspect) noexcept {
     return Box{-half_width, -(far - behind), half_width, behind - near};
 }
 
+Ray diorama_ray(const DioramaCamera& camera, float aspect, double ndc_x, double ndc_y) noexcept {
+    const Orbit o = orbit(camera);
+    // The same clamps as diorama_view_projection().
+    const double half_fov =
+        std::clamp(std::isfinite(camera.fov) ? camera.fov : 30.0, 1.0, 120.0) * pi / 360.0;
+    const double a = aspect > 0.0F && std::isfinite(aspect) ? aspect : 1.0;
+    const double fx = static_cast<double>(o.target.x) - o.eye.x;
+    const double fy = static_cast<double>(o.target.y) - o.eye.y;
+    const double fz = static_cast<double>(o.target.z) - o.eye.z;
+    const double fl = std::sqrt((fx * fx) + (fy * fy) + (fz * fz));
+    const std::array<double, 3> forward{fx / fl, fy / fl, fz / fl};
+    const std::array<double, 3> right{o.right.x, o.right.y, o.right.z};
+    // up = right x forward, so it points up the screen.
+    const std::array<double, 3> up{(right[1] * forward[2]) - (right[2] * forward[1]),
+                                   (right[2] * forward[0]) - (right[0] * forward[2]),
+                                   (right[0] * forward[1]) - (right[1] * forward[0])};
+    const double t = std::tan(half_fov);
+    std::array<double, 3> d{};
+    for (std::size_t i = 0; i < 3; ++i) {
+        d.at(i) = forward.at(i) + (right.at(i) * ndc_x * t * a) + (up.at(i) * ndc_y * t);
+    }
+    const double dl = std::sqrt((d[0] * d[0]) + (d[1] * d[1]) + (d[2] * d[2]));
+    return Ray{o.eye, render::Vec3{static_cast<float>(d[0] / dl), static_cast<float>(d[1] / dl),
+                                   static_cast<float>(d[2] / dl)}};
+}
+
+std::optional<std::array<double, 2>> ground_hit(const Ray& ray, double height) noexcept {
+    const double dy = ray.direction.y;
+    if (!(std::abs(dy) > 1e-9) || !std::isfinite(height)) {
+        return std::nullopt;
+    }
+    const double t = (height - ray.origin.y) / dy;
+    if (!(t > 0.0)) {
+        return std::nullopt; // behind the eye
+    }
+    return std::array<double, 2>{ray.origin.x + (ray.direction.x * t),
+                                 ray.origin.z + (ray.direction.z * t)};
+}
+
 render::Mat4 diorama_view_projection(const DioramaCamera& camera, float aspect, render::Vec3* eye) {
     const Orbit o = orbit(camera);
     if (eye != nullptr) {

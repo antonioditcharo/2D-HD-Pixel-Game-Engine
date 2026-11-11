@@ -19,6 +19,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 
@@ -294,4 +295,76 @@ TEST_CASE("Painting a tilemap from the palette, a stroke at a time") {
     path->click();
     e.window.select(e.guid("hero"));
     CHECK_FALSE(view->painting());
+}
+
+TEST_CASE("In the Diorama style: click through the camera, drag along the ground, paint") {
+    const Sample sample;
+    {
+        // The sample, switched to the Diorama style.
+        std::vector<engine::serialize::Issue> issues;
+        game::ProjectSettings settings =
+            game::read_project(sample.path, issues).value_or(game::ProjectSettings{});
+        settings.style = game::RenderStyle::Diorama;
+        std::ofstream(sample.path / game::project_file, std::ios::binary)
+            << engine::serialize::to_text(game::project_to_json(settings));
+    }
+    editor::MainWindow window(SPARXEL_PLAYER);
+    window.resize(1400, 900);
+    window.show();
+    REQUIRE(window.open_project(sample.path));
+    QApplication::processEvents();
+    editor::Document* d = window.document();
+    editor::SceneView* view = window.scene_view();
+    const float aspect =
+        static_cast<float>(view->image().width()) / static_cast<float>(view->image().height());
+    const scene2d::DioramaCamera camera =
+        editor::diorama_camera(d->settings(), view->camera_x(), view->camera_y());
+    // Where a map point on the ground shows in the view.
+    const auto on_screen = [&](double x, double y) {
+        const auto clip = scene2d::diorama_view_projection(camera, aspect)
+                              .transform(engine::render::Vec3{static_cast<float>(x), 0.0F,
+                                                              static_cast<float>(y)});
+        return view->from_ndc(clip[0] / clip[3], clip[1] / clip[3]);
+    };
+    const engine::world::Entity hero = d->world().find_named("hero").at(0);
+    const Guid hero_guid = d->world().guid(hero);
+    const auto rect = editor::diorama_sprite_rect(d->world(), d->assets(), hero, camera, aspect)
+                          .value_or(std::array<double, 4>{});
+    const QPoint middle = view->from_ndc((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0);
+    mouse(view, QEvent::MouseButtonPress, middle, Qt::LeftButton);
+    CHECK(window.selection() == hero_guid);
+    mouse(view, QEvent::MouseButtonRelease, middle, Qt::LeftButton);
+    // Dragging by the feet (just above them, on the billboard): the ground under the cursor
+    // goes where the cursor goes, from (10, 9) to (12, 7), 2 tiles east and 2 north.
+    const QPoint up(0, -2);
+    const QPoint feet = on_screen(10.0, 9.0) + up;
+    const QPoint to = on_screen(12.0, 7.0) + up;
+    mouse(view, QEvent::MouseButtonPress, feet, Qt::LeftButton);
+    CHECK(window.selection() == hero_guid);
+    mouse(view, QEvent::MouseMove, (feet + to) / 2, Qt::LeftButton);
+    mouse(view, QEvent::MouseMove, to, Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, to, Qt::LeftButton);
+    const auto* t = d->world().get<scene2d::Transform2D>(d->world().find(hero_guid));
+    CHECK(std::abs(t->x - 12.0) < 0.07); // to the nearest picture pixel (1/16 tile)
+    CHECK(std::abs(t->y - 7.0) < 0.07);
+    CHECK(d->undo_label() == "Move hero");
+    window.undo();
+    t = d->world().get<scene2d::Transform2D>(d->world().find(hero_guid));
+    CHECK(t->x == 10.0);
+    CHECK(t->y == 9.0);
+
+    // Painting a tile on the ground through the camera.
+    window.select(d->world().guid(d->world().find_named("ground").at(0)));
+    auto* path = window.tile_palette()->findChild<QToolButton*>(QStringLiteral("tile:1"));
+    REQUIRE(path != nullptr);
+    path->click();
+    const QPoint cell = on_screen(5.5, 6.5);
+    mouse(view, QEvent::MouseButtonPress, cell, Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, cell, Qt::LeftButton);
+    std::string error;
+    const scene2d::TileGrid* grid =
+        d->world().get<scene2d::Tilemap>(d->world().find_named("ground").at(0))->grid(error);
+    REQUIRE(grid != nullptr);
+    CHECK(grid->at(5, 6) == 1);
+    CHECK(grid->at(4, 6) == 0);
 }

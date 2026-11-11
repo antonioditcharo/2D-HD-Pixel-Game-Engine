@@ -277,6 +277,23 @@ struct DioramaLight {
 [[nodiscard]] render::Mat4 diorama_view_projection(const DioramaCamera& camera, float aspect,
                                                    render::Vec3* eye = nullptr);
 
+/// A ray from the eye through a point of a Diorama camera's image.
+struct Ray {
+    render::Vec3 origin;
+    render::Vec3 direction; ///< Of length 1.
+};
+
+/// The ray from `camera`'s eye through the point (`ndc_x`, `ndc_y`) of its image, where
+/// x runs from -1 (left) to 1 (right) and y from -1 (bottom) to 1 (top), for a target of
+/// `aspect`: what is under the cursor, for picking and dragging in the editor.
+[[nodiscard]] Ray diorama_ray(const DioramaCamera& camera, float aspect, double ndc_x,
+                              double ndc_y) noexcept;
+
+/// Where `ray` meets the ground plane at `height` tiles up, as a map point (x, y); nothing
+/// if it runs parallel to it or away from it.
+[[nodiscard]] std::optional<std::array<double, 2>> ground_hit(const Ray& ray,
+                                                              double height = 0.0) noexcept;
+
 /// The ground a Diorama camera shows around the point it looks at, relative to that point,
 /// in tiles, for a target of `aspect` (width / height). The top and bottom are where the
 /// screen's top and bottom edges meet the ground, so perspective shows more ground above

@@ -934,3 +934,40 @@ TEST_CASE("Sprites cast a soft shadow on the tile they stand on") {
     static_cast<void>(draw(0.6F));
     CHECK(renderer->last_stats().shadows == 0);
 }
+
+TEST_CASE("Diorama rays go through the image to the ground") {
+    scene2d::DioramaCamera camera;
+    camera.x = 4.0;
+    camera.y = 6.0;
+    camera.pitch = 40.0;
+    camera.distance = 10.0;
+    camera.fov = 30.0;
+    const float aspect = 16.0F / 9.0F;
+    // Through the middle of the image: the point looked at.
+    const std::optional<std::array<double, 2>> centre =
+        scene2d::ground_hit(scene2d::diorama_ray(camera, aspect, 0.0, 0.0));
+    REQUIRE(centre.has_value());
+    CHECK(centre.value_or(std::array<double, 2>{})[0] == doctest::Approx(4.0).epsilon(1e-5));
+    CHECK(centre.value_or(std::array<double, 2>{})[1] == doctest::Approx(6.0).epsilon(1e-5));
+    // Anywhere on the image: the ground point hit projects back to the same image point.
+    const render::Mat4 vp = scene2d::diorama_view_projection(camera, aspect);
+    for (const double nx : {-0.9, -0.3, 0.0, 0.5, 0.95}) {
+        for (const double ny : {-0.9, -0.2, 0.4, 0.8}) {
+            CAPTURE(nx);
+            CAPTURE(ny);
+            const auto hit = scene2d::ground_hit(scene2d::diorama_ray(camera, aspect, nx, ny));
+            REQUIRE(hit.has_value());
+            const auto p = hit.value_or(std::array<double, 2>{});
+            const auto clip = vp.transform(
+                render::Vec3{static_cast<float>(p[0]), 0.0F, static_cast<float>(p[1])});
+            CHECK(clip[0] / clip[3] == doctest::Approx(nx).epsilon(1e-4));
+            CHECK(clip[1] / clip[3] == doctest::Approx(ny).epsilon(1e-4));
+        }
+    }
+    // Lower on the screen is nearer the camera, south of the point.
+    const auto near = scene2d::ground_hit(scene2d::diorama_ray(camera, aspect, 0.0, -0.8));
+    CHECK(near.value_or(std::array<double, 2>{})[1] > 6.0);
+    // A plane above the eye, or a ray that never comes down, is not hit.
+    CHECK_FALSE(scene2d::ground_hit(scene2d::diorama_ray(camera, aspect, 0.0, 0.0), 100.0));
+    CHECK_FALSE(scene2d::ground_hit(scene2d::Ray{render::Vec3{0, 1, 0}, render::Vec3{1, 0, 0}}));
+}

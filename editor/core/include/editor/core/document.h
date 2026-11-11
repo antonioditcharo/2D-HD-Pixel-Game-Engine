@@ -19,6 +19,7 @@
 #include "engine/serialize/json.h"
 #include "engine/world/world.h"
 
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -112,5 +113,25 @@ sprite_bounds(const engine::world::World& world, const engine::assets::AssetData
 [[nodiscard]] engine::world::Entity pick(const engine::world::World& world,
                                          const engine::assets::AssetDatabase& assets, double x,
                                          double y, std::uint32_t ppu);
+
+/// The Diorama camera the game uses for `settings`, looking at map point (x, y).
+[[nodiscard]] engine::scene2d::DioramaCamera
+diorama_camera(const engine::game::ProjectSettings& settings, double x, double y);
+
+/// Where an entity's sprite appears in a Diorama camera's image, as the smallest
+/// rectangle around its billboard: {left, bottom, right, top} with x and y from -1 to 1
+/// (y up). Nothing without a sprite with a readable picture, or behind the eye.
+[[nodiscard]] std::optional<std::array<double, 4>>
+diorama_sprite_rect(const engine::world::World& world, const engine::assets::AssetDatabase& assets,
+                    engine::world::Entity entity, const engine::scene2d::DioramaCamera& camera,
+                    float aspect);
+
+/// The entity under image point (ndc_x, ndc_y) of a Diorama camera: the nearest sprite
+/// whose billboard covers it, else the tilemap with a tile where the ray meets the
+/// ground. Invalid if there is none.
+[[nodiscard]] engine::world::Entity pick_diorama(const engine::world::World& world,
+                                                 const engine::assets::AssetDatabase& assets,
+                                                 const engine::scene2d::DioramaCamera& camera,
+                                                 float aspect, double ndc_x, double ndc_y);
 
 } // namespace editor

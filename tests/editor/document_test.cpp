@@ -414,3 +414,44 @@ TEST_CASE("Logic reads as plain language") {
                                             "  Repeat 2 times:", "    Run intro and wait for it",
                                             "  dance (nobody)", "  Otherwise:", "    Log [who]"});
 }
+
+TEST_CASE("Picking in the Diorama style goes through the camera") {
+    const Sample sample;
+    const auto d = sample.open();
+    const scene2d::DioramaCamera camera = editor::diorama_camera(d->settings(), 10.0, 7.0);
+    const float aspect = 320.0F / 180.0F;
+    const auto name_at = [&](double nx, double ny) {
+        const world::Entity e =
+            editor::pick_diorama(d->world(), d->assets(), camera, aspect, nx, ny);
+        return e.is_valid() ? std::string(d->world().name(e)) : std::string("nothing");
+    };
+    // The hero's billboard on the screen: pick its middle.
+    const world::Entity hero = d->world().find_named("hero").at(0);
+    const std::optional<std::array<double, 4>> rect =
+        editor::diorama_sprite_rect(d->world(), d->assets(), hero, camera, aspect);
+    REQUIRE(rect.has_value());
+    const std::array<double, 4> r = rect.value_or(std::array<double, 4>{});
+    CHECK(r[0] < r[2]);
+    CHECK(r[1] < r[3]);
+    CHECK(name_at((r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0) == "hero");
+    // The hero stands below the point looked at (10, 7): lower on the screen, near the middle.
+    CHECK((r[1] + r[3]) / 2.0 < 0.0);
+    CHECK(std::abs((r[0] + r[2]) / 2.0) < 0.05);
+    // Just beside the billboard: the ground under it, not the hero.
+    CHECK(name_at(r[2] + 0.05, r[1] + 0.01) == "ground");
+    // The elder, picked the same way.
+    const std::optional<std::array<double, 4>> elder = editor::diorama_sprite_rect(
+        d->world(), d->assets(), d->world().find_named("elder").at(0), camera, aspect);
+    REQUIRE(elder.has_value());
+    const std::array<double, 4> e = elder.value_or(std::array<double, 4>{});
+    CHECK(name_at((e[0] + e[2]) / 2.0, (e[1] + e[3]) / 2.0) == "elder");
+    // The wall along the bottom of the map, near the bottom edge of the screen.
+    CHECK(name_at(0.0, -0.99) == "walls");
+    // Looking up into the sky: nothing.
+    const scene2d::DioramaCamera low = [&] {
+        scene2d::DioramaCamera c = camera;
+        c.pitch = 10.0;
+        return c;
+    }();
+    CHECK_FALSE(editor::pick_diorama(d->world(), d->assets(), low, aspect, 0.0, 0.99).is_valid());
+}

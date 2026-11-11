@@ -71,13 +71,7 @@ std::optional<engine::assets::Image> Preview::render(Document& document, double 
     const bool post = !look.neutral();
     render::RenderTarget& target = post ? *p.scene : *p.frame;
     if (settings.style == game::RenderStyle::Diorama) {
-        scene2d::DioramaCamera camera;
-        camera.x = x;
-        camera.y = y;
-        camera.pitch = settings.camera_pitch;
-        camera.distance = settings.camera_distance;
-        camera.fov = settings.camera_fov;
-        camera.ppu = settings.ppu;
+        const scene2d::DioramaCamera camera = diorama_camera(settings, x, y);
         scene2d::DioramaLight light;
         light.ambient = static_cast<float>(std::clamp(settings.ambient_light, 0.0, 2.0));
         light.diffuse = static_cast<float>(std::clamp(settings.sun_light, 0.0, 2.0));

@@ -179,6 +179,10 @@ the style ([game.md](game.md) §2).
   direction (silhouettes) come later.
 - **Depth** sorts everything; there is no draw order to manage. **Fog** fades distant
   things into the haze.
+- **Rays** (`diorama_ray()`, `ground_hit()`): the ray from the eye through any point of the
+  image, and where it meets the ground, for picking and dragging in the editor. Tested
+  against the real projection: a ground point hit through 20 image points projects back
+  to the same point.
 - **What the camera shows** (`diorama_view_extent()`): the ground between where the
   screen's bottom and top edges meet it. Perspective shows more ground above the point
   than below: about 4 tiles below and 9 above with the default camera. The top is

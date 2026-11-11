@@ -27,10 +27,10 @@ sparxel-editor samples/hello
 
 | Part | What it does |
 |---|---|
-| **Scene** (middle) | The scene drawn by the engine, as the game draws it: the project's resolution, style, lighting and look, at the largest whole-number scale that fits. In Classic 2D, **click** selects what is drawn on top (sprites before maps) and **drag** moves it, to whole pixels, as one undo step. Drag with the right or middle button, or use the arrow keys, to move the camera |
+| **Scene** (middle) | The scene drawn by the engine, as the game draws it: the project's resolution, style, lighting and look, at the largest whole-number scale that fits. **Click** selects what is drawn on top (sprites before maps) and **drag** moves it, to whole pixels, as one undo step: in Classic 2D on the flat map; in the Diorama style through the 3D camera, picking the nearest billboard and dragging along the ground, so the ground under the cursor stays under it. Drag with the right or middle button, or use the arrow keys, to move the camera |
 | **Entities** (left) | Every entity, children under their parents. Selecting one selects it everywhere |
 | **Assets** (left) | The project's `assets/` folder: pictures, sounds, scenes and logic |
-| **Tiles** (left) | With a tilemap selected, its tileset's tiles and an eraser. Choosing one puts the scene in **paint mode** (Classic 2D): the left button paints the tile into the cell under the cursor, the right button erases, the middle button still moves the camera. Each stroke is one undo step; painting past the map's right or bottom edge grows it. Choosing the tile again, Escape, or selecting something else stops painting |
+| **Tiles** (left) | With a tilemap selected, its tileset's tiles and an eraser. Choosing one puts the scene in **paint mode** (in either style; in 3D the cell is where the cursor meets the ground): the left button paints the tile into the cell under the cursor, the right button erases, the middle button still moves the camera. Each stroke is one undo step; painting past the map's right or bottom edge grows it. Choosing the tile again, Escape, or selecting something else stops painting |
 | **Inspector** (right) | The selected entity's name, and a group for each component with a field for each property: a tick box for yes/no, number fields with the property's range, step and unit, a list for choices, and a list of the project's pictures for an image or tileset. Read-only properties are shown but cannot be changed; *Show advanced settings* adds the advanced ones. Each group can be removed, and *Add a component…* lists those the entity does not have |
 | **Logic** (right, beside the inspector) | Every logic file of the project, its Rules, Sequences and Brains as plain language: *When [who] interacts with it (elder)*, then its steps (*Say “…” (dialogue)*, *Wait until not a message is open (dialogue)*, *If the answer chosen (dialogue) = 1:*), nested as they run. Read-only for now |
 | **Commands** | Open, Save (Ctrl+S), Undo and Redo (with what they will undo, for example *Undo Change Speed of hero*), New entity (where the camera looks), Delete, **Play** (F5: saves, then starts `sparxel-player` on the project) and **Export** (saves, asks for an empty folder, then exports: [export.md](export.md)) |
@@ -62,6 +62,10 @@ them.
   and operators as symbols. Members are found on the game's objects by name, and on
   entities through their components, so a new component's blocks read well with no
   editor change. Every line keeps its block id, for highlighting and explaining later.
+- **Picking in 3D** (`editor::pick_diorama`) projects each billboard's corners through the
+  game's camera (`diorama_camera()`, which the preview uses too, so they always agree) and
+  takes the nearest that covers the point; else the map where the ray from the eye
+  (`scene2d::diorama_ray()`) meets the ground (`scene2d::ground_hit()`).
 - **Picking** (`editor::pick`) finds the entity drawn on top at a map point in Classic 2D,
   in the draw order the game uses (layer, then y, then GUID): a sprite whose picture
   covers the point, else a tilemap with a tile there.
@@ -82,11 +86,12 @@ them.
 | Properties | An edit changes the world and marks the scene changed, labelled *Change Speed of hero*; typing three values is one undo step back to the original; after a field loses focus the next change is its own step; a new edit clears redo; a value of the wrong kind and a component the entity lacks are refused, with nothing changed |
 | Painting | A stroke over three cells is one undo step; painting past the right edge grows the map, with empty cells between; cells above or left of its corner, and entities without a tilemap, are refused; erasing; a new stroke after `end_merge()` is its own step |
 | Entities and components | Create, add a component (twice refused), rename, delete and undo (same GUID and components back), remove a component and undo; a drag of five moves is one step; undoing everything returns to the scene as opened |
+| Picking in 3D | Through the sample's Diorama camera: the hero's billboard rectangle lies below the middle of the screen; its middle picks the hero, beside it the ground; the elder; the wall along the bottom edge; nothing in the sky |
 | Logic as language | The sample's logic file found and read in full, line for line (its three Rules with their steps, the If and Otherwise, and the weather Brain's states, steps and timed transitions); every line traced to a block; conditions, all-of, not, waits, repeats, runs, Otherwise, event values and an unknown object read sensibly |
 | Saving | The scene file is written; reopening finds the edit; saving keeps the history |
 | Picking | The hero's exact picture bounds; the hero, the elder, the ground and the walls (drawn after the ground) at points, and nothing outside the map |
 | Preview (GPU) | The sample drawn at 320 × 180 with the hero's robe and the wall's stone at exact pixels, and the hero moved 2 tiles after an edit |
-| The application | Opening the sample: title, list and a 320 × 180 scene. Selecting in the list fills the inspector; a number field edits the world; undo puts it and the field back; renaming in the inspector renames in the list; field labels are never squeezed out of sight. Clicking the hero in the scene selects it; dragging moves it 2 tiles right and 1 down to the nearest pixel, as one undo step; clicking the ground selects it. Painting: the ground's palette has its three tiles and an eraser; a left-button stroke paints a path four tiles long without changing the selection; a right-button click erases; each undoes on its own; Escape and selecting something else stop painting. A new entity gets a Light from *Add a component…*; saving writes it; deleting and exporting (which saves first) work; exporting over a project is refused |
+| The application | Opening the sample: title, list and a 320 × 180 scene. Selecting in the list fills the inspector; a number field edits the world; undo puts it and the field back; renaming in the inspector renames in the list; field labels are never squeezed out of sight. Clicking the hero in the scene selects it; dragging moves it 2 tiles right and 1 down to the nearest pixel, as one undo step; clicking the ground selects it. Painting: the ground's palette has its three tiles and an eraser; a left-button stroke paints a path four tiles long without changing the selection; a right-button click erases; each undoes on its own; Escape and selecting something else stop painting. In the Diorama style: clicking the hero's billboard selects it; dragging it by its feet moves it along the ground to within a picture pixel of where the cursor points, as one undo step; painting puts the tile in the cell under the cursor. A new entity gets a Light from *Add a component…*; saving writes it; deleting and exporting (which saves first) work; exporting over a project is refused |
 
 ## 5. Next increments
 
@@ -94,7 +99,7 @@ them.
    values typed in place, and steps dragged, all compiled and checked as you go.
 2. **Placing assets** by dragging them from the assets list into the scene, and
    rectangle and fill tools for painting.
-3. **Selection and gizmos in the Diorama style,** picking through the 3D camera.
+3. **Move gizmos** and multiple selection.
 4. **Docking layouts** with Qt Advanced Docking System (ADR-005), saved per user.
 5. **Project creation** from templates, and the project settings in a dialog.
 6. **Shipping:** `windeployqt` for a self-contained editor on Windows, and Qt's LGPL

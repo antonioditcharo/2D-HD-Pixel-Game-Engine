@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <utility>
 
 namespace editor {
@@ -437,8 +438,12 @@ std::optional<scene2d::Box> sprite_bounds(const world::World& w,
     return scene2d::Box{left, top, left + width, top + height};
 }
 
-world::Entity pick(const world::World& w, const engine::assets::AssetDatabase& assets, double x,
-                   double y, std::uint32_t ppu) {
+namespace {
+
+/// pick(), optionally leaving sprites out (the Diorama style picks those through the
+/// camera instead).
+world::Entity pick_at(const world::World& w, const engine::assets::AssetDatabase& assets, double x,
+                      double y, std::uint32_t ppu, bool with_sprites) {
     const double units = static_cast<double>(std::max<std::uint32_t>(ppu, 1));
     struct Candidate {
         std::int32_t layer;
@@ -449,7 +454,8 @@ world::Entity pick(const world::World& w, const engine::assets::AssetDatabase& a
     std::vector<Candidate> sprites;
     std::vector<Candidate> maps;
     const reflect::Registry& registry = w.registry();
-    if (const reflect::TypeInfo* type = registry.find_type<scene2d::Sprite>()) {
+    if (const reflect::TypeInfo* type = registry.find_type<scene2d::Sprite>();
+        type != nullptr && with_sprites) {
         w.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
             const scene2d::Sprite* sprite = ref.as<scene2d::Sprite>();
             const scene2d::Transform2D* t = w.get<scene2d::Transform2D>(entity);
@@ -499,6 +505,111 @@ world::Entity pick(const world::World& w, const engine::assets::AssetDatabase& a
         }
     }
     return world::Entity{};
+}
+
+} // namespace
+
+world::Entity pick(const world::World& w, const engine::assets::AssetDatabase& assets, double x,
+                   double y, std::uint32_t ppu) {
+    return pick_at(w, assets, x, y, ppu, true);
+}
+
+// ---------------------------------------------------------------------------------------
+// The Diorama style
+// ---------------------------------------------------------------------------------------
+
+scene2d::DioramaCamera diorama_camera(const game::ProjectSettings& settings, double x, double y) {
+    scene2d::DioramaCamera camera;
+    camera.x = x;
+    camera.y = y;
+    camera.pitch = settings.camera_pitch;
+    camera.distance = settings.camera_distance;
+    camera.fov = settings.camera_fov;
+    camera.ppu = settings.ppu;
+    return camera;
+}
+
+std::optional<std::array<double, 4>>
+diorama_sprite_rect(const world::World& w, const engine::assets::AssetDatabase& assets,
+                    world::Entity entity, const scene2d::DioramaCamera& camera, float aspect) {
+    const scene2d::Sprite* sprite = w.get<scene2d::Sprite>(entity);
+    const scene2d::Transform2D* t = w.get<scene2d::Transform2D>(entity);
+    // The picture's size in tiles, as Classic 2D sizes it (the same in 3D).
+    const std::optional<scene2d::Box> flat = sprite_bounds(w, assets, entity, camera.ppu);
+    if (sprite == nullptr || t == nullptr || !flat) {
+        return std::nullopt;
+    }
+    const double width = flat->right - flat->left;
+    const double height = flat->bottom - flat->top;
+    // As draw_diorama() stands it: upright, facing the camera, pivot on the map point.
+    const double yaw =
+        (std::isfinite(camera.yaw) ? camera.yaw : 0.0) * 3.14159265358979323846 / 180.0;
+    const double rx = std::cos(yaw);
+    const double rz = -std::sin(yaw);
+    const double lift = static_cast<double>(t->layer) * 0.002;
+    const double left = -sprite->pivot_x * width;
+    const double right = (1.0 - sprite->pivot_x) * width;
+    const double top = sprite->pivot_y * height;
+    const double bottom = -(1.0 - sprite->pivot_y) * height;
+    const engine::render::Mat4 vp = scene2d::diorama_view_projection(camera, aspect);
+    std::array<double, 4> rect{1e9, 1e9, -1e9, -1e9};
+    for (const auto& [along, up] : {std::pair{left, top}, std::pair{right, top},
+                                    std::pair{right, bottom}, std::pair{left, bottom}}) {
+        const auto clip = vp.transform(engine::render::Vec3{
+            static_cast<float>(t->x + (rx * along)), static_cast<float>(lift + up),
+            static_cast<float>(t->y + (rz * along))});
+        if (!(clip[3] > 0.0F)) {
+            return std::nullopt;
+        }
+        const double x = clip[0] / clip[3];
+        const double y = clip[1] / clip[3];
+        rect[0] = std::min(rect[0], x);
+        rect[1] = std::min(rect[1], y);
+        rect[2] = std::max(rect[2], x);
+        rect[3] = std::max(rect[3], y);
+    }
+    return rect;
+}
+
+world::Entity pick_diorama(const world::World& w, const engine::assets::AssetDatabase& assets,
+                           const scene2d::DioramaCamera& camera, float aspect, double ndc_x,
+                           double ndc_y) {
+    // Sprites: the nearest billboard covering the point (the depth of its feet).
+    const engine::render::Mat4 vp = scene2d::diorama_view_projection(camera, aspect);
+    world::Entity best;
+    float best_depth = std::numeric_limits<float>::infinity();
+    if (const reflect::TypeInfo* type = w.registry().find_type<scene2d::Sprite>()) {
+        w.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+            const scene2d::Sprite* sprite = ref.as<scene2d::Sprite>();
+            const scene2d::Transform2D* t = w.get<scene2d::Transform2D>(entity);
+            if (sprite == nullptr || t == nullptr || !sprite->visible) {
+                return;
+            }
+            const std::optional<std::array<double, 4>> rect =
+                diorama_sprite_rect(w, assets, entity, camera, aspect);
+            if (!rect || ndc_x < (*rect)[0] || ndc_x > (*rect)[2] || ndc_y < (*rect)[1] ||
+                ndc_y > (*rect)[3]) {
+                return;
+            }
+            const auto clip = vp.transform(
+                engine::render::Vec3{static_cast<float>(t->x), 0.0F, static_cast<float>(t->y)});
+            const float depth = clip[2] / clip[3];
+            if (depth < best_depth) {
+                best_depth = depth;
+                best = entity;
+            }
+        });
+    }
+    if (best.is_valid()) {
+        return best;
+    }
+    // Maps: the tile where the ray meets the ground.
+    const std::optional<std::array<double, 2>> ground =
+        scene2d::ground_hit(scene2d::diorama_ray(camera, aspect, ndc_x, ndc_y));
+    if (!ground) {
+        return world::Entity{};
+    }
+    return pick_at(w, assets, (*ground)[0], (*ground)[1], camera.ppu, false);
 }
 
 } // namespace editor

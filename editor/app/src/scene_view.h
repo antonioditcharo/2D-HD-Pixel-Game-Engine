@@ -10,6 +10,7 @@
 #include <QImage>
 #include <QPoint>
 #include <QWidget>
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -45,6 +46,11 @@ public:
     [[nodiscard]] QPointF to_map(QPoint widget_point) const;
     /// The point of this widget showing map point (x, y), as to_map() reverses it.
     [[nodiscard]] QPoint from_map(double x, double y) const;
+    /// The map point under a point of this widget, in either style: in Classic 2D as
+    /// to_map(); in the Diorama style, where the ray through it meets the ground.
+    [[nodiscard]] std::optional<QPointF> map_point(QPoint widget_point) const;
+    /// The point of this widget showing image point (ndc_x, ndc_y), from -1 to 1, y up.
+    [[nodiscard]] QPoint from_ndc(double ndc_x, double ndc_y) const;
 
 Q_SIGNALS:
     void selected(engine::Guid entity);
@@ -80,6 +86,10 @@ private:
     std::int32_t stroke_tile_ = -1; ///< What this drag paints: the tile, or -1 to erase.
     QPoint drag_from_;
     QPointF entity_from_;
+    QPointF ground_from_; ///< The map point under the cursor when a drag began.
+    [[nodiscard]] bool diorama() const;
+    /// The image point (-1 to 1, y up) under a point of this widget.
+    [[nodiscard]] std::array<double, 2> ndc(QPoint widget_point) const;
 };
 
 } // namespace editor
