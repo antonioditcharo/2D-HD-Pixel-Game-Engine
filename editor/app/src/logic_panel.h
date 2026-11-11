@@ -12,6 +12,8 @@
 // See docs/dev/editor.md.
 
 #include <QWidget>
+#include <string>
+#include <vector>
 
 #include "editor/core/document.h"
 
@@ -56,6 +58,9 @@ private:
     void show_variables();
     void refresh_texts();
     void update_buttons();
+    /// Marks the lines of `path` whose blocks have problems, and clears the others.
+    void mark_problems(const std::string& path,
+                       const std::vector<engine::logic::Diagnostic>& found);
     void fill_add_menu();
     /// After adding `block` (invalid, with `error`, if refused): shows and selects it.
     void added(const std::string& path, engine::logic::BlockId block, const std::string& error);

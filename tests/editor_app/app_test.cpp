@@ -528,6 +528,18 @@ TEST_CASE("The Logic view edits logic: values typed in place, steps added, moved
     REQUIRE(e.window.document()->rename(e.guid("elder"), "sage"));
     panel->rebuild();
     CHECK(problems->text().startsWith(QStringLiteral("logic/main.drules does not run")));
+    // The problem is on its line: the elder's Rule (whose event cannot be found now), in
+    // red, saying what is wrong; lines without problems stay as they were.
+    std::vector<QTreeWidgetItem*> marked;
+    for (QTreeWidgetItemIterator it(tree); *it != nullptr; ++it) {
+        if (!(*it)->toolTip(0).isEmpty()) {
+            marked.push_back(*it);
+        }
+    }
+    REQUIRE(marked.size() == 1);
+    CHECK(marked[0]->text(0).endsWith(QStringLiteral("(elder)")));
+    CHECK(marked[0]->foreground(0).color() == QColor(200, 40, 40));
+    CHECK(marked[0]->toolTip(0) == QStringLiteral("There is no object called 'elder'."));
 }
 
 TEST_CASE("The Logic view authors logic from its Add menu") {

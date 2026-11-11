@@ -1,6 +1,8 @@
 #include "logic_panel.h"
 
+#include <QBrush>
 #include <QCheckBox>
+#include <QColor>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -37,6 +39,7 @@ namespace {
 constexpr int block_role = Qt::UserRole;
 constexpr int path_role = Qt::UserRole + 1;
 constexpr int otherwise_role = Qt::UserRole + 2; ///< An "Otherwise:" line.
+constexpr int problem_role = Qt::UserRole + 3;   ///< The compiler finds a problem here.
 
 QString text_of(const std::string& s) {
     return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size()));
@@ -569,6 +572,7 @@ void LogicPanel::update_buttons() {
         return;
     }
     const std::vector<engine::logic::Diagnostic> found = document_->check_logic(path);
+    mark_problems(path, found);
     if (found.empty()) {
         problems_->setText(tr("%1 runs: no problems.").arg(text_of(path)));
     } else {
@@ -576,6 +580,30 @@ void LogicPanel::update_buttons() {
                                .arg(text_of(path))
                                .arg(found.size())
                                .arg(text_of(found.front().message)));
+    }
+}
+
+void LogicPanel::mark_problems(const std::string& path,
+                               const std::vector<engine::logic::Diagnostic>& found) {
+    // Each problem on the line of its block: red, with what is wrong as its tooltip.
+    const QSignalBlocker quiet(tree_);
+    const QString wanted = text_of(path);
+    for (QTreeWidgetItemIterator it(tree_); *it != nullptr; ++it) {
+        QTreeWidgetItem* item = *it;
+        if (item->data(0, path_role).toString() != wanted || item->parent() == nullptr) {
+            continue;
+        }
+        QStringList problems;
+        for (const engine::logic::Diagnostic& problem : found) {
+            if (problem.block.is_valid() && problem.block == block_of(item) &&
+                !item->data(0, otherwise_role).toBool()) {
+                problems << text_of(problem.message);
+            }
+        }
+        item->setForeground(0, problems.isEmpty() ? tree_->palette().text()
+                                                  : QBrush(QColor(200, 40, 40)));
+        item->setToolTip(0, problems.join(QLatin1Char('\n')));
+        item->setData(0, problem_role, !problems.isEmpty());
     }
 }
 
