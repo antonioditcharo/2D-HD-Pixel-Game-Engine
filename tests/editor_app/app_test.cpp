@@ -829,3 +829,57 @@ TEST_CASE("The Logic view takes values from the event, variables and sums") {
     REQUIRE(problems != nullptr);
     CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));
 }
+
+TEST_CASE("The Logic view moves a step by dragging it onto another line") {
+    const Editor e;
+    editor::LogicPanel* panel = e.window.logic_panel();
+    QTreeWidget* tree = e.window.logic_view();
+    auto* add = panel->findChild<QToolButton*>(QStringLiteral("logic_add"));
+    REQUIRE(add != nullptr);
+    const auto choose = [&](const QString& name) {
+        Q_EMIT add->menu()->aboutToShow();
+        auto* entry = add->menu()->findChild<QAction*>(name);
+        REQUIRE(entry != nullptr);
+        entry->trigger();
+        QApplication::processEvents();
+    };
+    const auto item = [&](const QString& text) -> QTreeWidgetItem* {
+        for (QTreeWidgetItemIterator it(tree); *it != nullptr; ++it) {
+            if ((*it)->text(0) == text) {
+                return *it;
+            }
+        }
+        return nullptr;
+    };
+    choose(QStringLiteral("add_file"));
+    choose(QStringLiteral("rule:/game_start"));
+    choose(QStringLiteral("action:/repeat"));
+    tree->setCurrentItem(item(QStringLiteral("When the game starts")));
+    choose(QStringLiteral("action:/log")); // first under the Rule, before the Repeat
+    QTreeWidgetItem* log = item(QStringLiteral("Log “”"));
+    QTreeWidgetItem* repeat = item(QStringLiteral("Repeat 2 times:"));
+    REQUIRE(log != nullptr);
+    REQUIRE(repeat != nullptr);
+    CHECK(log->parent()->indexOfChild(log) == 0);
+
+    // Dragged onto the Repeat: it goes inside it, and stays selected.
+    tree->setCurrentItem(log);
+    tree->scrollToItem(repeat);
+    const QPoint at = tree->visualItemRect(repeat).center();
+    QMimeData lines;
+    lines.setData(QStringLiteral("application/x-qabstractitemmodeldatalist"), QByteArray());
+    QDragEnterEvent enter(at, Qt::MoveAction, &lines, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(tree->viewport(), &enter);
+    CHECK(enter.isAccepted());
+    QDropEvent dropped(QPointF(at), Qt::MoveAction, &lines, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(tree->viewport(), &dropped);
+    for (int i = 0; i < 3; ++i) { // the deferred move
+        QApplication::processEvents();
+    }
+    QTreeWidgetItem* moved = item(QStringLiteral("Log “”"));
+    REQUIRE(moved != nullptr);
+    REQUIRE(moved->parent() != nullptr);
+    CHECK(moved->parent()->text(0) == QStringLiteral("Repeat 2 times:"));
+    CHECK(tree->currentItem() == moved);
+    CHECK(e.window.document()->undo_label() == "Move a step");
+}

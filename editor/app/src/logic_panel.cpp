@@ -5,12 +5,15 @@
 #include <QColor>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMimeData>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -56,10 +59,50 @@ BlockId block_of(const QTreeWidgetItem* item) {
 
 } // namespace
 
+LogicTree::LogicTree(QWidget* parent) : QTreeWidget(parent) {
+    setDragEnabled(true);
+    setAcceptDrops(true);
+    setDragDropMode(QAbstractItemView::DragDrop);
+    setDefaultDropAction(Qt::MoveAction);
+    setDropIndicatorShown(true);
+}
+
+namespace {
+
+/// The format Qt's item views drag their own items in.
+bool is_line_drag(const QMimeData* data) {
+    return data != nullptr &&
+           data->hasFormat(QStringLiteral("application/x-qabstractitemmodeldatalist"));
+}
+
+} // namespace
+
+void LogicTree::dragEnterEvent(QDragEnterEvent* event) {
+    if (is_line_drag(event->mimeData())) {
+        event->acceptProposedAction();
+    }
+}
+
+void LogicTree::dragMoveEvent(QDragMoveEvent* event) {
+    if (is_line_drag(event->mimeData())) {
+        event->acceptProposedAction();
+    }
+}
+
+void LogicTree::dropEvent(QDropEvent* event) {
+    QTreeWidgetItem* target = itemAt(event->position().toPoint());
+    // Qt moves nothing itself: the Document does, then the lines are built again.
+    event->setDropAction(Qt::IgnoreAction);
+    event->accept();
+    if (target != nullptr && is_line_drag(event->mimeData())) {
+        Q_EMIT dropped_on(target);
+    }
+}
+
 LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    tree_ = new QTreeWidget(this);
+    tree_ = new LogicTree(this);
     tree_->setObjectName(QStringLiteral("logic"));
     tree_->setHeaderHidden(true);
     tree_->setAccessibleName(tr("Logic"));
@@ -115,6 +158,24 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
     problems_->setWordWrap(true);
     layout->addWidget(problems_);
 
+    connect(tree_, &LogicTree::dropped_on, this, [this](QTreeWidgetItem* target) {
+        const auto [path, step] = current();
+        if (document_ == nullptr || target->data(0, path_role).toString() != text_of(path)) {
+            return; // only within one file
+        }
+        const BlockId onto = block_of(target);
+        // Later, not from inside the drop: the lines go and come back.
+        QTimer::singleShot(0, this, [this, path, step, onto] {
+            std::string error;
+            if (!document_->move_logic_step_to(path, step, onto, error)) {
+                Q_EMIT refused(text_of(error));
+                return;
+            }
+            rebuild();
+            select(path, step);
+            Q_EMIT edited();
+        });
+    });
     connect(tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
         show_fields();
         update_buttons();

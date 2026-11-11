@@ -1125,6 +1125,55 @@ TEST_CASE("Logic values from variables, event values and properties, with sums")
     CHECK(d->check_logic(file).empty());
 }
 
+TEST_CASE("Logic steps move anywhere steps go, not into themselves") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view file = "logic/order.drules";
+    REQUIRE(d->create_logic_file(file, error));
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        for (const editor::LogicLine& line : editor::describe(found->asset, *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        }
+        return shown;
+    };
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);
+    const engine::logic::BlockId loop =
+        d->add_logic_step(file, rule, editor::LogicAction{"", "repeat", ""}, error);
+    const engine::logic::BlockId wait =
+        d->add_logic_step(file, loop, editor::LogicAction{"", "wait", ""}, error); // inside
+    const engine::logic::BlockId log =
+        d->add_logic_step(file, rule, editor::LogicAction{"", "log", ""}, error); // first
+    REQUIRE(log.is_valid());
+    std::vector<std::string> expected{"When the game starts", "  Log “”",
+                                      "  Repeat 2 times:", "    Wait 1 seconds"};
+    CHECK(lines() == expected);
+    // Into the Repeat (dropped on it: first inside), then out after it.
+    REQUIRE(d->move_logic_step_to(file, log, loop, error));
+    CHECK(d->undo_label() == "Move a step");
+    expected = {"When the game starts", "  Repeat 2 times:", "    Log “”", "    Wait 1 seconds"};
+    CHECK(lines() == expected);
+    REQUIRE(d->move_logic_step_to(file, wait, rule, error));
+    expected = {"When the game starts", "  Wait 1 seconds", "  Repeat 2 times:", "    Log “”"};
+    CHECK(lines() == expected);
+    // Not into itself, not a Rule, not onto nothing.
+    CHECK_FALSE(d->move_logic_step_to(file, loop, log, error));
+    CHECK(error == "A step cannot go inside itself.");
+    CHECK_FALSE(d->move_logic_step_to(file, rule, wait, error));
+    CHECK(error == "Only steps can be moved.");
+    CHECK_FALSE(d->move_logic_step_to(file, wait, engine::logic::BlockId{999}, error));
+    CHECK(d->check_logic(file).empty());
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    expected = {"When the game starts", "  Log “”", "  Repeat 2 times:", "    Wait 1 seconds"};
+    CHECK(lines() == expected);
+}
+
 TEST_CASE("Picking in the Diorama style goes through the camera") {
     const Sample sample;
     const auto d = sample.open();

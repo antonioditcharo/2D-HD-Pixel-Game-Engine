@@ -1222,6 +1222,46 @@ bool Document::move_logic_step(std::string_view path, BlockId step, int by) {
     return true;
 }
 
+bool Document::move_logic_step_to(std::string_view path, BlockId step, BlockId target,
+                                  std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const Place from = file != nullptr ? find_step(file->asset, step) : Place{};
+    if (from.list == nullptr) {
+        error = "Only steps can be moved.";
+        return false;
+    }
+    if (target == step) {
+        return true; // where it is
+    }
+    // Not into itself: a step inside the one moved cannot be its new place.
+    Stmt& moved = (*from.list)[from.index];
+    if (find_in(moved.body, target).list != nullptr ||
+        find_in(moved.otherwise, target).list != nullptr) {
+        error = "A step cannot go inside itself.";
+        return false;
+    }
+    if (where_to_add(file->asset, target).list == nullptr) {
+        error = "Steps go under a Rule, a Sequence or a Brain state, or after another step.";
+        return false;
+    }
+    engine::serialize::Json before = d.snapshot();
+    Stmt taken = std::move(moved);
+    from.list->erase(from.list->begin() + static_cast<std::ptrdiff_t>(from.index));
+    // Found again: taking the step out may have moved where it goes.
+    const Place to = where_to_add(file->asset, target);
+    if (to.list == nullptr) {
+        // Not expected (the target is not inside what moved), but never lose the step.
+        from.list->insert(from.list->begin() + static_cast<std::ptrdiff_t>(from.index),
+                          std::move(taken));
+        error = "That step cannot go there.";
+        return false;
+    }
+    to.list->insert(to.list->begin() + static_cast<std::ptrdiff_t>(to.index), std::move(taken));
+    d.record("Move a step", std::move(before));
+    return true;
+}
+
 bool Document::is_logic_step(std::string_view path, BlockId block) const {
     LogicFile* file = impl_->logic_file(path);
     return file != nullptr && find_step(file->asset, block).list != nullptr;

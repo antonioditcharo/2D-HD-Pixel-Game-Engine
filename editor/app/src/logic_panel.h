@@ -11,6 +11,7 @@
 //
 // See docs/dev/editor.md.
 
+#include <QTreeWidget>
 #include <QWidget>
 #include <string>
 #include <vector>
@@ -22,11 +23,28 @@ class QGroupBox;
 class QLabel;
 class QPushButton;
 class QToolButton;
-class QTreeWidget;
 class QTreeWidgetItem;
 class QFormLayout;
 
 namespace editor {
+
+/// The Logic view's lines. A line dragged onto another is not moved by Qt: the drop is
+/// reported, and the Document moves the step, so the move is one step of undo.
+class LogicTree : public QTreeWidget {
+    Q_OBJECT
+
+public:
+    explicit LogicTree(QWidget* parent = nullptr);
+
+Q_SIGNALS:
+    /// The selected line was dropped onto `target`.
+    void dropped_on(QTreeWidgetItem* target);
+
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+};
 
 class LogicPanel : public QWidget {
     Q_OBJECT
@@ -71,7 +89,7 @@ private:
     void move_step(int by);
 
     Document* document_ = nullptr;
-    QTreeWidget* tree_ = nullptr;
+    LogicTree* tree_ = nullptr;
     QWidget* fields_ = nullptr;
     QFormLayout* form_ = nullptr;
     QGroupBox* variables_ = nullptr;

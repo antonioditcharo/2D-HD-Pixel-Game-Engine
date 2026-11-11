@@ -275,6 +275,11 @@ public:
     bool create_logic_file(std::string_view path, std::string& error);
     /// Moves a step one place up (-1) or down (+1) among its neighbours.
     bool move_logic_step(std::string_view path, engine::logic::BlockId step, int by);
+    /// Moves a step to where a step added at `target` would go (add_logic_step(): after
+    /// a step, first inside an If or a Repeat, first under a Rule, Sequence or state),
+    /// as one step of undo. Refused, with `error`, into itself or onto a non-step place.
+    bool move_logic_step_to(std::string_view path, engine::logic::BlockId step,
+                            engine::logic::BlockId target, std::string& error);
     /// True if `block` is a step of the logic file (one that can be deleted or moved).
     [[nodiscard]] bool is_logic_step(std::string_view path, engine::logic::BlockId block) const;
     /// What stops the logic file at `path` from running, checked by the compiler against
