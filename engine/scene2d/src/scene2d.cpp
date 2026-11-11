@@ -514,6 +514,73 @@ render::Rect frame_rect(const render::Texture& texture, std::uint32_t width, std
 
 } // namespace
 
+std::optional<Box> map_bounds(const world::World& world, std::uint32_t ppu) {
+    const reflect::TypeInfo* type = world.registry().find_type<Tilemap>();
+    if (type == nullptr) {
+        return std::nullopt;
+    }
+    std::optional<Box> bounds;
+    world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        const Tilemap* tilemap = ref.as<Tilemap>();
+        const Transform2D* transform = world.get<Transform2D>(entity);
+        if (tilemap == nullptr || transform == nullptr) {
+            return;
+        }
+        std::string error;
+        const TileGrid* grid = tilemap->grid(error);
+        if (grid == nullptr || grid->width == 0 || grid->height == 0) {
+            return;
+        }
+        const std::uint32_t units = std::max<std::uint32_t>(ppu, 1);
+        const std::uint32_t pixels = tilemap->tile_size == 0 ? units : tilemap->tile_size;
+        const double tile = static_cast<double>(pixels) / static_cast<double>(units);
+        const Box box{transform->x, transform->y,
+                      transform->x + (tile * static_cast<double>(grid->width)),
+                      transform->y + (tile * static_cast<double>(grid->height))};
+        if (!std::isfinite(box.left) || !std::isfinite(box.top) || !std::isfinite(box.right) ||
+            !std::isfinite(box.bottom)) {
+            return;
+        }
+        if (!bounds) {
+            bounds = box;
+            return;
+        }
+        bounds->left = std::min(bounds->left, box.left);
+        bounds->top = std::min(bounds->top, box.top);
+        bounds->right = std::max(bounds->right, box.right);
+        bounds->bottom = std::max(bounds->bottom, box.bottom);
+    });
+    return bounds;
+}
+
+namespace {
+
+/// One axis of clamp_view(): `at` moved so [at + low, at + high] stays in [min, max].
+double clamp_axis(double at, double low, double high, double min, double max) noexcept {
+    if (!std::isfinite(at) || !std::isfinite(min) || !std::isfinite(max) || min > max) {
+        return at;
+    }
+    const bool low_limited = std::isfinite(low);
+    const bool high_limited = std::isfinite(high);
+    if (low_limited && high_limited && high - low >= max - min) {
+        return ((min + max) / 2.0) - ((low + high) / 2.0); // larger than the map: centred
+    }
+    if (low_limited && at + low < min) {
+        return min - low;
+    }
+    if (high_limited && at + high > max) {
+        return max - high;
+    }
+    return at;
+}
+
+} // namespace
+
+std::array<double, 2> clamp_view(double x, double y, const Box& view, const Box& bounds) noexcept {
+    return {clamp_axis(x, view.left, view.right, bounds.left, bounds.right),
+            clamp_axis(y, view.top, view.bottom, bounds.top, bounds.bottom)};
+}
+
 DrawStats draw_world(const world::World& world, TextureCache& textures,
                      render::SpriteRenderer& sprites, render::RenderTarget& target,
                      const Camera2D& camera, render::Color clear) {
@@ -702,6 +769,33 @@ float brightness(render::Vec3 normal, const DioramaLight& light) noexcept {
     const render::Vec3 s = unit(light.sun);
     const float facing = (n.x * s.x) + (n.y * s.y) + (n.z * s.z);
     return light.ambient + (light.diffuse * std::max(facing, 0.0F));
+}
+
+Box diorama_view_extent(const DioramaCamera& camera, double aspect) noexcept {
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    const Box unlimited{-infinity, -infinity, infinity, infinity};
+    if (!std::isfinite(camera.yaw) || camera.yaw != 0.0 || !std::isfinite(aspect) ||
+        aspect <= 0.0) {
+        return unlimited;
+    }
+    // The same clamps as orbit() and diorama_view_projection().
+    const double pitch =
+        std::clamp(std::isfinite(camera.pitch) ? camera.pitch : 35.0, 5.0, 85.0) * pi / 180.0;
+    const double half_fov =
+        std::clamp(std::isfinite(camera.fov) ? camera.fov : 30.0, 1.0, 120.0) * pi / 360.0;
+    const double distance =
+        std::isfinite(camera.distance) && camera.distance > 0.01 ? camera.distance : 12.0;
+    const double height = distance * std::sin(pitch);
+    const double behind = distance * std::cos(pitch); // the eye, south of the point
+    // Where the screen's bottom and top edges meet the ground, as distances north of the
+    // eye. The bottom edge always looks down (pitch + half_fov is below 180 degrees).
+    const double bottom_angle = pitch + half_fov;
+    const double near = bottom_angle >= pi / 2.0 ? -height * std::tan(bottom_angle - (pi / 2.0))
+                                                 : height / std::tan(bottom_angle);
+    const double top_angle = pitch - half_fov;
+    const double far = top_angle > 0.0 ? height / std::tan(top_angle) : infinity;
+    const double half_width = distance * std::tan(half_fov) * aspect;
+    return Box{-half_width, -(far - behind), half_width, behind - near};
 }
 
 render::Mat4 diorama_view_projection(const DioramaCamera& camera, float aspect, render::Vec3* eye) {

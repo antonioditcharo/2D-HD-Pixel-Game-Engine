@@ -328,6 +328,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     diorama.camera_pitch = 40.0;
     diorama.camera_distance = 9.5;
     diorama.camera_fov = 25.0;
+    diorama.camera_clamp = false;
     write_json(folder.path / game::project_file, game::project_to_json(diorama));
     issues.clear();
     const game::ProjectSettings again =
@@ -337,6 +338,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(again.camera_pitch == 40.0);
     CHECK(again.camera_distance == 9.5);
     CHECK(again.camera_fov == 25.0);
+    CHECK_FALSE(again.camera_clamp);
 
     // Out-of-range values and a wrong style refuse the project; unknown entries do not.
     serialize::Json json = game::project_to_json(settings);
@@ -344,6 +346,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     json["background"] = serialize::Json::array({1, 2});
     json["render_style"] = "isometric";
     json["camera_pitch"] = 90;
+    json["camera_clamp"] = "yes";
     json["shiny"] = true;
     write_json(folder.path / game::project_file, json);
     issues.clear();
@@ -356,7 +359,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(paths == std::vector<std::string>{
                        "project.sparxel.json/ppu", "project.sparxel.json/background",
                        "project.sparxel.json/shiny", "project.sparxel.json/camera_pitch",
-                       "project.sparxel.json/render_style"});
+                       "project.sparxel.json/camera_clamp", "project.sparxel.json/render_style"});
 
     json = game::project_to_json(settings);
     json["shiny"] = true;
@@ -963,6 +966,19 @@ TEST_CASE("The sample village in the Diorama style: no tile bleeds into its neig
     }
     CHECK(grass_pixels > 10000);
     CHECK(stray == 0);
+
+    // The camera stays inside the village: no edge of the screen shows the background,
+    // though the view is deeper than the map (its far side is let go instead).
+    std::size_t void_pixels = 0;
+    for (std::uint32_t y = 0; y < 180; ++y) {
+        void_pixels += pixel(pixels, 320, 0, y) == settings.background ? 1 : 0;
+        void_pixels += pixel(pixels, 320, 319, y) == settings.background ? 1 : 0;
+    }
+    for (std::uint32_t x = 0; x < 320; ++x) {
+        void_pixels += pixel(pixels, 320, x, 0) == settings.background ? 1 : 0;
+        void_pixels += pixel(pixels, 320, x, 179) == settings.background ? 1 : 0;
+    }
+    CHECK(void_pixels == 0);
 }
 
 TEST_CASE("Physics: crates fall onto solid floors, are pushed, and say what they touch") {
@@ -1129,4 +1145,46 @@ TEST_CASE("Dialogue: loading a save closes open messages") {
     REQUIRE(runtime->load(saved, issues));
     CHECK_FALSE(runtime->dialogue().is_open());
     CHECK(runtime->log() == std::vector<std::string>{"start"}); // no "closed" Rule ran
+}
+
+TEST_CASE("The camera stops at the map's edges, unless the project turns that off") {
+    if (test_support::gpu() == nullptr) {
+        return;
+    }
+    // Where the hero's 2 x 2 image lands, with the hero at (1, 1) on an 8 x 8 tile map at
+    // the origin, in a 32 x 32 game of 8 pixels per tile (a view of 4 x 4 tiles).
+    const auto hero_pixels = [](bool clamp) {
+        const Project project;
+        std::vector<serialize::Issue> issues;
+        game::ProjectSettings settings =
+            game::read_project(project.folder.path, issues).value_or(game::ProjectSettings{});
+        REQUIRE(issues.empty());
+        CHECK(settings.camera_clamp); // on by default
+        settings.camera_clamp = clamp;
+        write_json(project.folder.path / game::project_file, game::project_to_json(settings));
+        game::RuntimeOptions options;
+        options.headless = true;
+        const auto runtime = project.open(options);
+        REQUIRE(runtime->settings().camera_clamp == clamp);
+        world::World& w = runtime->world();
+        const world::Entity map = w.create("map");
+        w.add<scene2d::Transform2D>(map);
+        w.add<scene2d::Tilemap>(map)->tiles = ",,,,,,,\n\n\n\n\n\n\n,,,,,,,"; // 8 x 8, empty
+        const world::Entity hero = w.find_named("hero").at(0);
+        w.get<scene2d::Transform2D>(hero)->x = 1.0;
+        w.get<scene2d::Transform2D>(hero)->y = 1.0;
+        REQUIRE(runtime->draw());
+        return runtime->target()->read_pixels();
+    };
+    // Clamped, the view's centre is (2, 2), so the hero's feet are at pixel (8, 8).
+    std::vector<std::uint8_t> pixels = hero_pixels(true);
+    CHECK(pixel(pixels, 32, 7, 6) == hero_colour);
+    CHECK(pixel(pixels, 32, 8, 7) == hero_colour);
+    CHECK(pixel(pixels, 32, 15, 14) == background);
+    // Not clamped, the hero is centred: feet at (16, 16), and the rock at the origin one
+    // tile up and left of it, where the clamped hero was.
+    pixels = hero_pixels(false);
+    CHECK(pixel(pixels, 32, 15, 14) == hero_colour);
+    CHECK(pixel(pixels, 32, 16, 15) == hero_colour);
+    CHECK(pixel(pixels, 32, 7, 6) == rock_colour); // the rock at the origin, 1 tile up-left
 }

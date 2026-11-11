@@ -63,6 +63,7 @@ MyGame/
 | `render_style` | `"classic_2d"`, flat 2D, or `"diorama"`, the same world in 3D ([scene2d.md](scene2d.md) §7) | `"classic_2d"` |
 | `gravity` | For Physics Bodies, `[across, down]` in tiles per second squared ([physics.md](physics.md)) | `[0, 0]`, each -1000 to 1000 |
 | `camera_pitch`, `camera_distance`, `camera_fov` | The Diorama camera, which follows the hero: degrees looking down, tiles away, and vertical field of view | 35 (5 to 85), 12 (1 to 200), 30 (5 to 90) |
+| `camera_clamp` | The camera stops at the map's edges (§3, Drawing) | `true` |
 
 - Problems are reported in plain language with where they are, for example
   `project.sparxel.json/ppu`: *"This must be a whole number from 8 to 64."* A value out of
@@ -130,7 +131,12 @@ it when they arrive.
 
 `draw()` renders the world with `scene2d::draw_world()`, or in the Diorama style with
 `scene2d::draw_diorama()` and the project's camera settings ([scene2d.md](scene2d.md)).
-The camera follows the first entity with a Top-down Mover, so the hero stays centred. An
+The camera follows the first entity with a Top-down Mover, so the hero stays centred,
+except near the edges of the map: with `camera_clamp` on (the default), the camera stops
+where the screen meets the edge of the tilemaps, so nothing beyond them shows
+([scene2d.md](scene2d.md) §5). A map smaller than the screen is centred. In the Diorama
+style, a view deeper than the map keeps its near edge on the map and lets the far side,
+which reads as distance, show the background. An
 open message box is drawn over the world ([ui.md](ui.md) §3). The window shows the image
 pixel-perfect with black bars around it ([rendering.md](rendering.md) §4).
 
@@ -303,6 +309,7 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 | Facing and walking | Every facing rule; exact frames of the cycle, back and forth and starting over, at 6 frames per second; the standing frame; clamped settings; the runtime turning the hero left and animating it |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
+| Camera on the map (GPU) | The hero in a map's corner drawn off-centre where the clamped camera puts it, and centred with `camera_clamp` off; the sample village in the Diorama style with no background on any edge of the screen (this fails without the clamp) |
 | Diorama (GPU) | The same project in the Diorama style: the hero drawn as a billboard above the centre, lit as `brightness()` says; the settings round-trip; an unknown style and an out-of-range camera refused |
 | Logic and world | Names and GUIDs resolve; an entity's event reaches Rules written with its name and with its GUID, once each; Rules act through several components; logic survives storage moves |
 | Clock | Exact stepping, stalls and the step cap |

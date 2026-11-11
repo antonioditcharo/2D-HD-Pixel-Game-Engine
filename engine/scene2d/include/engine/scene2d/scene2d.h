@@ -13,6 +13,7 @@
 #include "engine/render/render.h"
 #include "engine/world/world.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -162,6 +163,18 @@ enum class Axis : std::uint8_t { X, Y };
 [[nodiscard]] double sweep(const world::World& world, const Box& box, Axis axis, double distance,
                            std::uint32_t ppu);
 
+/// The area the tilemaps of `world` cover, in units: the smallest box around every
+/// tilemap's grid (visible or not, solid or not). Nothing if no tilemap has tiles. `ppu`
+/// sizes tilemaps whose tile_size is 0.
+[[nodiscard]] std::optional<Box> map_bounds(const world::World& world, std::uint32_t ppu);
+
+/// Where a camera looking at (x, y) must look so that its view stays inside `bounds`.
+/// `view` is what it shows around the point, relative to it (left and top negative; an
+/// infinite edge is never limited). On each axis the view moves in as little as it can; if
+/// it is larger than `bounds`, it is centred on them. Returns {x, y}.
+[[nodiscard]] std::array<double, 2> clamp_view(double x, double y, const Box& view,
+                                               const Box& bounds) noexcept;
+
 /// A pixel-perfect orthographic camera.
 struct Camera2D {
     double x = 0.0; ///< The world position at the centre of the target, in units.
@@ -240,6 +253,14 @@ struct DioramaLight {
 /// The camera's view-projection for a target of `aspect` (width / height), and its eye.
 [[nodiscard]] render::Mat4 diorama_view_projection(const DioramaCamera& camera, float aspect,
                                                    render::Vec3* eye = nullptr);
+
+/// The ground a Diorama camera shows around the point it looks at, relative to that point,
+/// in tiles, for a target of `aspect` (width / height). The top and bottom are where the
+/// screen's top and bottom edges meet the ground, so perspective shows more ground above
+/// the point than below; the top is infinite when the screen's top edge looks above the
+/// horizon. The sides are measured at the point, so a little more ground shows at the far
+/// corners. Infinite all round for a turned camera (yaw not 0), which is never limited.
+[[nodiscard]] Box diorama_view_extent(const DioramaCamera& camera, double aspect) noexcept;
 
 /// Draws the world in the Diorama style: tilemaps as ground and blocks, sprites as
 /// upright billboards facing the camera, ordered by depth, lit and fogged. Missing images

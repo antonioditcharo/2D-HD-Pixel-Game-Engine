@@ -13,6 +13,7 @@
 #include <cmath>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <utility>
 #include <variant>
 
@@ -38,10 +39,10 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 13> known_project_keys{
+constexpr std::array<std::string_view, 14> known_project_keys{
     "format",       "version",         "name",       "start_scene",  "ppu",
     "width",        "height",          "background", "render_style", "gravity",
-    "camera_pitch", "camera_distance", "camera_fov"};
+    "camera_pitch", "camera_distance", "camera_fov", "camera_clamp"};
 
 [[nodiscard]] std::string entry_path(const std::string& file, const std::string& key) {
     std::string path = file;
@@ -228,6 +229,15 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
     number("camera_pitch", settings.camera_pitch, 5.0, 85.0);
     number("camera_distance", settings.camera_distance, 1.0, 200.0);
     number("camera_fov", settings.camera_fov, 5.0, 90.0);
+    if (const auto clamp = doc.find("camera_clamp"); clamp != doc.end()) {
+        if (clamp->is_boolean()) {
+            settings.camera_clamp = clamp->get<bool>();
+        } else {
+            issues.push_back(
+                serialize::Issue{file + "/camera_clamp", "This must be true or false."});
+            ok = false;
+        }
+    }
     if (const auto gravity = doc.find("gravity"); gravity != doc.end()) {
         const bool valid =
             gravity->is_array() && gravity->size() == 2 &&
@@ -270,6 +280,7 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["camera_pitch"] = settings.camera_pitch;
     json["camera_distance"] = settings.camera_distance;
     json["camera_fov"] = settings.camera_fov;
+    json["camera_clamp"] = settings.camera_clamp;
     json["gravity"] = serialize::Json::array({settings.gravity_x, settings.gravity_y});
     json["ppu"] = settings.ppu;
     json["width"] = settings.width;
@@ -658,14 +669,38 @@ bool Runtime::draw() {
             }
         });
     }
+    const double aspect = static_cast<double>(r.target->width()) /
+                          static_cast<double>(std::max<std::uint32_t>(r.target->height(), 1));
+    scene2d::DioramaCamera orbit;
+    orbit.pitch = r.settings.camera_pitch;
+    orbit.distance = r.settings.camera_distance;
+    orbit.fov = r.settings.camera_fov;
+    orbit.ppu = r.settings.ppu;
+    // Keep the view inside the map, so the void beyond its edges never shows.
+    if (r.settings.camera_clamp) {
+        if (const std::optional<scene2d::Box> bounds = scene2d::map_bounds(*r.world, camera.ppu)) {
+            scene2d::Box view;
+            if (r.settings.style == RenderStyle::Diorama) {
+                view = scene2d::diorama_view_extent(orbit, aspect);
+                // Deeper than the map: keep the near edge on it and let the far side, which
+                // reads as distance, show the background, rather than centring.
+                if (view.bottom - view.top > bounds->bottom - bounds->top) {
+                    view.top = -std::numeric_limits<double>::infinity();
+                }
+            } else {
+                const double ppu = static_cast<double>(std::max<std::uint32_t>(camera.ppu, 1));
+                const double half_width = static_cast<double>(r.target->width()) / ppu / 2.0;
+                const double half_height = static_cast<double>(r.target->height()) / ppu / 2.0;
+                view = scene2d::Box{-half_width, -half_height, half_width, half_height};
+            }
+            const std::array<double, 2> at = scene2d::clamp_view(camera.x, camera.y, view, *bounds);
+            camera.x = at[0];
+            camera.y = at[1];
+        }
+    }
     if (r.settings.style == RenderStyle::Diorama) {
-        scene2d::DioramaCamera orbit;
         orbit.x = camera.x;
         orbit.y = camera.y;
-        orbit.pitch = r.settings.camera_pitch;
-        orbit.distance = r.settings.camera_distance;
-        orbit.fov = r.settings.camera_fov;
-        orbit.ppu = r.settings.ppu;
         scene2d::draw_diorama(*r.world, *r.textures, *r.world_renderer, *r.target, orbit,
                               r.settings.background);
     } else {

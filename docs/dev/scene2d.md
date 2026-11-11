@@ -117,6 +117,19 @@ that has a Position and a Sprite or a Tilemap.
   is not valid are counted in `DrawStats::missing` and skipped. An image's error is in
   `TextureCache::last_error()`. `DrawStats::drawn` counts sprites and tiles.
 
+### Keeping the camera on the map
+
+So that the void beyond a map's edges never shows, a game keeps its camera inside the
+map ([game.md](game.md) §3):
+
+- `map_bounds(world, ppu)` is the box around every tilemap's grid, visible or not.
+- `clamp_view(x, y, view, bounds)` moves the point a camera looks at as little as
+  possible, so that `view` (what the camera shows around the point) stays inside
+  `bounds`. On an axis where the view is larger than the map, the view is centred on it.
+  An infinite edge of the view is never limited.
+- In 2D, the view is the screen: half its width and height, in units, either side of the
+  point.
+
 ## 6. Textures and hot reload
 
 - `TextureCache` loads an image asset onto the GPU the first time it is drawn, and keeps it.
@@ -153,6 +166,13 @@ the style ([game.md](game.md) §2).
   check the exact colours this gives.
 - **Depth** sorts everything; there is no draw order to manage. **Fog** fades distant
   things into the haze.
+- **What the camera shows** (`diorama_view_extent()`): the ground between where the
+  screen's bottom and top edges meet it. Perspective shows more ground above the point
+  than below: about 4 tiles below and 9 above with the default camera. The top is
+  infinite when the top edge looks above the horizon. The sides are measured at the
+  point, so the far corners show a little more. A turned camera (yaw not 0) is not
+  limited yet. A test projects each edge through the real camera and finds it exactly
+  on the screen's edge.
 
 ## 8. Tests
 
@@ -170,6 +190,8 @@ the others run anywhere:
 | Solid tiles | Exact stops in all four directions; touching; rounding either side of an edge; walking out of a wall but not through the next; beside the map; maps not solid, offset, with larger tiles, or broken |
 | Diorama (GPU) | Ground under the point looked at, lit from above to the exact shade; sky beyond the map; a sprite standing above the point with the ground in front, shaded as it faces the camera; still facing it a quarter turn later; fog; block faces counted; broken maps and missing images counted |
 | Diorama camera and light | `brightness()` for faces up, sideways and down, with any length of normal; the eye's position from pitch and distance; the point at the centre; north up the screen; pitch kept below 90 degrees |
+| Camera on the map | `map_bounds()` over maps with offsets, larger tiles and empty maps; `clamp_view()` in the middle, at corners, with a view larger than the map, off-centre and infinite edges, and with broken numbers |
+| Diorama view extent | For 12 cameras (pitch 20 to 85, field of view 10 to 60), the extent's bottom, top and sides projected through `diorama_view_projection()` land on the screen's edges within 0.01 %; the top is infinite when it looks above the horizon |
 | Frames and tilemaps (GPU) | Exact pixels for frames 0, 1 and a wrapped 2; a 2 × 2 map with an empty cell and a skipped tile; a sprite over its map; tiles in view counted for an aligned and an offset camera; bad text and a missing tileset counted |
 
 ## 9. Next increments

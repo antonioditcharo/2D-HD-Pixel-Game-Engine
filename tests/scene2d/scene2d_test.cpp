@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -666,4 +667,99 @@ TEST_CASE("Diorama lighting and camera") {
     camera.pitch = 90.0;
     static_cast<void>(scene2d::diorama_view_projection(camera, 1.0F, &eye));
     CHECK(eye.y == doctest::Approx(10.0 * std::sin(85.0 * 3.14159265358979 / 180.0)));
+}
+
+TEST_CASE("The camera stays inside the map") {
+    reflect::Registry registry;
+    scene2d::register_types(registry);
+    world::World w(registry);
+    REQUIRE(scene2d::register_components(w));
+    CHECK_FALSE(scene2d::map_bounds(w, 16).has_value()); // no tilemaps
+
+    // A 20 x 10 map at (-2, 1), and a 4 x 4 map of 32-pixel tiles (8 x 8 units at 16 PPU)
+    // reaching further down. Empty maps add nothing.
+    const world::Entity ground = w.create("ground");
+    w.add<scene2d::Transform2D>(ground)->x = -2.0;
+    w.get<scene2d::Transform2D>(ground)->y = 1.0;
+    w.add<scene2d::Tilemap>(ground)->tiles = "0\n\n\n\n\n\n\n\n\n,,,,,,,,,,,,,,,,,,,0";
+    const world::Entity big = w.create("big");
+    w.add<scene2d::Transform2D>(big)->y = 5.0;
+    scene2d::Tilemap* tiles = w.add<scene2d::Tilemap>(big);
+    tiles->tiles = "0,0,0,0\n0\n0\n0";
+    tiles->tile_size = 32;
+    const world::Entity empty = w.create("empty");
+    w.add<scene2d::Transform2D>(empty)->x = -100.0;
+    w.add<scene2d::Tilemap>(empty);
+    const std::optional<scene2d::Box> found = scene2d::map_bounds(w, 16);
+    REQUIRE(found.has_value());
+    const scene2d::Box bounds = found.value_or(scene2d::Box{});
+    CHECK(bounds.left == -2.0);
+    CHECK(bounds.top == 1.0);
+    CHECK(bounds.right == 18.0);
+    CHECK(bounds.bottom == 13.0); // 5 + 4 tiles of 2 units
+
+    // A 10 x 6 view inside a 20 x 12 map.
+    const scene2d::Box map{0.0, 0.0, 20.0, 12.0};
+    const scene2d::Box view{-5.0, -3.0, 5.0, 3.0};
+    const auto at = [&](double x, double y, const scene2d::Box& v) {
+        return scene2d::clamp_view(x, y, v, map);
+    };
+    CHECK(at(10.0, 6.0, view) == std::array<double, 2>{10.0, 6.0});  // free in the middle
+    CHECK(at(1.0, 1.0, view) == std::array<double, 2>{5.0, 3.0});    // the top-left corner
+    CHECK(at(19.5, 11.0, view) == std::array<double, 2>{15.0, 9.0}); // the bottom-right
+    CHECK(at(-50.0, 6.0, view) == std::array<double, 2>{5.0, 6.0});
+    // Wider than the map: centred on that axis only.
+    CHECK(at(3.0, 1.0, scene2d::Box{-15.0, -3.0, 15.0, 3.0}) == std::array<double, 2>{10.0, 3.0});
+    // Not centred on the point: 2 above it and 8 below, in a map 12 high.
+    CHECK(at(10.0, 0.0, scene2d::Box{-5.0, -2.0, 5.0, 8.0}) == std::array<double, 2>{10.0, 2.0});
+    CHECK(at(10.0, 12.0, scene2d::Box{-5.0, -2.0, 5.0, 8.0}) == std::array<double, 2>{10.0, 4.0});
+    // An infinite edge is never limited; the other still is.
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    CHECK(at(10.0, 0.0, scene2d::Box{-5.0, -infinity, 5.0, 3.0}) ==
+          std::array<double, 2>{10.0, 0.0});
+    CHECK(at(10.0, 11.0, scene2d::Box{-5.0, -infinity, 5.0, 3.0}) ==
+          std::array<double, 2>{10.0, 9.0});
+    // Broken numbers change nothing.
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    CHECK(std::isnan(at(nan, 6.0, view)[0]));
+    CHECK(scene2d::clamp_view(1.0, 1.0, view, scene2d::Box{nan, 0.0, 20.0, 12.0})[0] == 1.0);
+}
+
+TEST_CASE("The Diorama view extent meets the screen's edges on the ground") {
+    for (const double pitch : {20.0, 35.0, 60.0, 85.0}) {
+        for (const double fov : {10.0, 30.0, 60.0}) {
+            CAPTURE(pitch);
+            CAPTURE(fov);
+            scene2d::DioramaCamera camera;
+            camera.x = 7.0;
+            camera.y = 4.0;
+            camera.pitch = pitch;
+            camera.fov = fov;
+            camera.distance = 12.0;
+            const double aspect = 16.0 / 9.0;
+            const scene2d::Box view = scene2d::diorama_view_extent(camera, aspect);
+            const render::Mat4 vp =
+                scene2d::diorama_view_projection(camera, static_cast<float>(aspect));
+            const auto ndc_y = [&](double map_y) {
+                const auto clip = vp.transform(render::Vec3{7.0F, 0.0F, static_cast<float>(map_y)});
+                return clip[1] / clip[3];
+            };
+            // The bottom edge of the screen meets the ground at view.bottom below the point.
+            CHECK(ndc_y(4.0 + view.bottom) == doctest::Approx(-1.0).epsilon(1e-4));
+            if (pitch > fov / 2.0) {
+                CHECK(ndc_y(4.0 + view.top) == doctest::Approx(1.0).epsilon(1e-4));
+                CHECK(-view.top > view.bottom); // more ground above the point than below
+            } else {
+                CHECK(std::isinf(view.top));
+            }
+            // The sides, at the point: the screen's left and right edges.
+            const auto side =
+                vp.transform(render::Vec3{static_cast<float>(7.0 + view.right), 0.0F, 4.0F});
+            CHECK(side[0] / side[3] == doctest::Approx(1.0).epsilon(1e-4));
+            CHECK(view.left == -view.right);
+        }
+    }
+    scene2d::DioramaCamera turned;
+    turned.yaw = 30.0;
+    CHECK(std::isinf(scene2d::diorama_view_extent(turned, 1.0).right));
 }
