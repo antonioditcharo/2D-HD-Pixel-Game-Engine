@@ -55,6 +55,14 @@ struct LogicAction {
     std::string text; ///< As the block reads, for example "Say {text}".
 };
 
+/// An event a Rule can start on: `event` of `object` (empty for the game's own, such as
+/// "game_start"), reading as `text`, for example "When [who] interacts with it".
+struct LogicEvent {
+    std::string object;
+    std::string event;
+    std::string text;
+};
+
 /// The objects a game gives its logic besides its entities, each bound by the runtime to
 /// the registered type of the same name.
 inline constexpr std::array<std::string_view, 5> game_objects{"audio", "dialogue", "game", "input",
@@ -121,13 +129,16 @@ public:
     [[nodiscard]] const std::vector<LogicFile>& logic() const noexcept;
     /// Problems reading logic files when the project was opened; those files are left out.
     [[nodiscard]] const std::vector<engine::serialize::Issue>& logic_issues() const noexcept;
-    /// The values written into `step` of the logic file at `path` that can be changed in
-    /// place. Empty if there are none, or no such step.
+    /// The values written into `block` of the logic file at `path` that can be changed in
+    /// place: a step's or a condition's values, the name of a Sequence, Brain or state, or
+    /// where a "Go to" leads and after how long. Empty if there are none, or no such block.
     [[nodiscard]] std::vector<LogicSlot> logic_slots(std::string_view path,
-                                                     engine::logic::BlockId step) const;
+                                                     engine::logic::BlockId block) const;
     /// Changes one of those values. Returns false, changing nothing, with `error` in plain
-    /// language, if the value is of the wrong kind or out of range. Changes to the same
-    /// value merge into one step, as typing does.
+    /// language, if the value is of the wrong kind or out of range, or a name is not a
+    /// valid id or already taken. Renaming a Sequence or a state renames what refers to
+    /// it ("Run", "Go to", the first state). Changes to the same value merge into one
+    /// step, as typing does.
     bool set_logic_slot(std::string_view path, engine::logic::BlockId step, std::size_t argument,
                         const engine::reflect::Value& value, std::string& error);
     /// Every action a step can do: those of the game's objects and of the scene's named
@@ -140,6 +151,40 @@ public:
                                           const LogicAction& action, std::string& error);
     /// Deletes a step, with any steps inside it.
     bool remove_logic_step(std::string_view path, engine::logic::BlockId step);
+
+    /// Every event a Rule can start on: the game starting, and the events of the game's
+    /// objects and of the scene's named entities' components.
+    [[nodiscard]] std::vector<LogicEvent> logic_events() const;
+    /// Every condition a Rule or a "Go to" can check, as logic_actions() lists actions.
+    [[nodiscard]] std::vector<LogicAction> logic_conditions() const;
+    /// Adds a Rule starting on `event`, last in the file. Returns its block id, or an
+    /// invalid one with `error`.
+    engine::logic::BlockId add_logic_rule(std::string_view path, const LogicEvent& event,
+                                          std::string& error);
+    /// Adds `condition`, its values the defaults, to the Rule or "Go to" `block` is (or
+    /// is a condition of). All of a Rule's conditions must hold.
+    engine::logic::BlockId add_logic_condition(std::string_view path, engine::logic::BlockId block,
+                                               const LogicAction& condition, std::string& error);
+    /// Adds a Sequence named "sequence_1" (or the next number free).
+    engine::logic::BlockId add_logic_sequence(std::string_view path, std::string& error);
+    /// Adds a Brain named "brain_1" (or the next free) with one state, "idle".
+    engine::logic::BlockId add_logic_brain(std::string_view path, std::string& error);
+    /// Adds a state "state_1" (or the next free) to the Brain `block` is, or is in.
+    engine::logic::BlockId add_logic_state(std::string_view path, engine::logic::BlockId block,
+                                           std::string& error);
+    /// Adds a "Go to" out of the state `block` is (or leads out of), towards the next
+    /// state, after a second.
+    engine::logic::BlockId add_logic_transition(std::string_view path, engine::logic::BlockId block,
+                                                std::string& error);
+    /// Deletes any block: a step, a condition, a Rule, a Sequence, a Brain, a state or a
+    /// "Go to", with everything inside it.
+    bool remove_logic_block(std::string_view path, engine::logic::BlockId block);
+    /// True if `block` is a block of the file that remove_logic_block() can delete.
+    [[nodiscard]] bool is_logic_block(std::string_view path, engine::logic::BlockId block) const;
+    /// Creates an empty Rules file at `path` in assets/ (such as "logic/quests.drules"),
+    /// written when the project is saved. Refused, with `error`, if the name is not
+    /// "<folder/>name.drules" with a valid id as its name, or the file exists.
+    bool create_logic_file(std::string_view path, std::string& error);
     /// Moves a step one place up (-1) or down (+1) among its neighbours.
     bool move_logic_step(std::string_view path, engine::logic::BlockId step, int by);
     /// True if `block` is a step of the logic file (one that can be deleted or moved).
@@ -166,6 +211,14 @@ public:
 
 private:
     struct Impl;
+    /// The slots of a block that is not a step (see logic_slots()).
+    [[nodiscard]] std::vector<LogicSlot> header_slots(engine::logic::LogicAsset& asset,
+                                                      engine::logic::BlockId block) const;
+    /// The objects logic can name: the game's, and the scene's named entities, sorted.
+    [[nodiscard]] std::vector<std::string> logic_objects() const;
+    /// The functions of those objects in `role`, by object, then as they read.
+    [[nodiscard]] std::vector<LogicAction>
+    logic_functions(engine::reflect::FunctionRole role) const;
     explicit Document(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> impl_;
 };

@@ -67,9 +67,11 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
     auto* buttons = new QHBoxLayout();
     add_ = new QToolButton(this);
     add_->setObjectName(QStringLiteral("logic_add"));
-    add_->setText(tr("Add step"));
-    add_->setToolTip(tr("Add a step after the selected one, or first under the selected "
-                        "Rule, Sequence or Brain state."));
+    add_->setText(tr("Add"));
+    add_->setToolTip(tr("Add a step (after the selected one, or first under the selected "
+                        "Rule, Sequence or state), a condition to the selected Rule or "
+                        "\u201cGo to\u201d, a Rule, a Sequence, a Brain, a state, a "
+                        "\u201cGo to\u201d, or a new logic file."));
     add_->setPopupMode(QToolButton::InstantPopup);
     add_->setMenu(new QMenu(add_));
     delete_ = new QPushButton(tr("Delete"), this);
@@ -94,24 +96,7 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
         show_fields();
         update_buttons();
     });
-    connect(add_->menu(), &QMenu::aboutToShow, this, [this] {
-        // The actions of the game's objects and of the scene's entities, by object.
-        QMenu* menu = add_->menu();
-        menu->clear();
-        if (document_ == nullptr) {
-            return;
-        }
-        std::map<std::string, QMenu*> by_object;
-        for (const LogicAction& action : document_->logic_actions()) {
-            QMenu*& sub = by_object[action.object];
-            if (sub == nullptr) {
-                sub = menu->addMenu(text_of(action.object));
-            }
-            QAction* item = sub->addAction(text_of(action.text));
-            item->setObjectName(text_of("action:" + action.object + "/" + action.member));
-            connect(item, &QAction::triggered, this, [this, action] { add_step(action); });
-        }
-    });
+    connect(add_->menu(), &QMenu::aboutToShow, this, [this] { fill_add_menu(); });
     connect(delete_, &QPushButton::clicked, this, [this] { remove_step(); });
     connect(up_, &QPushButton::clicked, this, [this] { move_step(-1); });
     connect(down_, &QPushButton::clicked, this, [this] { move_step(1); });
@@ -162,8 +147,8 @@ void LogicPanel::rebuild() {
         }
         tree_->expandAll();
     }
-    if (block.is_valid()) {
-        select(path, block);
+    if (!path.empty()) {
+        select(path, block); // a file's own line has no block
     }
     show_fields();
     update_buttons();
@@ -327,8 +312,8 @@ void LogicPanel::update_buttons() {
     const auto [path, block] = current();
     const bool open = document_ != nullptr && !path.empty();
     const bool step = open && document_->is_logic_step(path, block);
-    add_->setEnabled(open && block.is_valid());
-    delete_->setEnabled(step);
+    add_->setEnabled(document_ != nullptr);
+    delete_->setEnabled(open && document_->is_logic_block(path, block));
     up_->setEnabled(step);
     down_->setEnabled(step);
     if (!open) {
@@ -344,6 +329,119 @@ void LogicPanel::update_buttons() {
                                .arg(found.size())
                                .arg(text_of(found.front().message)));
     }
+}
+
+void LogicPanel::fill_add_menu() {
+    QMenu* menu = add_->menu();
+    menu->clear();
+    if (document_ == nullptr) {
+        return;
+    }
+    // Lists of things by object: a submenu each, the game's own first.
+    const auto grouped = [](QMenu* into, const std::string& object) {
+        return object.empty() ? into : into->addMenu(text_of(object));
+    };
+    QMenu* steps = menu->addMenu(tr("Step"));
+    std::map<std::string, QMenu*> by_object;
+    for (const LogicAction& action : document_->logic_actions()) {
+        QMenu*& sub = by_object[action.object];
+        if (sub == nullptr) {
+            sub = grouped(steps, action.object);
+        }
+        QAction* item = sub->addAction(text_of(action.text));
+        item->setObjectName(text_of("action:" + action.object + "/" + action.member));
+        connect(item, &QAction::triggered, this, [this, action] { add_step(action); });
+    }
+    QMenu* conditions = menu->addMenu(tr("Condition"));
+    by_object.clear();
+    for (const LogicAction& condition : document_->logic_conditions()) {
+        QMenu*& sub = by_object[condition.object];
+        if (sub == nullptr) {
+            sub = grouped(conditions, condition.object);
+        }
+        QAction* item = sub->addAction(text_of(condition.text));
+        item->setObjectName(text_of("condition:" + condition.object + "/" + condition.member));
+        connect(item, &QAction::triggered, this, [this, condition] {
+            const auto [path, block] = current();
+            std::string error;
+            added(path, document_->add_logic_condition(path, block, condition, error), error);
+        });
+    }
+    QMenu* rules = menu->addMenu(tr("Rule"));
+    by_object.clear();
+    for (const LogicEvent& event : document_->logic_events()) {
+        QMenu*& sub = by_object[event.object];
+        if (sub == nullptr) {
+            sub = grouped(rules, event.object);
+        }
+        QAction* item = sub->addAction(text_of(event.text));
+        item->setObjectName(text_of("rule:" + event.object + "/" + event.event));
+        connect(item, &QAction::triggered, this, [this, event] {
+            const auto [path, block] = current();
+            std::string error;
+            added(path, document_->add_logic_rule(path, event, error), error);
+        });
+    }
+    menu->addSeparator();
+    // Blocks that need only the file, or the Brain or state selected.
+    using Adder = engine::logic::BlockId (Document::*)(std::string_view, engine::logic::BlockId,
+                                                       std::string&);
+    const auto in_file =
+        [this, menu](const QString& text, const char* name,
+                     engine::logic::BlockId (Document::*add)(std::string_view, std::string&)) {
+            QAction* item = menu->addAction(text);
+            item->setObjectName(QString::fromLatin1(name));
+            connect(item, &QAction::triggered, this, [this, add] {
+                const auto [path, block] = current();
+                std::string error;
+                added(path, (document_->*add)(path, error), error);
+            });
+        };
+    const auto under = [this, menu](const QString& text, const char* name, Adder add) {
+        QAction* item = menu->addAction(text);
+        item->setObjectName(QString::fromLatin1(name));
+        connect(item, &QAction::triggered, this, [this, add] {
+            const auto [path, block] = current();
+            std::string error;
+            added(path, (document_->*add)(path, block, error), error);
+        });
+    };
+    in_file(tr("Sequence"), "add_sequence", &Document::add_logic_sequence);
+    in_file(tr("Brain"), "add_brain", &Document::add_logic_brain);
+    under(tr("State (in the selected Brain)"), "add_state", &Document::add_logic_state);
+    under(tr("\u201cGo to\u201d (out of the selected state)"), "add_transition",
+          &Document::add_logic_transition);
+    menu->addSeparator();
+    QAction* file = menu->addAction(tr("New logic file"));
+    file->setObjectName(QStringLiteral("add_file"));
+    connect(file, &QAction::triggered, this, [this] {
+        // logic/logic_1.drules, or the next number free.
+        for (int n = 1;; ++n) {
+            const std::string path = "logic/logic_" + std::to_string(n) + ".drules";
+            std::string error;
+            if (document_->create_logic_file(path, error)) {
+                rebuild();
+                select(path, engine::logic::BlockId{});
+                Q_EMIT edited();
+                return;
+            }
+            if (!error.starts_with("There is already")) {
+                Q_EMIT refused(text_of(error));
+                return;
+            }
+        }
+    });
+}
+
+void LogicPanel::added(const std::string& path, engine::logic::BlockId block,
+                       const std::string& error) {
+    if (!block.is_valid()) {
+        Q_EMIT refused(text_of(error.empty() ? std::string("Select a logic file first.") : error));
+        return;
+    }
+    rebuild();
+    select(path, block);
+    Q_EMIT edited();
 }
 
 void LogicPanel::add_step(const LogicAction& action) {
@@ -364,7 +462,7 @@ void LogicPanel::add_step(const LogicAction& action) {
 
 void LogicPanel::remove_step() {
     const auto [path, block] = current();
-    if (document_ != nullptr && document_->remove_logic_step(path, block)) {
+    if (document_ != nullptr && document_->remove_logic_block(path, block)) {
         rebuild();
         Q_EMIT edited();
     }

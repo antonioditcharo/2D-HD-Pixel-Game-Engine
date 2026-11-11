@@ -527,8 +527,11 @@ TEST_CASE("Logic is edited in place, a step at a time, in the scene's undo") {
     CHECK(error == "Ambient light must be a number from 0 to 2.");
     REQUIRE(d->set_logic_slot(sample_logic, dusk, 0, reflect::Value{std::int64_t{1}}, error));
     CHECK(line_index(*d, "Set ambient light of lighting to 1") >= 0);
-    // Lines that are not steps with values have none.
-    CHECK(d->logic_slots(sample_logic, block_of(*d, "Brain weather")).empty());
+    // A Brain's value is its name; a Rule's header has none.
+    slots = d->logic_slots(sample_logic, block_of(*d, "Brain weather"));
+    REQUIRE(slots.size() == 1);
+    CHECK(slots[0].label == "Name");
+    CHECK(d->logic_slots(sample_logic, block_of(*d, "When the game starts")).empty());
 
     // The actions a step can do: the game's objects' and the scene's entities'.
     const std::vector<editor::LogicAction> actions = d->logic_actions();
@@ -599,6 +602,157 @@ TEST_CASE("Logic is edited in place, a step at a time, in the scene's undo") {
     CHECK_FALSE(d->dirty());
     const auto again = sample.open();
     CHECK(line_index(*again, "Say “Elder: Hello.” (dialogue)") >= 0);
+}
+
+TEST_CASE("Logic is authored from nothing: files, Rules, conditions, Sequences, Brains") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+
+    // A new file, refused when its name is not a logic file's or it exists.
+    CHECK_FALSE(d->create_logic_file("logic/Quests.drules", error));
+    CHECK_FALSE(d->create_logic_file("logic/quests.txt", error));
+    CHECK_FALSE(d->create_logic_file("../quests.drules", error));
+    CHECK_FALSE(d->create_logic_file("logic/main.drules", error));
+    CHECK(error == "There is already a file logic/main.drules.");
+    constexpr std::string_view quests = "logic/quests.drules";
+    REQUIRE(d->create_logic_file(quests, error));
+    REQUIRE(d->logic().size() == 2);
+    CHECK(d->logic()[1].path == quests);
+    CHECK(d->logic()[1].asset.name == "quests");
+    CHECK(d->check_logic(quests).empty());
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        for (const editor::LogicLine& line : editor::describe(d->logic()[1].asset, *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        }
+        return shown;
+    };
+    const auto block = [&](std::string_view text) {
+        for (const editor::LogicLine& line : editor::describe(d->logic()[1].asset, *d)) {
+            if (line.text == text) {
+                return line.block;
+            }
+        }
+        FAIL("no line reads: " << text);
+        return engine::logic::BlockId{};
+    };
+
+    // A Rule on the elder's event, picked from the list; a condition from the list.
+    const std::vector<editor::LogicEvent> events = d->logic_events();
+    REQUIRE_FALSE(events.empty());
+    CHECK(events[0].text == "When the game starts");
+    const auto interacted =
+        std::find_if(events.begin(), events.end(), [](const editor::LogicEvent& e) {
+            return e.object == "elder" && e.event == "interacted";
+        });
+    REQUIRE(interacted != events.end());
+    const engine::logic::BlockId rule = d->add_logic_rule(quests, *interacted, error);
+    REQUIRE(rule.is_valid());
+    CHECK_FALSE(
+        d->add_logic_rule(quests, editor::LogicEvent{"elder", "sneezed", ""}, error).is_valid());
+    CHECK(error == "elder has no event sneezed.");
+    const std::vector<editor::LogicAction> conditions = d->logic_conditions();
+    const auto open =
+        std::find_if(conditions.begin(), conditions.end(), [](const editor::LogicAction& c) {
+            return c.object == "dialogue" && c.member == "is_open";
+        });
+    REQUIRE(open != conditions.end());
+    const engine::logic::BlockId condition = d->add_logic_condition(quests, rule, *open, error);
+    REQUIRE(condition.is_valid());
+    CHECK_FALSE(
+        d->add_logic_condition(quests, rule, editor::LogicAction{"dialogue", "say", ""}, error)
+            .is_valid());
+    CHECK(error == "dialogue has no condition say."); // an action is not a condition
+    // A step under the Rule; it all compiles.
+    REQUIRE(d->add_logic_step(quests, rule, editor::LogicAction{"dialogue", "say", ""}, error)
+                .is_valid());
+    CHECK(d->check_logic(quests).empty());
+
+    std::vector<editor::LogicSlot> slots;
+    // A Sequence and a Brain, with free names; a second state; a "Go to" between them.
+    const engine::logic::BlockId sequence = d->add_logic_sequence(quests, error);
+    REQUIRE(sequence.is_valid());
+    REQUIRE(d->add_logic_sequence(quests, error).is_valid());
+    const engine::logic::BlockId brain = d->add_logic_brain(quests, error);
+    REQUIRE(brain.is_valid());
+    const engine::logic::BlockId idle = block("State idle");
+    const engine::logic::BlockId second = d->add_logic_state(quests, brain, error);
+    REQUIRE(second.is_valid());
+    const engine::logic::BlockId go = d->add_logic_transition(quests, idle, error);
+    REQUIRE(go.is_valid());
+    CHECK_FALSE(d->add_logic_transition(quests, brain, error).is_valid()); // not a state
+    CHECK(d->check_logic(quests).empty());
+    std::vector<std::string> expected{
+        "When [who] interacts with it (elder)",
+        "  If a message is open (dialogue)",
+        "  Say “” (dialogue)",
+        "Sequence sequence_1",
+        "Sequence sequence_2",
+        "Brain brain_1",
+        "  State idle",
+        "    Go to state_1 after 1 seconds",
+        "  State state_1",
+    };
+    CHECK(lines() == expected);
+
+    // Names and times are values: renaming a state renames where "Go to" leads.
+    REQUIRE(d->set_logic_slot(quests, second, 0, reflect::Value{std::string("alert")}, error));
+    CHECK(lines()[7] == "    Go to alert after 1 seconds");
+    REQUIRE(d->set_logic_slot(quests, go, 1, reflect::Value{2.5}, error));
+    CHECK(lines()[7] == "    Go to alert after 2.5 seconds");
+    CHECK_FALSE(d->set_logic_slot(quests, go, 0, reflect::Value{std::string("nowhere")}, error));
+    CHECK(error == "There is no state called nowhere in this Brain.");
+    CHECK_FALSE(d->set_logic_slot(quests, second, 0, reflect::Value{std::string("idle")}, error));
+    CHECK(error == "That name is already used here.");
+    CHECK_FALSE(
+        d->set_logic_slot(quests, sequence, 0, reflect::Value{std::string("Bad Name")}, error));
+    CHECK(error == "Names use lower-case letters, digits and _, and start with a letter.");
+    // The built-in steps: wait, log, and run a Sequence, which names it as a value.
+    const engine::logic::BlockId run =
+        d->add_logic_step(quests, rule, editor::LogicAction{"", "run", ""}, error);
+    REQUIRE(run.is_valid());
+    CHECK(lines()[2] == "  Run sequence_1 and wait for it");
+    slots = d->logic_slots(quests, run);
+    REQUIRE(slots.size() == 1);
+    CHECK(slots[0].label == "Sequence");
+    REQUIRE(d->set_logic_slot(quests, run, 0, reflect::Value{std::string("sequence_2")}, error));
+    CHECK_FALSE(d->set_logic_slot(quests, run, 0, reflect::Value{std::string("outro")}, error));
+    CHECK(error == "There is no Sequence called outro.");
+    REQUIRE(d->set_logic_slot(quests, run, 0, reflect::Value{std::string("sequence_1")}, error));
+    REQUIRE(d->add_logic_step(quests, run, editor::LogicAction{"", "wait", ""}, error).is_valid());
+    CHECK(lines()[3] == "  Wait 1 seconds");
+    // Renaming a Sequence renames the steps that run it.
+    REQUIRE(d->set_logic_slot(quests, sequence, 0, reflect::Value{std::string("intro")}, error));
+    CHECK(lines()[2] == "  Run intro and wait for it");
+    CHECK(d->check_logic(quests).empty());
+
+    // Deleting: a condition, a "Go to", a state, the Brain, a Sequence, the Rule.
+    for (const engine::logic::BlockId gone : {condition, go, second, brain, sequence, rule}) {
+        CAPTURE(gone.value);
+        CHECK(d->is_logic_block(quests, gone));
+        REQUIRE(d->remove_logic_block(quests, gone));
+        CHECK_FALSE(d->is_logic_block(quests, gone));
+    }
+    CHECK(lines() == std::vector<std::string>{"Sequence sequence_2"});
+
+    // Undoing everything removes the new file too; redoing brings it back.
+    while (d->can_undo()) {
+        REQUIRE(d->undo());
+    }
+    CHECK(d->logic().size() == 1);
+    CHECK_FALSE(d->dirty());
+    REQUIRE(d->redo());
+    REQUIRE(d->logic().size() == 2);
+
+    // Saved, the file is written, gets its GUID, and is read back on reopening.
+    REQUIRE(d->add_logic_sequence(quests, error).is_valid());
+    REQUIRE(d->save(error));
+    CHECK(fs::exists(sample.path / "assets" / quests));
+    CHECK(d->assets().find(quests) != nullptr);
+    const auto again = sample.open();
+    REQUIRE(again->logic().size() == 2);
+    CHECK(again->logic()[1].asset.sequences.size() == 1);
 }
 
 TEST_CASE("Picking in the Diorama style goes through the camera") {

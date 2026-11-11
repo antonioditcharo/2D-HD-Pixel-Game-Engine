@@ -480,7 +480,9 @@ TEST_CASE("The Logic view edits logic: values typed in place, steps added, moved
     REQUIRE(up != nullptr);
     CHECK(remove->isEnabled());
     tree->setCurrentItem(item(QStringLiteral("Brain weather")));
-    CHECK_FALSE(remove->isEnabled());
+    CHECK(remove->isEnabled()); // any block can go
+    tree->setCurrentItem(item(QStringLiteral("logic/main.drules")));
+    CHECK_FALSE(remove->isEnabled()); // the file's own line is not a block
 
     // Adding a step after the greeting, from the Add step menu: a chime, selected.
     tree->setCurrentItem(item(QStringLiteral("Say “Elder: Hi.” (dialogue)")));
@@ -523,4 +525,56 @@ TEST_CASE("The Logic view edits logic: values typed in place, steps added, moved
     REQUIRE(e.window.document()->rename(e.guid("elder"), "sage"));
     panel->rebuild();
     CHECK(problems->text().startsWith(QStringLiteral("logic/main.drules does not run")));
+}
+
+TEST_CASE("The Logic view authors logic from its Add menu") {
+    Editor e;
+    editor::LogicPanel* panel = e.window.logic_panel();
+    QTreeWidget* tree = e.window.logic_view();
+    auto* add = panel->findChild<QToolButton*>(QStringLiteral("logic_add"));
+    REQUIRE(add != nullptr);
+    const auto choose = [&](const QString& name) {
+        Q_EMIT add->menu()->aboutToShow();
+        auto* entry = add->menu()->findChild<QAction*>(name);
+        REQUIRE(entry != nullptr);
+        entry->trigger();
+        QApplication::processEvents();
+    };
+    const auto current = [&] {
+        REQUIRE(tree->currentItem() != nullptr);
+        return tree->currentItem()->text(0);
+    };
+
+    // A new file, selected; a Rule on the game starting; a step in it; a Sequence; a
+    // Brain with a second state and a "Go to" between them.
+    choose(QStringLiteral("add_file"));
+    CHECK(current() == QStringLiteral("logic/logic_1.drules"));
+    choose(QStringLiteral("rule:/game_start"));
+    CHECK(current() == QStringLiteral("When the game starts"));
+    choose(QStringLiteral("action:/wait"));
+    CHECK(current() == QStringLiteral("Wait 1 seconds"));
+    tree->setCurrentItem(tree->currentItem()->parent()->parent()); // the file
+    choose(QStringLiteral("add_brain"));
+    CHECK(current() == QStringLiteral("Brain brain_1"));
+    choose(QStringLiteral("add_state"));
+    CHECK(current() == QStringLiteral("State state_1"));
+    // The state's name is a value: renamed in place.
+    auto* name = panel->findChild<QLineEdit*>(QStringLiteral("logic_slot:0"));
+    REQUIRE(name != nullptr);
+    name->setFocus();
+    name->selectAll();
+    QKeyEvent typed(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("alert"));
+    QApplication::sendEvent(name, &typed);
+    QApplication::processEvents();
+    CHECK(current() == QStringLiteral("State alert"));
+    choose(QStringLiteral("add_transition"));
+    CHECK(current() == QStringLiteral("Go to idle after 1 seconds"));
+    auto* problems = panel->findChild<QLabel*>(QStringLiteral("logic_problems"));
+    REQUIRE(problems != nullptr);
+    CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));
+
+    // Saving writes the new file, which the game then reads.
+    REQUIRE(e.window.save());
+    CHECK(fs::exists(e.sample.path / "assets/logic/logic_1.drules"));
+    CHECK(fs::exists(e.sample.path / "assets/logic/logic_1.drules.meta"));
 }

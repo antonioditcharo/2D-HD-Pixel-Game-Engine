@@ -92,13 +92,13 @@ void Document::Impl::restore(const serialize::Json& state) {
         world->destroy(root);
     }
     static_cast<void>(serialize::scene_from_json(state.at("scene"), *world));
-    const serialize::Json& files = state.at("logic");
-    for (LogicFile& file : logic) {
-        if (const auto found = files.find(file.path); found != files.end()) {
-            serialize::LogicLoad loaded = serialize::logic_from_json(*found);
-            if (loaded.asset.has_value()) {
-                file.asset = std::move(*loaded.asset);
-            }
+    // The files as they were then: created ones come and go with undo too. (Keys are
+    // sorted, so the files stay sorted by path.)
+    logic.clear();
+    for (const auto& [path, json] : state.at("logic").items()) {
+        serialize::LogicLoad loaded = serialize::logic_from_json(json);
+        if (loaded.asset.has_value()) {
+            logic.push_back(LogicFile{path, std::move(*loaded.asset)});
         }
     }
 }
@@ -496,6 +496,7 @@ bool Document::save(std::string& error) {
     }
     d.saved["scene"] = state.at("scene");
     // The logic files that changed since they were last saved.
+    bool written_logic = false;
     for (const auto& [path, json] : state.at("logic").items()) {
         serialize::Json& saved_file = d.saved["logic"][path];
         if (json == saved_file) {
@@ -507,6 +508,11 @@ bool Document::save(std::string& error) {
             return false;
         }
         saved_file = json;
+        written_logic = true;
+    }
+    if (written_logic) {
+        // A new file gets its .meta, and so its GUID, as any asset does.
+        static_cast<void>(d.assets->refresh());
     }
     d.merging = false;
     return true;

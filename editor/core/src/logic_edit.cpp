@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <set>
 #include <utility>
 #include <variant>
@@ -22,6 +23,7 @@ namespace world = engine::world;
 using logic::BlockId;
 using logic::Stmt;
 using logic::StmtKind;
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -316,14 +318,188 @@ LogicSlot slot(std::size_t argument, std::string label, reflect::ValueKind kind,
     return s;
 }
 
+/// Where a block that is not a step is. A state's and a "Go to"'s Brain is set too, and
+/// a "Go to"'s state when it leads out of one (not for "from any state").
+struct Header {
+    logic::Rule* rule = nullptr;
+    logic::Sequence* sequence = nullptr;
+    logic::Brain* brain = nullptr;
+    logic::BrainState* state = nullptr;
+    logic::Transition* transition = nullptr;
+    std::vector<logic::Transition>* transitions = nullptr;
+    logic::Expr* condition = nullptr;
+    std::vector<logic::Expr>* conditions = nullptr;
+    std::size_t index = 0; ///< In whichever list holds the block.
+
+    [[nodiscard]] bool found() const noexcept {
+        return rule != nullptr || sequence != nullptr || brain != nullptr;
+    }
+};
+
+bool find_condition(std::vector<logic::Expr>& conditions, BlockId id, Header& h) {
+    for (std::size_t i = 0; i < conditions.size(); ++i) {
+        if (conditions[i].id == id) {
+            h.condition = &conditions[i];
+            h.conditions = &conditions;
+            h.index = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool find_transition(std::vector<logic::Transition>& list, BlockId id, Header& h) {
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        if (list[i].id == id) {
+            h.transition = &list[i];
+            h.transitions = &list;
+            h.index = i;
+            return true;
+        }
+        if (find_condition(list[i].conditions, id, h)) {
+            h.transition = &list[i];
+            return true;
+        }
+    }
+    return false;
+}
+
+Header find_header(logic::LogicAsset& asset, BlockId id) {
+    Header h;
+    if (!id.is_valid()) {
+        return h;
+    }
+    for (std::size_t i = 0; i < asset.rules.size(); ++i) {
+        logic::Rule& rule = asset.rules[i];
+        if (rule.id == id) {
+            h.rule = &rule;
+            h.index = i;
+            return h;
+        }
+        if (find_condition(rule.conditions, id, h)) {
+            h.rule = &rule;
+            return h;
+        }
+    }
+    for (std::size_t i = 0; i < asset.sequences.size(); ++i) {
+        if (asset.sequences[i].id == id) {
+            h.sequence = &asset.sequences[i];
+            h.index = i;
+            return h;
+        }
+    }
+    for (std::size_t b = 0; b < asset.brains.size(); ++b) {
+        logic::Brain& brain = asset.brains[b];
+        if (brain.id == id) {
+            h.brain = &brain;
+            h.index = b;
+            return h;
+        }
+        for (std::size_t i = 0; i < brain.states.size(); ++i) {
+            logic::BrainState& state = brain.states[i];
+            if (state.id == id) {
+                h.brain = &brain;
+                h.state = &state;
+                h.index = i;
+                return h;
+            }
+            if (find_transition(state.transitions, id, h)) {
+                h.brain = &brain;
+                h.state = &state;
+                return h;
+            }
+        }
+        if (find_transition(brain.from_any, id, h)) {
+            h.brain = &brain;
+            return h;
+        }
+    }
+    return h;
+}
+
+/// Calls `visit` on every step of `list`, inside ones too.
+template <typename Visit>
+void each_step(std::vector<Stmt>& list, const Visit& visit) {
+    for (Stmt& s : list) {
+        visit(s);
+        each_step(s.body, visit);
+        each_step(s.otherwise, visit);
+    }
+}
+
+/// "sequence_1", or the first "<stem>_<n>" for which `taken` is false.
+template <typename Taken>
+std::string free_name(const std::string& stem, const Taken& taken) {
+    for (int n = 1;; ++n) {
+        std::string name = stem + "_" + std::to_string(n);
+        if (!taken(name)) {
+            return name;
+        }
+    }
+}
+
+constexpr std::string_view bad_name =
+    "Names use lower-case letters, digits and _, and start with a letter.";
+
+/// The default value of each parameter of `f`, as literals.
+std::vector<logic::Expr> starting_operands(const reflect::FunctionInfo& f) {
+    std::vector<logic::Expr> operands;
+    operands.reserve(f.parameters.size());
+    for (const reflect::ParameterInfo& p : f.parameters) {
+        operands.push_back(logic::ir::literal(starting_value(p)));
+    }
+    return operands;
+}
+
 } // namespace
+
+std::vector<LogicSlot> Document::header_slots(logic::LogicAsset& asset, BlockId block) const {
+    const Impl& d = *impl_;
+    const Header h = find_header(asset, block);
+    std::vector<LogicSlot> slots;
+    if (h.condition != nullptr) {
+        const logic::Expr& c = *h.condition;
+        const reflect::FunctionInfo* f =
+            c.kind == logic::ExprKind::Call
+                ? find_function(Lookup{d.registry, *d.world}, c.object, c.member)
+                : nullptr;
+        if (f != nullptr) {
+            for (std::size_t i = 0; i < f->parameters.size() && i < c.operands.size(); ++i) {
+                if (c.operands[i].kind != logic::ExprKind::Literal) {
+                    continue;
+                }
+                const reflect::ParameterInfo& p = f->parameters[i];
+                LogicSlot one = slot(i, p.meta.display_name, p.kind, c.operands[i].literal);
+                one.limits = p.limits;
+                one.choice = p.choice;
+                slots.push_back(std::move(one));
+            }
+        }
+    } else if (h.transition != nullptr) {
+        slots.push_back(slot(0, "Go to", reflect::ValueKind::Text, h.transition->to));
+        LogicSlot after =
+            slot(1, "After seconds", reflect::ValueKind::Float, h.transition->min_time);
+        after.limits.min = 0.0;
+        slots.push_back(std::move(after));
+    } else if (h.state != nullptr) {
+        slots.push_back(slot(0, "Name", reflect::ValueKind::Text, h.state->name));
+    } else if (h.brain != nullptr) {
+        slots.push_back(slot(0, "Name", reflect::ValueKind::Text, h.brain->name));
+    } else if (h.sequence != nullptr) {
+        slots.push_back(slot(0, "Name", reflect::ValueKind::Text, h.sequence->name));
+    }
+    return slots;
+}
 
 std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId step) const {
     Impl& d = *impl_;
     LogicFile* file = d.logic_file(path);
-    const Place place = file != nullptr ? find_step(file->asset, step) : Place{};
-    if (place.list == nullptr) {
+    if (file == nullptr) {
         return {};
+    }
+    const Place place = find_step(file->asset, step);
+    if (place.list == nullptr) {
+        return header_slots(file->asset, step);
     }
     const Stmt& s = (*place.list)[place.index];
     const auto literal = [&s](std::size_t i) {
@@ -382,10 +558,12 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId step
             slots.push_back(slot(0, "Text", reflect::ValueKind::Text, s.arguments[0].literal));
         }
         break;
+    case StmtKind::Run:
+        slots.push_back(slot(0, "Sequence", reflect::ValueKind::Text, s.member));
+        break;
     case StmtKind::If:
     case StmtKind::WaitUntil:
-    case StmtKind::Run:
-        break; // conditions and sequence names are not values typed in
+        break; // conditions are not values typed in
     }
     return slots;
 }
@@ -398,7 +576,7 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
         return s.argument == argument;
     });
     if (found == slots.end()) {
-        error = "That step has no such value to change.";
+        error = "That block has no such value to change.";
         return false;
     }
     std::optional<reflect::Value> fitted = fit(*found, value, error);
@@ -406,9 +584,90 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
         return false;
     }
     LogicFile* file = d.logic_file(path);
-    const Place place = find_step(file->asset, step);
+    logic::LogicAsset& asset = file->asset;
+    const Place place = find_step(asset, step);
+    const Header h = place.list == nullptr ? find_header(asset, step) : Header{};
+    // Names: valid, free, and followed by what refers to them.
+    const auto* text = std::get_if<std::string>(&*fitted);
+    if (place.list != nullptr && (*place.list)[place.index].kind == StmtKind::Run &&
+        (text == nullptr ||
+         std::none_of(asset.sequences.begin(), asset.sequences.end(),
+                      [text](const logic::Sequence& q) { return q.name == *text; }))) {
+        error = "There is no Sequence called " + (text != nullptr ? *text : std::string()) + ".";
+        return false;
+    }
+    const bool naming = place.list == nullptr && h.condition == nullptr &&
+                        (h.transition == nullptr || argument == 0);
+    if (naming && (text == nullptr || !reflect::is_valid_id(*text))) {
+        error = h.transition != nullptr ? "There is no state called that in this Brain."
+                                        : std::string(bad_name);
+        return false;
+    }
+    if (naming && h.transition != nullptr &&
+        std::none_of(h.brain->states.begin(), h.brain->states.end(),
+                     [text](const logic::BrainState& st) { return st.name == *text; })) {
+        error = "There is no state called " + *text + " in this Brain.";
+        return false;
+    }
+    if (naming && h.transition == nullptr) {
+        const bool taken =
+            h.state != nullptr   ? std::any_of(h.brain->states.begin(), h.brain->states.end(),
+                                               [&](const logic::BrainState& st) {
+                                                 return &st != h.state && st.name == *text;
+                                             })
+            : h.brain != nullptr ? std::any_of(asset.brains.begin(), asset.brains.end(),
+                                               [&](const logic::Brain& b) {
+                                                   return &b != h.brain && b.name == *text;
+                                               })
+                                 : std::any_of(asset.sequences.begin(), asset.sequences.end(),
+                                               [&](const logic::Sequence& q) {
+                                                   return &q != h.sequence && q.name == *text;
+                                               });
+        if (taken) {
+            error = "That name is already used here.";
+            return false;
+        }
+    }
     engine::serialize::Json before = d.snapshot();
-    (*place.list)[place.index].arguments[argument].literal = std::move(*fitted);
+    if (place.list != nullptr && (*place.list)[place.index].kind == StmtKind::Run) {
+        (*place.list)[place.index].member = *text;
+    } else if (place.list != nullptr) {
+        (*place.list)[place.index].arguments[argument].literal = std::move(*fitted);
+    } else if (h.condition != nullptr) {
+        h.condition->operands[argument].literal = std::move(*fitted);
+    } else if (h.transition != nullptr) {
+        if (argument == 0) {
+            h.transition->to = *text;
+        } else {
+            h.transition->min_time = std::get<double>(*fitted);
+        }
+    } else if (h.state != nullptr) {
+        const std::string old = h.state->name;
+        h.state->name = *text;
+        if (h.brain->initial == old) {
+            h.brain->initial = *text;
+        }
+        for (logic::BrainState& st : h.brain->states) {
+            for (logic::Transition& go : st.transitions) {
+                go.to = go.to == old ? *text : go.to;
+            }
+        }
+        for (logic::Transition& go : h.brain->from_any) {
+            go.to = go.to == old ? *text : go.to;
+        }
+    } else if (h.brain != nullptr) {
+        h.brain->name = *text;
+    } else if (h.sequence != nullptr) {
+        const std::string old = h.sequence->name;
+        h.sequence->name = *text;
+        for (std::vector<Stmt>* list : step_lists(asset)) {
+            each_step(*list, [&](Stmt& st) {
+                if (st.kind == StmtKind::Run && st.member == old) {
+                    st.member = *text;
+                }
+            });
+        }
+    }
     d.record("Change " + found->label + " in " + std::string(path), std::move(before),
              engine::Guid{},
              "logic/" + std::string(path) + "/" + std::to_string(step.value) + "/" +
@@ -416,7 +675,7 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
     return true;
 }
 
-std::vector<LogicAction> Document::logic_actions() const {
+std::vector<std::string> Document::logic_objects() const {
     const Impl& d = *impl_;
     std::set<std::string> objects(game_objects.begin(), game_objects.end());
     for (const world::Entity e : entities()) {
@@ -425,20 +684,35 @@ std::vector<LogicAction> Document::logic_actions() const {
             objects.emplace(name);
         }
     }
-    std::vector<LogicAction> actions;
-    for (const std::string& object : objects) {
+    return {objects.begin(), objects.end()};
+}
+
+std::vector<LogicAction> Document::logic_functions(reflect::FunctionRole role) const {
+    const Impl& d = *impl_;
+    std::vector<LogicAction> found;
+    for (const std::string& object : logic_objects()) {
         std::vector<LogicAction> mine;
         for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, object)) {
             for (const reflect::FunctionInfo& f : type->functions) {
-                if (f.role == reflect::FunctionRole::Action) {
+                if (f.role == role) {
                     mine.push_back(LogicAction{object, f.id, reflect::block_text(f)});
                 }
             }
         }
         std::sort(mine.begin(), mine.end(),
                   [](const LogicAction& a, const LogicAction& b) { return a.text < b.text; });
-        actions.insert(actions.end(), mine.begin(), mine.end());
+        found.insert(found.end(), mine.begin(), mine.end());
     }
+    return found;
+}
+
+std::vector<LogicAction> Document::logic_actions() const {
+    // The built-in steps first (object ""), then the objects' actions.
+    std::vector<LogicAction> actions{LogicAction{"", "log", "Log {text}"},
+                                     LogicAction{"", "run", "Run {sequence} and wait for it"},
+                                     LogicAction{"", "wait", "Wait {seconds} seconds"}};
+    std::vector<LogicAction> objects = logic_functions(reflect::FunctionRole::Action);
+    actions.insert(actions.end(), objects.begin(), objects.end());
     return actions;
 }
 
@@ -451,9 +725,18 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
         return BlockId{};
     }
     const reflect::FunctionInfo* f =
-        find_function(Lookup{d.registry, *d.world}, action.object, action.member);
-    if (f == nullptr || f->role != reflect::FunctionRole::Action) {
+        action.object.empty()
+            ? nullptr
+            : find_function(Lookup{d.registry, *d.world}, action.object, action.member);
+    const bool built_in =
+        action.object.empty() &&
+        (action.member == "log" || action.member == "run" || action.member == "wait");
+    if (!built_in && (f == nullptr || f->role != reflect::FunctionRole::Action)) {
         error = action.object + " cannot " + action.member + ".";
+        return BlockId{};
+    }
+    if (built_in && action.member == "run" && file->asset.sequences.empty()) {
+        error = "There is no Sequence to run yet: add one first.";
         return BlockId{};
     }
     std::vector<Stmt>* list = nullptr;
@@ -468,18 +751,30 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
         error = "Steps go under a Rule, a Sequence or a Brain state, or after another step.";
         return BlockId{};
     }
+    const std::uint64_t next = next_id(file->asset).value;
     Stmt step;
-    step.kind = StmtKind::Do;
-    step.id = next_id(file->asset);
-    step.object = action.object;
-    step.member = action.member;
-    for (const reflect::ParameterInfo& p : f->parameters) {
-        step.arguments.push_back(logic::ir::literal(starting_value(p)));
+    std::string label;
+    if (built_in && action.member == "log") {
+        step = logic::ir::log(next, logic::ir::literal(reflect::Value{std::string()}));
+        label = "Log";
+    } else if (built_in && action.member == "run") {
+        step = logic::ir::run(next, file->asset.sequences.front().name);
+        label = "Run";
+    } else if (built_in) {
+        step = logic::ir::wait(next, logic::ir::literal(reflect::Value{1.0}));
+        label = "Wait";
+    } else {
+        step.kind = StmtKind::Do;
+        step.id = BlockId{next};
+        step.object = action.object;
+        step.member = action.member;
+        step.arguments = starting_operands(*f);
+        label = f->meta.display_name;
     }
     const BlockId id = step.id;
     engine::serialize::Json before = d.snapshot();
     list->insert(list->begin() + static_cast<std::ptrdiff_t>(at), std::move(step));
-    d.record("Add " + f->meta.display_name + " step", std::move(before));
+    d.record("Add " + label + " step", std::move(before));
     return id;
 }
 
@@ -516,6 +811,235 @@ bool Document::move_logic_step(std::string_view path, BlockId step, int by) {
 bool Document::is_logic_step(std::string_view path, BlockId block) const {
     LogicFile* file = impl_->logic_file(path);
     return file != nullptr && find_step(file->asset, block).list != nullptr;
+}
+
+std::vector<LogicEvent> Document::logic_events() const {
+    const Impl& d = *impl_;
+    std::vector<LogicEvent> events{LogicEvent{"", "game_start", "When the game starts"}};
+    for (const std::string& object : logic_objects()) {
+        std::vector<LogicEvent> mine;
+        for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, object)) {
+            for (const reflect::EventInfo& e : type->events) {
+                mine.push_back(LogicEvent{object, e.id, reflect::block_text(e)});
+            }
+        }
+        std::sort(mine.begin(), mine.end(),
+                  [](const LogicEvent& a, const LogicEvent& b) { return a.text < b.text; });
+        events.insert(events.end(), mine.begin(), mine.end());
+    }
+    return events;
+}
+
+std::vector<LogicAction> Document::logic_conditions() const {
+    return logic_functions(reflect::FunctionRole::Condition);
+}
+
+BlockId Document::add_logic_rule(std::string_view path, const LogicEvent& event,
+                                 std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    if (file == nullptr) {
+        error = "There is no logic file " + std::string(path) + ".";
+        return BlockId{};
+    }
+    const bool game_wide = event.object.empty() && event.event == "game_start";
+    bool known = game_wide;
+    for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, event.object)) {
+        known = known || type->find_event(event.event) != nullptr;
+    }
+    if (!known) {
+        error = (event.object.empty() ? std::string("The game") : event.object) + " has no event " +
+                event.event + ".";
+        return BlockId{};
+    }
+    logic::Rule rule;
+    rule.id = next_id(file->asset);
+    rule.object = event.object;
+    rule.event = event.event;
+    engine::serialize::Json before = d.snapshot();
+    file->asset.rules.push_back(rule);
+    d.record("Add a Rule", std::move(before));
+    return rule.id;
+}
+
+BlockId Document::add_logic_condition(std::string_view path, BlockId block,
+                                      const LogicAction& condition, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const Header h = file != nullptr ? find_header(file->asset, block) : Header{};
+    std::vector<logic::Expr>* list = h.transition != nullptr ? &h.transition->conditions
+                                     : h.rule != nullptr     ? &h.rule->conditions
+                                                             : nullptr;
+    if (list == nullptr) {
+        error = "Conditions go on a Rule or a “Go to”.";
+        return BlockId{};
+    }
+    const reflect::FunctionInfo* f =
+        find_function(Lookup{d.registry, *d.world}, condition.object, condition.member);
+    if (f == nullptr || f->role != reflect::FunctionRole::Condition) {
+        error = condition.object + " has no condition " + condition.member + ".";
+        return BlockId{};
+    }
+    logic::Expr e = logic::ir::call(condition.object, condition.member, starting_operands(*f));
+    e.id = next_id(file->asset);
+    const BlockId id = e.id;
+    engine::serialize::Json before = d.snapshot();
+    list->push_back(std::move(e));
+    d.record("Add a condition", std::move(before));
+    return id;
+}
+
+BlockId Document::add_logic_sequence(std::string_view path, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    if (file == nullptr) {
+        error = "There is no logic file " + std::string(path) + ".";
+        return BlockId{};
+    }
+    logic::Sequence sequence;
+    sequence.id = next_id(file->asset);
+    sequence.name = free_name("sequence", [file](const std::string& name) {
+        return std::any_of(file->asset.sequences.begin(), file->asset.sequences.end(),
+                           [&name](const logic::Sequence& q) { return q.name == name; });
+    });
+    engine::serialize::Json before = d.snapshot();
+    file->asset.sequences.push_back(sequence);
+    d.record("Add a Sequence", std::move(before));
+    return sequence.id;
+}
+
+BlockId Document::add_logic_brain(std::string_view path, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    if (file == nullptr) {
+        error = "There is no logic file " + std::string(path) + ".";
+        return BlockId{};
+    }
+    logic::Brain brain;
+    brain.id = next_id(file->asset);
+    brain.name = free_name("brain", [file](const std::string& name) {
+        return std::any_of(file->asset.brains.begin(), file->asset.brains.end(),
+                           [&name](const logic::Brain& b) { return b.name == name; });
+    });
+    logic::BrainState idle;
+    idle.id = BlockId{brain.id.value + 1};
+    idle.name = "idle";
+    brain.states.push_back(idle);
+    engine::serialize::Json before = d.snapshot();
+    file->asset.brains.push_back(brain);
+    d.record("Add a Brain", std::move(before));
+    return brain.id;
+}
+
+BlockId Document::add_logic_state(std::string_view path, BlockId block, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const Header h = file != nullptr ? find_header(file->asset, block) : Header{};
+    if (h.brain == nullptr) {
+        error = "States go in a Brain.";
+        return BlockId{};
+    }
+    logic::BrainState state;
+    state.id = next_id(file->asset);
+    state.name = free_name("state", [&h](const std::string& name) {
+        return std::any_of(h.brain->states.begin(), h.brain->states.end(),
+                           [&name](const logic::BrainState& st) { return st.name == name; });
+    });
+    engine::serialize::Json before = d.snapshot();
+    h.brain->states.push_back(state);
+    d.record("Add a state", std::move(before));
+    return state.id;
+}
+
+BlockId Document::add_logic_transition(std::string_view path, BlockId block, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const Header h = file != nullptr ? find_header(file->asset, block) : Header{};
+    if (h.state == nullptr) {
+        error = "A “Go to” leads out of a state.";
+        return BlockId{};
+    }
+    // Towards the state after this one, or the first.
+    const auto here = static_cast<std::size_t>(h.state - h.brain->states.data());
+    logic::Transition go;
+    go.id = next_id(file->asset);
+    go.to = h.brain->states[(here + 1) % h.brain->states.size()].name;
+    go.min_time = 1.0;
+    engine::serialize::Json before = d.snapshot();
+    h.state->transitions.push_back(go);
+    d.record("Add a Go to", std::move(before));
+    return go.id;
+}
+
+bool Document::remove_logic_block(std::string_view path, BlockId block) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    if (file == nullptr) {
+        return false;
+    }
+    if (is_logic_step(path, block)) {
+        return remove_logic_step(path, block);
+    }
+    const Header h = find_header(file->asset, block);
+    if (!h.found()) {
+        return false;
+    }
+    const auto at = static_cast<std::ptrdiff_t>(h.index);
+    engine::serialize::Json before = d.snapshot();
+    std::string what;
+    if (h.condition != nullptr) {
+        h.conditions->erase(h.conditions->begin() + at);
+        what = "condition";
+    } else if (h.transition != nullptr) {
+        h.transitions->erase(h.transitions->begin() + at);
+        what = "Go to";
+    } else if (h.state != nullptr) {
+        h.brain->states.erase(h.brain->states.begin() + at);
+        what = "state";
+    } else if (h.brain != nullptr) {
+        file->asset.brains.erase(file->asset.brains.begin() + at);
+        what = "Brain";
+    } else if (h.sequence != nullptr) {
+        file->asset.sequences.erase(file->asset.sequences.begin() + at);
+        what = "Sequence";
+    } else {
+        file->asset.rules.erase(file->asset.rules.begin() + at);
+        what = "Rule";
+    }
+    d.record("Delete a " + what, std::move(before));
+    return true;
+}
+
+bool Document::is_logic_block(std::string_view path, BlockId block) const {
+    LogicFile* file = impl_->logic_file(path);
+    return file != nullptr && (find_step(file->asset, block).list != nullptr ||
+                               find_header(file->asset, block).found());
+}
+
+bool Document::create_logic_file(std::string_view path, std::string& error) {
+    Impl& d = *impl_;
+    const fs::path file(path);
+    const std::string stem = file.stem().string();
+    if (file.extension() != ".drules" || !reflect::is_valid_id(stem) || file.is_absolute() ||
+        std::any_of(file.begin(), file.end(), [](const fs::path& part) { return part == ".."; })) {
+        error = "A logic file is named like logic/quests.drules: its name of lower-case "
+                "letters, digits and _, in assets/.";
+        return false;
+    }
+    std::error_code ignored;
+    if (d.logic_file(path) != nullptr || d.assets->find(path) != nullptr ||
+        fs::exists(d.folder / "assets" / file, ignored)) {
+        error = "There is already a file " + std::string(path) + ".";
+        return false;
+    }
+    engine::serialize::Json before = d.snapshot();
+    LogicFile created{std::string(path), logic::LogicAsset{}};
+    created.asset.name = stem;
+    d.logic.push_back(std::move(created));
+    std::sort(d.logic.begin(), d.logic.end(),
+              [](const LogicFile& a, const LogicFile& b) { return a.path < b.path; });
+    d.record("Create " + std::string(path), std::move(before));
+    return true;
 }
 
 std::vector<logic::Diagnostic> Document::check_logic(std::string_view path) const {

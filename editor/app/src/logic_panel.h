@@ -2,8 +2,10 @@
 
 // The Logic view: every logic file of the project as plain language, edited in place.
 // Selecting a step shows the values written into it (the text said, the seconds waited)
-// as fields that change it as you type; the buttons add a step (after the selected one, or
-// first under a selected Rule, Sequence or Brain state), delete it, or move it up or down.
+// as fields that change it as you type. Add puts in a step (after the selected one, or
+// first under a selected Rule, Sequence or Brain state), a condition, a Rule on any event,
+// a Sequence, a Brain, a state, a "Go to", or a new logic file; Delete removes any of
+// them; Up and Down move steps.
 // Below, the compiler says whether the file still runs. Every edit is a step of the
 // Document's undo.
 //
@@ -50,6 +52,9 @@ private:
     void show_fields();
     void refresh_texts();
     void update_buttons();
+    void fill_add_menu();
+    /// After adding `block` (invalid, with `error`, if refused): shows and selects it.
+    void added(const std::string& path, engine::logic::BlockId block, const std::string& error);
     void add_step(const LogicAction& action);
     void remove_step();
     void move_step(int by);
