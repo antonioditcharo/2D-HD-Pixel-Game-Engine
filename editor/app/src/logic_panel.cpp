@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -11,6 +12,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
@@ -20,6 +22,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <variant>
 
 #include "editor/core/logic_text.h"
@@ -66,6 +69,13 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
     form_ = new QFormLayout(fields_);
     form_->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     layout->addWidget(fields_);
+
+    // The selected file's variables.
+    variables_ = new QGroupBox(tr("Variables"), this);
+    variables_->setObjectName(QStringLiteral("logic_variables"));
+    variables_form_ = new QFormLayout(variables_);
+    variables_form_->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    layout->addWidget(variables_);
 
     auto* buttons = new QHBoxLayout();
     add_ = new QToolButton(this);
@@ -225,7 +235,124 @@ void LogicPanel::refresh_texts() {
     }
 }
 
+void LogicPanel::show_variables() {
+    while (variables_form_->rowCount() > 0) {
+        variables_form_->removeRow(0);
+    }
+    if (document_ == nullptr) {
+        variables_->hide();
+        return;
+    }
+    const std::string path = current().first;
+    const auto file = std::find_if(document_->logic().begin(), document_->logic().end(),
+                                   [&path](const LogicFile& f) { return f.path == path; });
+    variables_->setVisible(file != document_->logic().end());
+    if (file == document_->logic().end()) {
+        return;
+    }
+    const std::string at = path;
+    // Rebuilt later, not from inside the signal of a field that goes with it.
+    const auto later = [this, at] {
+        QTimer::singleShot(0, this, [this, at] {
+            rebuild();
+            Q_EMIT edited();
+        });
+    };
+    for (const engine::logic::Variable& v : file->asset.variables) {
+        const std::string name = v.id;
+        auto* row = new QWidget(variables_);
+        auto* line = new QHBoxLayout(row);
+        line->setContentsMargins(0, 0, 0, 0);
+        auto* rename = new QLineEdit(text_of(name), row);
+        rename->setObjectName(text_of("variable_name:" + name));
+        connect(rename, &QLineEdit::editingFinished, this, [this, at, name, rename, later] {
+            const std::string wanted = utf8(rename->text());
+            if (wanted == name) {
+                return;
+            }
+            std::string error;
+            if (!document_->rename_logic_variable(at, name, wanted, error)) {
+                Q_EMIT refused(text_of(error));
+                rename->setText(text_of(name));
+                return;
+            }
+            later();
+        });
+        line->addWidget(rename, 1);
+        const auto start = [this, at, name](const reflect::Value& value) {
+            std::string error;
+            if (!document_->set_logic_variable_start(at, name, value, error)) {
+                Q_EMIT refused(text_of(error));
+                return;
+            }
+            Q_EMIT edited();
+        };
+        QWidget* field = nullptr;
+        const reflect::Value initial = v.initial.value_or(reflect::Value{false});
+        switch (v.kind) {
+        case reflect::ValueKind::Bool: {
+            auto* tick = new QCheckBox(row);
+            const auto* on = std::get_if<bool>(&initial);
+            tick->setChecked(on != nullptr && *on);
+            connect(tick, &QCheckBox::toggled, this,
+                    [start](bool yes) { start(reflect::Value{yes}); });
+            field = tick;
+            break;
+        }
+        case reflect::ValueKind::Int: {
+            auto* spin = new QSpinBox(row);
+            spin->setRange(-1000000, 1000000);
+            const auto* number = std::get_if<std::int64_t>(&initial);
+            spin->setValue(number != nullptr ? static_cast<int>(*number) : 0);
+            connect(spin, qOverload<int>(&QSpinBox::valueChanged), this,
+                    [start](int n) { start(reflect::Value{std::int64_t{n}}); });
+            field = spin;
+            break;
+        }
+        case reflect::ValueKind::Float: {
+            auto* spin = new QDoubleSpinBox(row);
+            spin->setRange(-1.0e6, 1.0e6);
+            spin->setDecimals(3);
+            const auto* number = std::get_if<double>(&initial);
+            spin->setValue(number != nullptr ? *number : 0.0);
+            connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+                    [start](double n) { start(reflect::Value{n}); });
+            field = spin;
+            break;
+        }
+        case reflect::ValueKind::Text:
+        case reflect::ValueKind::Choice: {
+            const auto* words = std::get_if<std::string>(&initial);
+            auto* edit = new QLineEdit(words != nullptr ? text_of(*words) : QString(), row);
+            connect(edit, &QLineEdit::textEdited, this,
+                    [start](const QString& text) { start(reflect::Value{utf8(text)}); });
+            field = edit;
+            break;
+        }
+        }
+        field->setObjectName(text_of("variable_start:" + name));
+        field->setToolTip(tr("What it holds when the game starts."));
+        line->addWidget(field, 1);
+        auto* remove = new QPushButton(tr("Delete"), row);
+        remove->setObjectName(text_of("variable_delete:" + name));
+        connect(remove, &QPushButton::clicked, this, [this, at, name, later] {
+            std::string error;
+            if (!document_->remove_logic_variable(at, name, error)) {
+                Q_EMIT refused(text_of(error));
+                return;
+            }
+            later();
+        });
+        line->addWidget(remove);
+        variables_form_->addRow(row);
+    }
+    if (file->asset.variables.empty()) {
+        variables_form_->addRow(new QLabel(tr("None yet: use Add, then Variable."), variables_));
+    }
+}
+
 void LogicPanel::show_fields() {
+    show_variables();
     // Old fields go now, so lookups by name find only the new ones.
     while (form_->rowCount() > 0) {
         form_->removeRow(0);
@@ -419,6 +546,47 @@ void LogicPanel::fill_add_menu() {
                       error);
             });
         }
+    }
+    // Variables: new ones by kind, and comparisons of the file's own.
+    QMenu* variable = menu->addMenu(tr("Variable"));
+    for (const auto& [kind, label, id] :
+         {std::tuple{reflect::ValueKind::Int, tr("Whole number"), "int"},
+          std::tuple{reflect::ValueKind::Float, tr("Number"), "float"},
+          std::tuple{reflect::ValueKind::Bool, tr("Yes or no"), "bool"},
+          std::tuple{reflect::ValueKind::Text, tr("Text"), "text"}}) {
+        QAction* item = variable->addAction(label);
+        item->setObjectName(QStringLiteral("variable:") + QString::fromLatin1(id));
+        const reflect::ValueKind made = kind;
+        connect(item, &QAction::triggered, this, [this, made] {
+            const auto [path, block] = current();
+            std::string error;
+            if (!document_->add_logic_variable(path, made, error)) {
+                Q_EMIT refused(
+                    text_of(error.empty() ? std::string("Select a logic file first.") : error));
+                return;
+            }
+            rebuild();
+            Q_EMIT edited();
+        });
+    }
+    QMenu* compare = menu->addMenu(tr("Compare a variable"));
+    {
+        const std::string path = current().first;
+        const auto file = std::find_if(document_->logic().begin(), document_->logic().end(),
+                                       [&path](const LogicFile& f) { return f.path == path; });
+        if (file != document_->logic().end()) {
+            for (const engine::logic::Variable& v : file->asset.variables) {
+                QAction* item = compare->addAction(text_of(v.id));
+                item->setObjectName(text_of("compare:" + v.id));
+                const std::string name = v.id;
+                connect(item, &QAction::triggered, this, [this, name] {
+                    const auto [at, selected] = current();
+                    std::string error;
+                    added(at, document_->add_logic_comparison(at, selected, name, error), error);
+                });
+            }
+        }
+        compare->setEnabled(!compare->isEmpty());
     }
     QMenu* conditions = menu->addMenu(tr("Condition"));
     by_object.clear();

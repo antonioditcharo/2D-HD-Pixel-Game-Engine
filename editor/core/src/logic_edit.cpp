@@ -5,6 +5,7 @@
 #include "engine/game/logic_world.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -333,6 +334,75 @@ LogicSlot slot(std::size_t argument, std::string label, reflect::ValueKind kind,
     return s;
 }
 
+/// The value a new variable, or a value compared with one, starts at: no, 0 or "".
+reflect::Value zero_of(reflect::ValueKind kind) {
+    switch (kind) {
+    case reflect::ValueKind::Bool:
+        return reflect::Value{false};
+    case reflect::ValueKind::Int:
+        return reflect::Value{std::int64_t{0}};
+    case reflect::ValueKind::Float:
+        return reflect::Value{0.0};
+    case reflect::ValueKind::Text:
+    case reflect::ValueKind::Choice:
+        break;
+    }
+    return reflect::Value{std::string()};
+}
+
+const logic::Variable* find_variable(const logic::LogicAsset& asset, std::string_view name) {
+    for (const logic::Variable& v : asset.variables) {
+        if (v.id == name) {
+            return &v;
+        }
+    }
+    return nullptr;
+}
+
+/// The comparison operators as the editor writes them, in CompareOp's order.
+constexpr std::array<std::string_view, 6> comparison_signs{"=",      "\u2260", "<",
+                                                           "\u2264", ">",      "\u2265"};
+
+/// `sign` as an operator: one of comparison_signs, or "!=", "<=", ">=".
+std::optional<logic::CompareOp> comparison_of(std::string_view sign) {
+    for (std::size_t i = 0; i < comparison_signs.size(); ++i) {
+        if (sign == comparison_signs.at(i)) {
+            return static_cast<logic::CompareOp>(i);
+        }
+    }
+    if (sign == "!=") {
+        return logic::CompareOp::NotEqual;
+    }
+    if (sign == "<=") {
+        return logic::CompareOp::LessEqual;
+    }
+    if (sign == ">=") {
+        return logic::CompareOp::GreaterEqual;
+    }
+    return std::nullopt;
+}
+
+/// True if `e` is a variable compared with a written value, as add_logic_comparison()
+/// makes them.
+bool is_comparison(const logic::Expr& e) {
+    return e.kind == logic::ExprKind::Compare && e.operands.size() == 2 &&
+           e.operands[0].kind == logic::ExprKind::Variable &&
+           e.operands[1].kind == logic::ExprKind::Literal;
+}
+
+/// Calls `visit` on `e` and every expression inside it.
+template <typename Visit>
+void each_expr(logic::Expr& e, const Visit& visit) {
+    visit(e);
+    for (logic::Expr& operand : e.operands) {
+        each_expr(operand, visit);
+    }
+}
+
+/// Calls `visit` on every expression of `asset`: conditions, and the values of steps.
+template <typename Visit>
+void each_expr(logic::LogicAsset& asset, const Visit& visit);
+
 /// Where a block that is not a step is. A state's and a "Go to"'s Brain is set too, and
 /// a "Go to"'s state when it leads out of one (not for "from any state").
 struct Header {
@@ -482,6 +552,56 @@ void each_step(std::vector<Stmt>& list, const Visit& visit) {
     }
 }
 
+template <typename Visit>
+void each_expr(logic::LogicAsset& asset, const Visit& visit) {
+    for (logic::Rule& rule : asset.rules) {
+        for (logic::Expr& e : rule.conditions) {
+            each_expr(e, visit);
+        }
+    }
+    for (logic::Brain& brain : asset.brains) {
+        for (logic::BrainState& state : brain.states) {
+            for (logic::Transition& go : state.transitions) {
+                for (logic::Expr& e : go.conditions) {
+                    each_expr(e, visit);
+                }
+            }
+        }
+        for (logic::Transition& go : brain.from_any) {
+            for (logic::Expr& e : go.conditions) {
+                each_expr(e, visit);
+            }
+        }
+    }
+    for (std::vector<Stmt>* list : step_lists(asset)) {
+        each_step(*list, [&visit](Stmt& s) {
+            for (logic::Expr& e : s.arguments) {
+                each_expr(e, visit);
+            }
+        });
+    }
+}
+
+/// The slots of a comparison made by add_logic_comparison(): its operator, and the value
+/// compared with, of the variable's kind.
+void comparison_slots(const logic::LogicAsset& asset, const logic::Expr& c,
+                      std::vector<LogicSlot>& slots) {
+    const logic::Variable* v = find_variable(asset, c.operands[0].member);
+    LogicSlot sign;
+    sign.argument = 0;
+    sign.label = "Is";
+    sign.kind = reflect::ValueKind::Text;
+    sign.value =
+        reflect::Value{std::string(comparison_signs.at(static_cast<std::size_t>(c.compare)))};
+    slots.push_back(std::move(sign));
+    LogicSlot with;
+    with.argument = 1;
+    with.label = "Than";
+    with.kind = v != nullptr ? v->kind : reflect::ValueKind::Text;
+    with.value = c.operands[1].literal;
+    slots.push_back(std::move(with));
+}
+
 /// "sequence_1", or the first "<stem>_<n>" for which `taken` is false.
 template <typename Taken>
 std::string free_name(const std::string& stem, const Taken& taken) {
@@ -512,7 +632,9 @@ std::vector<LogicSlot> Document::header_slots(logic::LogicAsset& asset, BlockId 
     const Impl& d = *impl_;
     const Header h = find_header(asset, block);
     std::vector<LogicSlot> slots;
-    if (h.condition != nullptr) {
+    if (h.condition != nullptr && is_comparison(tested(*h.condition))) {
+        comparison_slots(asset, tested(*h.condition), slots);
+    } else if (h.condition != nullptr) {
         const logic::Expr& c = tested(*h.condition);
         const reflect::FunctionInfo* f =
             c.kind == logic::ExprKind::Call
@@ -588,6 +710,7 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId step
         }
         break;
     case StmtKind::SetVariable:
+        slots.push_back(slot(1, "Variable", reflect::ValueKind::Text, s.member));
         for (const logic::Variable& v : file->asset.variables) {
             if (v.id == s.member && literal(0) && v.kind != reflect::ValueKind::Choice) {
                 slots.push_back(slot(0, "Value", v.kind, s.arguments[0].literal));
@@ -618,6 +741,11 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId step
         break;
     case StmtKind::If:
     case StmtKind::WaitUntil:
+        // A variable compared with a value: the operator and the value.
+        if (!s.arguments.empty() && is_comparison(tested(s.arguments[0]))) {
+            comparison_slots(file->asset, tested(s.arguments[0]), slots);
+            break;
+        }
         // The values of its condition, when it is one of an object's conditions.
         if (!s.arguments.empty() && tested(s.arguments[0]).kind == logic::ExprKind::Call) {
             const logic::Expr& c = tested(s.arguments[0]);
@@ -668,6 +796,35 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
         error = "There is no Sequence called " + (text != nullptr ? *text : std::string()) + ".";
         return false;
     }
+    // A variable set: it must exist. A comparison's operator: one of the signs.
+    Stmt* setting =
+        place.list != nullptr && (*place.list)[place.index].kind == StmtKind::SetVariable
+            ? &(*place.list)[place.index]
+            : nullptr;
+    const logic::Variable* chosen = setting != nullptr && argument == 1 && text != nullptr
+                                        ? find_variable(asset, *text)
+                                        : nullptr;
+    if (setting != nullptr && argument == 1 && chosen == nullptr) {
+        error = "There is no variable called " + (text != nullptr ? *text : std::string()) +
+                " in this file.";
+        return false;
+    }
+    logic::Expr* comparison = nullptr;
+    if (place.list != nullptr && ((*place.list)[place.index].kind == StmtKind::If ||
+                                  (*place.list)[place.index].kind == StmtKind::WaitUntil)) {
+        logic::Expr& test = tested((*place.list)[place.index].arguments[0]);
+        comparison = is_comparison(test) ? &test : nullptr;
+    } else if (h.condition != nullptr && is_comparison(tested(*h.condition))) {
+        comparison = &tested(*h.condition);
+    }
+    std::optional<logic::CompareOp> sign;
+    if (comparison != nullptr && argument == 0) {
+        sign = text != nullptr ? comparison_of(*text) : std::nullopt;
+        if (!sign) {
+            error = "Is must be one of = \u2260 < \u2264 > \u2265.";
+            return false;
+        }
+    }
     const bool naming = place.list == nullptr && h.condition == nullptr &&
                         (h.transition == nullptr || argument == 0);
     if (naming && (text == nullptr || !reflect::is_valid_id(*text))) {
@@ -701,7 +858,20 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
         }
     }
     engine::serialize::Json before = d.snapshot();
-    if (place.list != nullptr && (*place.list)[place.index].kind == StmtKind::Run) {
+    if (comparison != nullptr) {
+        if (sign) {
+            comparison->compare = *sign;
+        } else {
+            comparison->operands[1].literal = std::move(*fitted);
+        }
+    } else if (setting != nullptr && argument == 1) {
+        // Another variable; a value of another kind starts again from its zero.
+        const logic::Variable* was = find_variable(asset, setting->member);
+        setting->member = chosen->id;
+        if (was == nullptr || was->kind != chosen->kind) {
+            setting->arguments.assign(1, logic::ir::literal(zero_of(chosen->kind)));
+        }
+    } else if (place.list != nullptr && (*place.list)[place.index].kind == StmtKind::Run) {
         (*place.list)[place.index].member = *text;
     } else if (place.list != nullptr && ((*place.list)[place.index].kind == StmtKind::If ||
                                          (*place.list)[place.index].kind == StmtKind::WaitUntil)) {
@@ -787,6 +957,7 @@ std::vector<LogicAction> Document::logic_actions() const {
     std::vector<LogicAction> actions{LogicAction{"", "log", "Log {text}"},
                                      LogicAction{"", "repeat", "Repeat {times} times"},
                                      LogicAction{"", "run", "Run {sequence} and wait for it"},
+                                     LogicAction{"", "set_variable", "Set {variable} to {value}"},
                                      LogicAction{"", "wait", "Wait {seconds} seconds"}};
     std::vector<LogicAction> objects = logic_functions(reflect::FunctionRole::Action);
     actions.insert(actions.end(), objects.begin(), objects.end());
@@ -806,8 +977,13 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
             ? nullptr
             : find_function(Lookup{d.registry, *d.world}, action.object, action.member);
     const bool built_in =
-        action.object.empty() && (action.member == "log" || action.member == "run" ||
-                                  action.member == "wait" || action.member == "repeat");
+        action.object.empty() &&
+        (action.member == "log" || action.member == "run" || action.member == "wait" ||
+         action.member == "repeat" || action.member == "set_variable");
+    if (built_in && action.member == "set_variable" && file->asset.variables.empty()) {
+        error = "There is no variable to set yet: add one first.";
+        return BlockId{};
+    }
     if (!built_in && (f == nullptr || f->role != reflect::FunctionRole::Action)) {
         error = action.object + " cannot " + action.member + ".";
         return BlockId{};
@@ -844,6 +1020,10 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
     if (built_in && action.member == "log") {
         step = logic::ir::log(next, logic::ir::literal(reflect::Value{std::string()}));
         label = "Log";
+    } else if (built_in && action.member == "set_variable") {
+        const logic::Variable& first = file->asset.variables.front();
+        step = logic::ir::set_variable(next, first.id, logic::ir::literal(zero_of(first.kind)));
+        label = "Set variable";
     } else if (built_in && action.member == "repeat") {
         step = logic::ir::repeat(next, logic::ir::literal(reflect::Value{std::int64_t{2}}), {});
         label = "Repeat";
@@ -932,6 +1112,169 @@ BlockId Document::add_logic_branch(std::string_view path, BlockId after,
                        std::move(step));
     d.record(wait_until ? "Add a Wait until step" : "Add an If step", std::move(before));
     return BlockId{next};
+}
+
+bool Document::add_logic_variable(std::string_view path, reflect::ValueKind kind,
+                                  std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    if (file == nullptr) {
+        error = "There is no logic file " + std::string(path) + ".";
+        return false;
+    }
+    if (kind == reflect::ValueKind::Choice) {
+        error = "A variable holds yes/no, a whole number, a number or text.";
+        return false;
+    }
+    logic::Variable v;
+    v.id = free_name("variable", [file](const std::string& name) {
+        return find_variable(file->asset, name) != nullptr;
+    });
+    v.kind = kind;
+    v.initial = zero_of(kind);
+    engine::serialize::Json before = d.snapshot();
+    file->asset.variables.push_back(std::move(v));
+    d.record("Add a variable", std::move(before));
+    return true;
+}
+
+bool Document::rename_logic_variable(std::string_view path, std::string_view name,
+                                     std::string_view new_name, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    if (file == nullptr || find_variable(file->asset, name) == nullptr) {
+        error = "There is no variable " + std::string(name) + ".";
+        return false;
+    }
+    if (!reflect::is_valid_id(new_name)) {
+        error = std::string(bad_name);
+        return false;
+    }
+    if (new_name != name && find_variable(file->asset, new_name) != nullptr) {
+        error = "That name is already used here.";
+        return false;
+    }
+    const std::string old(name); // `name` may point into what is renamed
+    const std::string renamed(new_name);
+    engine::serialize::Json before = d.snapshot();
+    for (logic::Variable& v : file->asset.variables) {
+        if (v.id == old) {
+            v.id = renamed;
+        }
+    }
+    // Everything that reads or sets it follows.
+    each_expr(file->asset, [&](logic::Expr& e) {
+        if (e.kind == logic::ExprKind::Variable && e.member == old) {
+            e.member = renamed;
+        }
+    });
+    for (std::vector<Stmt>* list : step_lists(file->asset)) {
+        each_step(*list, [&](Stmt& s) {
+            if (s.kind == StmtKind::SetVariable && s.member == old) {
+                s.member = renamed;
+            }
+        });
+    }
+    d.record("Rename a variable", std::move(before), engine::Guid{},
+             "logic/" + std::string(path) + "/variable");
+    return true;
+}
+
+bool Document::set_logic_variable_start(std::string_view path, std::string_view name,
+                                        const reflect::Value& value, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const logic::Variable* v = file != nullptr ? find_variable(file->asset, name) : nullptr;
+    if (v == nullptr) {
+        error = "There is no variable " + std::string(name) + ".";
+        return false;
+    }
+    LogicSlot start;
+    start.label = "Its start";
+    start.kind = v->kind;
+    std::optional<reflect::Value> fitted = fit(start, value, error);
+    if (!fitted) {
+        return false;
+    }
+    const std::string key = "logic/" + std::string(path) + "/variable/" + std::string(name);
+    engine::serialize::Json before = d.snapshot();
+    for (logic::Variable& each : file->asset.variables) {
+        if (each.id == name) {
+            each.initial = std::move(*fitted);
+        }
+    }
+    d.record("Change where a variable starts", std::move(before), engine::Guid{}, key);
+    return true;
+}
+
+bool Document::remove_logic_variable(std::string_view path, std::string_view name,
+                                     std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    if (file == nullptr || find_variable(file->asset, name) == nullptr) {
+        error = "There is no variable " + std::string(name) + ".";
+        return false;
+    }
+    bool used = false;
+    each_expr(file->asset, [&](logic::Expr& e) {
+        used = used || (e.kind == logic::ExprKind::Variable && e.member == name);
+    });
+    for (std::vector<Stmt>* list : step_lists(file->asset)) {
+        each_step(*list, [&](Stmt& s) {
+            used = used || (s.kind == StmtKind::SetVariable && s.member == name);
+        });
+    }
+    if (used) {
+        error = std::string(name) + " is still used: delete the blocks that use it first.";
+        return false;
+    }
+    const std::string gone(name);
+    engine::serialize::Json before = d.snapshot();
+    std::erase_if(file->asset.variables,
+                  [&gone](const logic::Variable& v) { return v.id == gone; });
+    d.record("Delete a variable", std::move(before));
+    return true;
+}
+
+BlockId Document::add_logic_comparison(std::string_view path, BlockId block,
+                                       std::string_view variable, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const logic::Variable* v = file != nullptr ? find_variable(file->asset, variable) : nullptr;
+    if (v == nullptr) {
+        error = "There is no variable " + std::string(variable) + ".";
+        return BlockId{};
+    }
+    const BlockId id = next_id(file->asset);
+    logic::Expr test =
+        logic::ir::compare(logic::CompareOp::Equal, logic::ir::variable(std::string(variable)),
+                           logic::ir::literal(zero_of(v->kind)));
+    // On a Rule or a "Go to" (or one of their conditions): a condition of it.
+    const Header h = find_header(file->asset, block);
+    std::vector<logic::Expr>* list = h.transition != nullptr ? &h.transition->conditions
+                                     : h.rule != nullptr     ? &h.rule->conditions
+                                                             : nullptr;
+    if (list != nullptr && list->size() == 1 && list->front().kind == logic::ExprKind::Any) {
+        list = &list->front().operands;
+    }
+    if (list != nullptr) {
+        engine::serialize::Json before = d.snapshot();
+        test.id = id;
+        list->push_back(std::move(test));
+        d.record("Add a condition", std::move(before));
+        return id;
+    }
+    // Anywhere else steps go: an If step testing it.
+    const Place place = where_to_add(file->asset, block);
+    if (place.list == nullptr) {
+        error = "Steps go under a Rule, a Sequence or a Brain state, or after another step.";
+        return BlockId{};
+    }
+    engine::serialize::Json before = d.snapshot();
+    place.list->insert(place.list->begin() + static_cast<std::ptrdiff_t>(place.index),
+                       logic::ir::if_then(id.value, std::move(test), {}, {}));
+    d.record("Add an If step", std::move(before));
+    return id;
 }
 
 bool Document::is_logic_test(std::string_view path, BlockId block) const {

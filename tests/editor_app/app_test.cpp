@@ -23,6 +23,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QToolButton>
 #include <QTreeView>
@@ -700,4 +701,62 @@ TEST_CASE("The Logic view turns conditions around, matches any of them, and adds
     CHECK(tree->currentItem()->parent()->text(0) == QStringLiteral("Otherwise:"));
     CHECK(tree->currentItem()->parent()->childCount() == 2);
     CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));
+}
+
+TEST_CASE("The Logic view makes variables, compares them and sets them") {
+    const Editor e;
+    editor::LogicPanel* panel = e.window.logic_panel();
+    QTreeWidget* tree = e.window.logic_view();
+    auto* add = panel->findChild<QToolButton*>(QStringLiteral("logic_add"));
+    REQUIRE(add != nullptr);
+    const auto choose = [&](const QString& name) {
+        Q_EMIT add->menu()->aboutToShow();
+        auto* entry = add->menu()->findChild<QAction*>(name);
+        REQUIRE(entry != nullptr);
+        entry->trigger();
+        QApplication::processEvents();
+    };
+    const auto settle = [] {
+        for (int i = 0; i < 3; ++i) { // the deferred rebuild
+            QApplication::processEvents();
+        }
+    };
+    choose(QStringLiteral("add_file"));
+    choose(QStringLiteral("variable:int"));
+    // Renamed in its field; its start set.
+    auto* name = panel->findChild<QLineEdit*>(QStringLiteral("variable_name:variable_1"));
+    REQUIRE(name != nullptr);
+    name->setText(QStringLiteral("talks"));
+    Q_EMIT name->editingFinished();
+    settle();
+    auto* start = panel->findChild<QSpinBox*>(QStringLiteral("variable_start:talks"));
+    REQUIRE(start != nullptr);
+    start->setValue(2);
+    QApplication::processEvents();
+    const editor::LogicFile& file = e.window.document()->logic().at(0);
+    REQUIRE(file.path == "logic/logic_1.drules");
+    REQUIRE(file.asset.variables.size() == 1);
+    CHECK(file.asset.variables[0].id == "talks");
+    CHECK(file.asset.variables[0].initial ==
+          std::optional<engine::reflect::Value>(std::int64_t{2}));
+
+    // A Rule on the game starting, compared with talks, and a step setting it.
+    choose(QStringLiteral("rule:/game_start"));
+    choose(QStringLiteral("compare:talks"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("If talks = 0"));
+    tree->setCurrentItem(tree->currentItem()->parent());
+    choose(QStringLiteral("action:/set_variable"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Set talks to 0"));
+    auto* problems = panel->findChild<QLabel*>(QStringLiteral("logic_problems"));
+    REQUIRE(problems != nullptr);
+    CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));
+
+    // Used, it cannot be deleted; the status bar says why.
+    auto* remove = panel->findChild<QPushButton*>(QStringLiteral("variable_delete:talks"));
+    REQUIRE(remove != nullptr);
+    remove->click();
+    settle();
+    CHECK(e.window.statusBar()->currentMessage() ==
+          QStringLiteral("talks is still used: delete the blocks that use it first."));
+    CHECK(e.window.document()->logic().at(0).asset.variables.size() == 1);
 }

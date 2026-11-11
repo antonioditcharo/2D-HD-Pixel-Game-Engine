@@ -932,6 +932,85 @@ TEST_CASE("Logic conditions turned around, matched any of, and Otherwise branche
     CHECK(d->check_logic(file).empty());
 }
 
+TEST_CASE("Logic variables: made, set, compared, renamed where used, and deleted") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view file = "logic/count.drules";
+    REQUIRE(d->create_logic_file(file, error));
+    const auto asset = [&]() -> const engine::logic::LogicAsset& {
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        return found->asset;
+    };
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        for (const editor::LogicLine& line : editor::describe(asset(), *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        }
+        return shown;
+    };
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);
+    // Setting a variable needs one first.
+    CHECK_FALSE(d->add_logic_step(file, rule, editor::LogicAction{"", "set_variable", ""}, error)
+                    .is_valid());
+    CHECK(error == "There is no variable to set yet: add one first.");
+    REQUIRE(d->add_logic_variable(file, reflect::ValueKind::Int, error));
+    REQUIRE(d->add_logic_variable(file, reflect::ValueKind::Text, error));
+    CHECK_FALSE(d->add_logic_variable(file, reflect::ValueKind::Choice, error));
+    REQUIRE(asset().variables.size() == 2);
+    CHECK(asset().variables[0].id == "variable_1");
+    CHECK(asset().variables[1].id == "variable_2");
+    // Its start: of its kind.
+    REQUIRE(
+        d->set_logic_variable_start(file, "variable_1", reflect::Value{std::int64_t{3}}, error));
+    CHECK(asset().variables[0].initial == std::optional<reflect::Value>(std::int64_t{3}));
+    CHECK_FALSE(d->set_logic_variable_start(file, "variable_1",
+                                            reflect::Value{std::string("three")}, error));
+    CHECK(error == "Its start must be a whole number.");
+
+    // A Set variable step, then another variable for it (its value starts again).
+    const engine::logic::BlockId set =
+        d->add_logic_step(file, rule, editor::LogicAction{"", "set_variable", ""}, error);
+    REQUIRE(set.is_valid());
+    REQUIRE(d->set_logic_slot(file, set, 0, reflect::Value{std::int64_t{5}}, error));
+    CHECK(lines()[1] == "  Set variable_1 to 5");
+    REQUIRE(d->set_logic_slot(file, set, 1, reflect::Value{std::string("variable_2")}, error));
+    CHECK(lines()[1] == "  Set variable_2 to “”");
+    CHECK_FALSE(d->set_logic_slot(file, set, 1, reflect::Value{std::string("nope")}, error));
+    CHECK(error == "There is no variable called nope in this file.");
+    REQUIRE(d->set_logic_slot(file, set, 1, reflect::Value{std::string("variable_1")}, error));
+    // Compared: as the Rule's condition, and as an If after the step.
+    const engine::logic::BlockId condition =
+        d->add_logic_comparison(file, rule, "variable_1", error);
+    REQUIRE(condition.is_valid());
+    REQUIRE(d->set_logic_slot(file, condition, 0, reflect::Value{std::string(">=")}, error));
+    REQUIRE(d->set_logic_slot(file, condition, 1, reflect::Value{std::int64_t{2}}, error));
+    CHECK_FALSE(d->set_logic_slot(file, condition, 0, reflect::Value{std::string("~")}, error));
+    const engine::logic::BlockId branch = d->add_logic_comparison(file, set, "variable_1", error);
+    REQUIRE(branch.is_valid());
+    REQUIRE(d->set_logic_slot(file, branch, 0, reflect::Value{std::string("≠")}, error));
+    std::vector<std::string> expected{"When the game starts", "  If variable_1 ≥ 2",
+                                      "  Set variable_1 to 0", "  If variable_1 ≠ 0:"};
+    CHECK(lines() == expected);
+    CHECK(d->check_logic(file).empty());
+
+    // Renamed: everything that reads or sets it follows. Deleting it is refused while
+    // used; the unused one goes.
+    REQUIRE(d->rename_logic_variable(file, "variable_1", "talks", error));
+    expected = {"When the game starts", "  If talks ≥ 2", "  Set talks to 0", "  If talks ≠ 0:"};
+    CHECK(lines() == expected);
+    CHECK_FALSE(d->rename_logic_variable(file, "talks", "variable_2", error));
+    CHECK(error == "That name is already used here.");
+    CHECK_FALSE(d->remove_logic_variable(file, "talks", error));
+    CHECK(error == "talks is still used: delete the blocks that use it first.");
+    REQUIRE(d->remove_logic_variable(file, "variable_2", error));
+    CHECK(asset().variables.size() == 1);
+    CHECK(d->check_logic(file).empty());
+}
+
 TEST_CASE("Picking in the Diorama style goes through the camera") {
     const Sample sample;
     const auto d = sample.open();

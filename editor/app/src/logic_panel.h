@@ -16,6 +16,7 @@
 #include "editor/core/document.h"
 
 class QCheckBox;
+class QGroupBox;
 class QLabel;
 class QPushButton;
 class QToolButton;
@@ -51,6 +52,8 @@ private:
     /// The logic file and block of the selected line; an invalid block for none.
     [[nodiscard]] std::pair<std::string, engine::logic::BlockId> current() const;
     void show_fields();
+    /// The selected file's variables: name, start and Delete for each.
+    void show_variables();
     void refresh_texts();
     void update_buttons();
     void fill_add_menu();
@@ -66,6 +69,8 @@ private:
     QTreeWidget* tree_ = nullptr;
     QWidget* fields_ = nullptr;
     QFormLayout* form_ = nullptr;
+    QGroupBox* variables_ = nullptr;
+    QFormLayout* variables_form_ = nullptr;
     QToolButton* add_ = nullptr;
     QPushButton* delete_ = nullptr;
     QPushButton* up_ = nullptr;

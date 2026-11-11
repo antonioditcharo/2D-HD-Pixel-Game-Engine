@@ -181,6 +181,24 @@ public:
     /// or only when all do. Conditions added later join them.
     bool set_logic_any(std::string_view path, engine::logic::BlockId rule, bool any,
                        std::string& error);
+    /// Adds a variable to the logic file: "variable_1" (or the next free), of `kind`
+    /// (yes/no, a whole number, a number or text), starting at no, 0 or empty text.
+    bool add_logic_variable(std::string_view path, engine::reflect::ValueKind kind,
+                            std::string& error);
+    /// Renames a variable, and everything that reads or sets it.
+    bool rename_logic_variable(std::string_view path, std::string_view name,
+                               std::string_view new_name, std::string& error);
+    /// Changes the value a variable starts with, which must be of its kind.
+    bool set_logic_variable_start(std::string_view path, std::string_view name,
+                                  const engine::reflect::Value& value, std::string& error);
+    /// Deletes a variable that nothing uses (refused, with `error`, while something does).
+    bool remove_logic_variable(std::string_view path, std::string_view name, std::string& error);
+    /// Compares `variable` with a value ("talks = 0"; its operator and value are then
+    /// edited in place): as a condition of the Rule or "Go to" `block` is (or is a
+    /// condition of), or anywhere else as a new If step, placed as add_logic_step() places
+    /// steps. A "Set variable" step comes from logic_actions() (object "", set_variable).
+    engine::logic::BlockId add_logic_comparison(std::string_view path, engine::logic::BlockId block,
+                                                std::string_view variable, std::string& error);
     /// Every event a Rule can start on: the game starting, and the events of the game's
     /// objects and of the scene's named entities' components.
     [[nodiscard]] std::vector<LogicEvent> logic_events() const;
