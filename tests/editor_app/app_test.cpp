@@ -11,12 +11,18 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileSystemModel>
 #include <QGroupBox>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMimeData>
 #include <QMouseEvent>
+#include <QStatusBar>
 #include <QToolButton>
+#include <QTreeView>
 #include <QTreeWidget>
 #include <filesystem>
 #include <fstream>
@@ -367,4 +373,65 @@ TEST_CASE("In the Diorama style: click through the camera, drag along the ground
     REQUIRE(grid != nullptr);
     CHECK(grid->at(5, 6) == 1);
     CHECK(grid->at(4, 6) == 0);
+}
+
+TEST_CASE("Pictures are dragged from the assets into the scene") {
+    const Editor e;
+    auto* tree = e.window.findChild<QTreeView*>(QStringLiteral("assets"));
+    REQUIRE(tree != nullptr);
+    auto* model = qobject_cast<QFileSystemModel*>(tree->model());
+    REQUIRE(model != nullptr);
+    CHECK(tree->dragEnabled());
+    const auto drag_data = [&](const fs::path& file) {
+        const QModelIndex index = model->index(QString::fromStdU16String(file.u16string()));
+        REQUIRE(index.isValid());
+        CHECK(model->flags(index).testFlag(Qt::ItemIsDragEnabled));
+        std::unique_ptr<QMimeData> data(model->mimeData({index}));
+        REQUIRE(data != nullptr);
+        REQUIRE(data->hasUrls());
+        return data;
+    };
+    editor::SceneView* view = e.window.scene_view();
+    const auto drop = [&](const QMimeData& data, QPoint at) {
+        QDragEnterEvent enter(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view, &enter);
+        CHECK(enter.isAccepted());
+        QDropEvent dropped(QPointF(at), Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view, &dropped);
+        QApplication::processEvents();
+    };
+
+    // The elder's picture, dropped at map point (6.5, 8): a new "elder" there, selected
+    // and listed, as one undo step.
+    QTreeWidget* list = e.window.outliner();
+    const int listed = list->topLevelItemCount();
+    const std::unique_ptr<QMimeData> elder = drag_data(e.sample.path / "assets/art/elder.png");
+    drop(*elder, view->from_map(6.5, 8.0));
+    const Guid placed = e.window.selection();
+    REQUIRE(placed.is_valid());
+    const engine::world::World& world = e.window.document()->world();
+    const engine::world::Entity entity = world.find(placed);
+    CHECK(world.name(entity) == "elder");
+    CHECK(world.get<scene2d::Transform2D>(entity)->x == doctest::Approx(6.5).epsilon(1.0 / 16));
+    CHECK(world.get<scene2d::Transform2D>(entity)->y == doctest::Approx(8.0).epsilon(1.0 / 16));
+    CHECK(world.get<scene2d::Sprite>(entity)->image ==
+          e.window.document()->assets().find("art/elder.png")->guid.to_string());
+    CHECK(list->topLevelItemCount() == listed + 1);
+    CHECK(e.window.document()->undo_label() == "Place elder");
+    REQUIRE(e.window.document()->undo());
+
+    // A sound is not placed; the status bar says why.
+    const std::unique_ptr<QMimeData> chime = drag_data(e.sample.path / "assets/sfx/chime.wav");
+    drop(*chime, view->from_map(6.5, 8.0));
+    CHECK(e.window.statusBar()->currentMessage().startsWith(
+        QStringLiteral("Only pictures (PNG) can be placed")));
+    CHECK(e.window.document()->undo_label() != "Place chime");
+
+    // Nor is a file from outside the assets.
+    QMimeData outside;
+    outside.setUrls({QUrl::fromLocalFile(
+        QString::fromStdU16String((e.sample.path / "project.sparxel.json").u16string()))});
+    drop(outside, view->from_map(6.5, 8.0));
+    CHECK(e.window.statusBar()->currentMessage() ==
+          QStringLiteral("Only files from the project's assets can be placed."));
 }

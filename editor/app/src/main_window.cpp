@@ -88,6 +88,9 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
                                   QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
                                   QStringLiteral("*.drules")});
     asset_model_->setNameFilterDisables(false);
+    // Pictures are dragged from here into the scene.
+    asset_tree_->setDragEnabled(true);
+    asset_tree_->setDragDropMode(QAbstractItemView::DragOnly);
     for (int column = 1; column < 4; ++column) {
         asset_tree_->hideColumn(column);
     }
@@ -154,6 +157,10 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     connect(view_, &SceneView::selected, this, [this](engine::Guid guid) { select(guid); });
     connect(view_, &SceneView::moved, this, [this] { changed(false); });
     connect(view_, &SceneView::problem, this, &MainWindow::report);
+    connect(view_, &SceneView::placed, this, [this](engine::Guid guid) {
+        changed(true);
+        select(guid);
+    });
     connect(inspector_, &Inspector::edited, this, [this](bool structure) { changed(structure); });
     connect(inspector_, &Inspector::refused, this, &MainWindow::report);
     update_title_and_actions();

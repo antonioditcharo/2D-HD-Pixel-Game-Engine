@@ -203,6 +203,40 @@ TEST_CASE("Entities and components are created, renamed and removed, and come ba
     CHECK_FALSE(d->dirty());
 }
 
+TEST_CASE("Placing a picture from the assets makes a sprite there, as one step") {
+    const Sample sample;
+    const auto d = sample.open();
+    const std::size_t before = d->entities().size();
+    std::string error;
+    // To whole pixels: 16 per tile, so 3.03 (48.48 pixels) becomes 3 and 4.94 (79.04
+    // pixels) becomes 79 / 16.
+    const Guid placed = d->place_picture("art/hero.png", 3.03, 4.94, error);
+    REQUIRE(placed.is_valid());
+    CHECK(error.empty());
+    const world::Entity e = d->world().find(placed);
+    CHECK(d->world().name(e) == "hero");
+    CHECK(d->world().get<scene2d::Transform2D>(e)->x == 3.0);
+    CHECK(d->world().get<scene2d::Transform2D>(e)->y == 4.9375);
+    REQUIRE(d->world().get<scene2d::Sprite>(e) != nullptr);
+    CHECK(d->world().get<scene2d::Sprite>(e)->image ==
+          d->assets().find("art/hero.png")->guid.to_string());
+    CHECK(d->entities().size() == before + 1);
+    CHECK(d->undo_label() == "Place hero");
+    CHECK(d->dirty());
+    REQUIRE(d->undo());
+    CHECK(d->entities().size() == before);
+    CHECK_FALSE(d->world().find(placed).is_valid());
+
+    // Only pictures that are assets, at a real point.
+    CHECK_FALSE(d->place_picture("sfx/chime.wav", 1.0, 1.0, error).is_valid());
+    CHECK(error == "Only pictures (PNG) can be placed in the scene; sfx/chime.wav is not one.");
+    CHECK_FALSE(d->place_picture("art/nothing.png", 1.0, 1.0, error).is_valid());
+    CHECK(error == "There is no asset art/nothing.png in assets/.");
+    CHECK_FALSE(d->place_picture("art/hero.png", std::nan(""), 1.0, error).is_valid());
+    CHECK(d->entities().size() == before);
+    CHECK(d->redo_label() == "Place hero"); // refusals record nothing, so redo is kept
+}
+
 TEST_CASE("Painting tiles: cells change, the map grows, and a stroke is one step") {
     const Sample sample;
     const auto d = sample.open();

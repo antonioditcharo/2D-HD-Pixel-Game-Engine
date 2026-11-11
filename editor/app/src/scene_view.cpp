@@ -2,11 +2,17 @@
 
 #include "engine/scene2d/scene2d.h"
 
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QUrl>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <string>
 
 namespace editor {
@@ -16,6 +22,7 @@ namespace scene2d = engine::scene2d;
 SceneView::SceneView(QWidget* parent) : QWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(320, 180);
+    setAcceptDrops(true); // pictures dragged from the assets list
     setAccessibleName(tr("Scene"));
     std::string error;
     preview_ = Preview::create(error);
@@ -286,6 +293,55 @@ void SceneView::mouseReleaseEvent(QMouseEvent* /*event*/) {
         document_->end_merge();
     }
     drag_ = Drag::None;
+}
+
+void SceneView::dragEnterEvent(QDragEnterEvent* event) {
+    if (document_ != nullptr && event->mimeData()->hasUrls()) {
+        event->acceptProposedAction();
+    }
+}
+
+void SceneView::dragMoveEvent(QDragMoveEvent* event) {
+    if (document_ != nullptr && event->mimeData()->hasUrls()) {
+        event->acceptProposedAction();
+    }
+}
+
+void SceneView::dropEvent(QDropEvent* event) {
+    if (document_ == nullptr || !event->mimeData()->hasUrls()) {
+        return;
+    }
+    const std::optional<QPointF> at = map_point(event->position().toPoint());
+    if (!at) {
+        Q_EMIT problem(tr("Drop it on the ground: that point is not on the map."));
+        return;
+    }
+    // Both made absolute and canonical, so a project opened by a relative path or through
+    // a link still matches the files the assets list offers.
+    std::error_code ignored;
+    const std::filesystem::path assets =
+        std::filesystem::weakly_canonical(document_->folder() / "assets", ignored);
+    for (const QUrl& url : event->mimeData()->urls()) {
+        // The file's path in assets/, as the asset database names it.
+        const std::filesystem::path file = std::filesystem::weakly_canonical(
+            std::filesystem::path(url.toLocalFile().toStdU16String()), ignored);
+        const std::filesystem::path relative = file.lexically_proximate(assets);
+        const std::string path = relative.generic_string();
+        if (url.toLocalFile().isEmpty() || path.empty() || path.starts_with("..")) {
+            Q_EMIT problem(tr("Only files from the project's assets can be placed."));
+            continue;
+        }
+        std::string error;
+        const engine::Guid placed_entity = document_->place_picture(path, at->x(), at->y(), error);
+        if (!placed_entity.is_valid()) {
+            Q_EMIT problem(QString::fromStdString(error));
+            continue;
+        }
+        selection_ = placed_entity;
+        Q_EMIT placed(placed_entity);
+    }
+    event->acceptProposedAction();
+    refresh();
 }
 
 void SceneView::keyPressEvent(QKeyEvent* event) {

@@ -59,8 +59,13 @@ Q_SIGNALS:
     /// Escape was pressed while painting.
     void stop_painting();
     void problem(const QString& message);
+    /// A picture dragged from the assets was placed here as a new entity.
+    void placed(engine::Guid entity);
 
 protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;

@@ -5,6 +5,7 @@
 #include "engine/scene2d/scene2d.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iterator>
@@ -288,6 +289,42 @@ Guid Document::create_entity(std::string_view name, double x, double y) {
     }
     const Guid guid = d.world->guid(e);
     d.record("Create " + d.name_of(guid), std::move(before));
+    return guid;
+}
+
+Guid Document::place_picture(std::string_view asset_path, double x, double y, std::string& error) {
+    Impl& d = *impl_;
+    const engine::assets::AssetRecord* record = d.assets->find(asset_path);
+    const fs::path path(asset_path);
+    std::string extension = path.extension().string();
+    for (char& c : extension) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (record == nullptr) {
+        error = "There is no asset " + std::string(asset_path) + " in assets/.";
+        return Guid{};
+    }
+    if (extension != ".png") {
+        error = "Only pictures (PNG) can be placed in the scene; " + std::string(asset_path) +
+                " is not one.";
+        return Guid{};
+    }
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        error = "That point is not on the map.";
+        return Guid{};
+    }
+    const double ppu = std::max(1U, d.settings.ppu);
+    serialize::Json before = d.snapshot();
+    const world::Entity e = d.world->create(path.stem().string());
+    if (auto* transform = d.world->add<scene2d::Transform2D>(e)) {
+        transform->x = std::round(x * ppu) / ppu;
+        transform->y = std::round(y * ppu) / ppu;
+    }
+    if (auto* sprite = d.world->add<scene2d::Sprite>(e)) {
+        sprite->image = record->guid.to_string();
+    }
+    const Guid guid = d.world->guid(e);
+    d.record("Place " + d.name_of(guid), std::move(before));
     return guid;
 }
 
