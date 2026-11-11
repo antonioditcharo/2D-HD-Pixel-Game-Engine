@@ -194,15 +194,21 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
     }
     std::vector<serialize::Issue> found;
     const std::optional<serialize::Json> json = serialize::parse(contents, found);
-    if (!json || !json->is_object()) {
-        if (json) {
-            found.push_back(
-                serialize::Issue{"", "The project file must be a group of named values."});
-        }
+    if (!json) {
         add_issues(issues, file, std::move(found));
         return std::nullopt;
     }
-    const serialize::Json& doc = *json;
+    return project_from_json(*json, issues);
+}
+
+std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
+                                                 std::vector<serialize::Issue>& issues) {
+    const std::string file(project_file);
+    if (!doc.is_object()) {
+        issues.push_back(
+            serialize::Issue{file, "The project file must be a group of named values."});
+        return std::nullopt;
+    }
     const auto format = doc.find("format");
     const auto version = doc.find("version");
     if (format == doc.end() || !format->is_string() ||

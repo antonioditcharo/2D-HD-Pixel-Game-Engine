@@ -8,6 +8,8 @@ add_library(editor_app STATIC
     src/logic_panel.h
     src/main_window.cpp
     src/main_window.h
+    src/project_panel.cpp
+    src/project_panel.h
     src/scene_view.cpp
     src/scene_view.h
     src/tile_palette.cpp

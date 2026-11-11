@@ -26,6 +26,7 @@
 #include "editor/exporter/exporter.h"
 #include "inspector.h"
 #include "logic_panel.h"
+#include "project_panel.h"
 #include "scene_view.h"
 #include "tile_palette.h"
 
@@ -124,6 +125,16 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     logic_dock->setWidget(logic_);
     addDockWidget(Qt::RightDockWidgetArea, logic_dock);
     tabifyDockWidget(inspector_dock, logic_dock);
+    // And the project's settings.
+    project_ = new ProjectPanel(this);
+    auto* project_scroll = new QScrollArea(this);
+    project_scroll->setWidgetResizable(true);
+    project_scroll->setWidget(project_);
+    auto* project_dock = new QDockWidget(tr("Project"), this);
+    project_dock->setObjectName(QStringLiteral("project_dock"));
+    project_dock->setWidget(project_scroll);
+    addDockWidget(Qt::RightDockWidgetArea, project_dock);
+    tabifyDockWidget(logic_dock, project_dock);
     inspector_dock->raise();
     resizeDocks({entities, inspector_dock}, {240, 340}, Qt::Horizontal);
 
@@ -155,6 +166,8 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     connect(view_, &SceneView::problem, this, &MainWindow::report);
     connect(logic_, &LogicPanel::edited, this, [this] { update_title_and_actions(); });
     connect(logic_, &LogicPanel::refused, this, &MainWindow::report);
+    connect(project_, &ProjectPanel::edited, this, [this] { changed(false); });
+    connect(project_, &ProjectPanel::refused, this, &MainWindow::report);
     connect(view_, &SceneView::placed, this, [this](engine::Guid guid) {
         changed(true);
         select(guid);
@@ -213,6 +226,7 @@ bool MainWindow::open_project(const fs::path& folder) {
     asset_tree_->setRootIndex(asset_model_->setRootPath(assets));
     rebuild_outliner();
     logic_->set_document(document_.get());
+    project_->set_document(document_.get());
     update_title_and_actions();
     if (!issues.empty()) {
         report(tr("Opened, with notes:\n%1").arg(issues_text(issues)));
@@ -332,6 +346,7 @@ void MainWindow::undo() {
         select(document_->world().find(selection_).is_valid() ? selection_ : engine::Guid{});
         view_->refresh();
         logic_->rebuild();
+        project_->refresh();
     }
 }
 
@@ -341,6 +356,7 @@ void MainWindow::redo() {
         select(document_->world().find(selection_).is_valid() ? selection_ : engine::Guid{});
         view_->refresh();
         logic_->rebuild();
+        project_->refresh();
     }
 }
 

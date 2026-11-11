@@ -91,6 +91,10 @@ struct ProjectSettings {
 /// invalid. Unknown entries are reported and ignored.
 [[nodiscard]] std::optional<ProjectSettings> read_project(const std::filesystem::path& root,
                                                           std::vector<serialize::Issue>& issues);
+/// The settings in a project file's JSON, checked as read_project() checks them (issues
+/// name project.sparxel.json). Nothing if they are invalid.
+[[nodiscard]] std::optional<ProjectSettings>
+project_from_json(const serialize::Json& json, std::vector<serialize::Issue>& issues);
 [[nodiscard]] serialize::Json project_to_json(const ProjectSettings& settings);
 
 /// The lighting a game starts with: the project's.

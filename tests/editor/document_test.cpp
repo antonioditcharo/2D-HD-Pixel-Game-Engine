@@ -240,6 +240,42 @@ TEST_CASE("Placing a picture from the assets makes a sprite there, as one step")
     CHECK(d->redo_label() == "Place hero"); // refusals record nothing, so redo is kept
 }
 
+TEST_CASE("Project settings change as one step, are checked as the game checks them, and save") {
+    const Sample sample;
+    const auto d = sample.open();
+    const game::ProjectSettings original = d->settings();
+    std::string error;
+    // Two changes before the merge ends are one step, labelled for the project.
+    game::ProjectSettings changed = original;
+    changed.style = game::RenderStyle::Diorama;
+    REQUIRE(d->set_settings(changed, error));
+    changed.sun_angle = 90.0;
+    changed.start_scene = "maps/elsewhere.dscene"; // the start scene is not changed here
+    REQUIRE(d->set_settings(changed, error));
+    CHECK(d->settings().style == game::RenderStyle::Diorama);
+    CHECK(d->settings().sun_angle == 90.0);
+    CHECK(d->settings().start_scene == original.start_scene);
+    CHECK(d->undo_label() == "Change the project settings");
+    CHECK(d->dirty());
+    // Out of range: refused as the game would refuse its project file, changing nothing.
+    changed.ppu = 3;
+    CHECK_FALSE(d->set_settings(changed, error));
+    CHECK(error == "This must be a whole number from 8 to 64.");
+    CHECK(d->settings().ppu == original.ppu);
+    // Undo puts every setting back at once.
+    REQUIRE(d->undo());
+    CHECK(d->settings().style == original.style);
+    CHECK(d->settings().sun_angle == original.sun_angle);
+    CHECK_FALSE(d->dirty());
+    REQUIRE(d->redo());
+    // Saved to the project file; reopening reads them.
+    REQUIRE(d->save(error));
+    const auto again = sample.open();
+    CHECK(again->settings().style == game::RenderStyle::Diorama);
+    CHECK(again->settings().sun_angle == 90.0);
+    CHECK(again->settings().start_scene == original.start_scene);
+}
+
 TEST_CASE("Painting tiles: cells change, the map grows, and a stroke is one step") {
     const Sample sample;
     const auto d = sample.open();

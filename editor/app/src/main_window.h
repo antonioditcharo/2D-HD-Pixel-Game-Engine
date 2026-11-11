@@ -20,6 +20,7 @@ class QFileSystemModel;
 namespace editor {
 
 class LogicPanel;
+class ProjectPanel;
 
 class Inspector;
 class SceneView;
@@ -50,6 +51,7 @@ public:
     [[nodiscard]] TilePalette* tile_palette() const noexcept { return palette_; }
     [[nodiscard]] QTreeWidget* logic_view() const noexcept;
     [[nodiscard]] LogicPanel* logic_panel() const noexcept { return logic_; }
+    [[nodiscard]] ProjectPanel* project_panel() const noexcept { return project_; }
 
     // The commands, for menus, tool buttons and tests.
     bool save();
@@ -84,6 +86,7 @@ private:
     Inspector* inspector_ = nullptr;
     TilePalette* palette_ = nullptr;
     LogicPanel* logic_ = nullptr;
+    ProjectPanel* project_ = nullptr;
     QAction* save_ = nullptr;
     QAction* undo_ = nullptr;
     QAction* redo_ = nullptr;

@@ -85,6 +85,11 @@ public:
 
     [[nodiscard]] const std::filesystem::path& folder() const noexcept;
     [[nodiscard]] const engine::game::ProjectSettings& settings() const noexcept;
+    /// Changes the project's settings (its look, light, camera, size...), checked as the
+    /// game checks its project file. The start scene stays as it is. Returns false,
+    /// changing nothing, with `error` in plain language, if a value is out of range.
+    /// Consecutive changes merge into one step until end_merge(), as typing does.
+    bool set_settings(const engine::game::ProjectSettings& settings, std::string& error);
     [[nodiscard]] const engine::reflect::Registry& registry() const noexcept;
     [[nodiscard]] engine::assets::AssetDatabase& assets() noexcept;
     [[nodiscard]] engine::world::World& world() noexcept;

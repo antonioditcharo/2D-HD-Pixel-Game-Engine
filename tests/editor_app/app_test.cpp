@@ -34,6 +34,7 @@
 #include "inspector.h"
 #include "logic_panel.h"
 #include "main_window.h"
+#include "project_panel.h"
 #include "scene_view.h"
 #include "tile_palette.h"
 
@@ -577,4 +578,53 @@ TEST_CASE("The Logic view authors logic from its Add menu") {
     REQUIRE(e.window.save());
     CHECK(fs::exists(e.sample.path / "assets/logic/logic_1.drules"));
     CHECK(fs::exists(e.sample.path / "assets/logic/logic_1.drules.meta"));
+}
+
+TEST_CASE("The Project view changes the settings, and the scene shows them at once") {
+    Editor e;
+    editor::ProjectPanel* panel = e.window.project_panel();
+    REQUIRE(panel != nullptr);
+    auto* style = panel->findChild<QComboBox*>(QStringLiteral("setting:render_style"));
+    auto* sun = panel->findChild<QDoubleSpinBox*>(QStringLiteral("setting:sun_angle"));
+    auto* exposure = panel->findChild<QDoubleSpinBox*>(QStringLiteral("setting:exposure"));
+    REQUIRE(style != nullptr);
+    REQUIRE(sun != nullptr);
+    REQUIRE(exposure != nullptr);
+    CHECK(style->currentIndex() == 0); // the sample is Classic 2D
+    const QImage flat = e.window.scene_view()->image();
+
+    // Switching to the Diorama style redraws the scene in 3D.
+    style->setCurrentIndex(1);
+    Q_EMIT style->activated(1);
+    QApplication::processEvents();
+    CHECK(e.window.document()->settings().style == game::RenderStyle::Diorama);
+    CHECK(e.window.scene_view()->image() != flat);
+    CHECK(e.window.windowTitle() == QStringLiteral("Hello Sparxel * — Sparxel Editor"));
+    // A number, as it spins.
+    sun->setValue(90.0);
+    QApplication::processEvents();
+    CHECK(e.window.document()->settings().sun_angle == 90.0);
+    // Exposure 2 brightens the picture.
+    const QImage before = e.window.scene_view()->image();
+    exposure->setValue(2.0);
+    QApplication::processEvents();
+    CHECK(e.window.scene_view()->image() != before);
+
+    // Undo puts the settings and the fields back: the numbers spun one after the other
+    // (one step, as nothing ended it between them), then the style (its own step).
+    const double original_sun = game::ProjectSettings{}.sun_angle;
+    e.window.undo();
+    QApplication::processEvents();
+    CHECK(e.window.document()->settings().style == game::RenderStyle::Diorama);
+    CHECK(e.window.document()->settings().sun_angle == original_sun);
+    auto* sun_again = panel->findChild<QDoubleSpinBox*>(QStringLiteral("setting:sun_angle"));
+    REQUIRE(sun_again != nullptr);
+    CHECK(sun_again->value() == original_sun);
+    e.window.undo();
+    QApplication::processEvents();
+    CHECK(e.window.document()->settings().style == game::RenderStyle::Classic2D);
+    auto* again = panel->findChild<QComboBox*>(QStringLiteral("setting:render_style"));
+    REQUIRE(again != nullptr);
+    CHECK(again->currentIndex() == 0);
+    CHECK(e.window.scene_view()->image() == flat);
 }

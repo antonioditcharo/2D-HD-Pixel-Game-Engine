@@ -84,7 +84,8 @@ serialize::Json Document::Impl::snapshot() const {
         files[file.path] = serialize::logic_to_json(file.asset);
     }
     return serialize::Json{{"scene", serialize::scene_to_json(*world)},
-                           {"logic", std::move(files)}};
+                           {"logic", std::move(files)},
+                           {"project", game::project_to_json(settings)}};
 }
 
 void Document::Impl::restore(const serialize::Json& state) {
@@ -92,6 +93,11 @@ void Document::Impl::restore(const serialize::Json& state) {
         world->destroy(root);
     }
     static_cast<void>(serialize::scene_from_json(state.at("scene"), *world));
+    std::vector<Issue> ignored;
+    if (std::optional<game::ProjectSettings> restored =
+            game::project_from_json(state.at("project"), ignored)) {
+        settings = std::move(*restored);
+    }
     // The files as they were then: created ones come and go with undo too. (Keys are
     // sorted, so the files stay sorted by path.)
     logic.clear();
@@ -193,6 +199,24 @@ std::unique_ptr<Document> Document::open(const fs::path& folder, std::vector<Iss
     impl->logic = read_logic_files(*impl->assets, impl->logic_issues);
     impl->saved = impl->snapshot();
     return std::unique_ptr<Document>(new Document(std::move(impl)));
+}
+
+bool Document::set_settings(const game::ProjectSettings& settings, std::string& error) {
+    Impl& d = *impl_;
+    game::ProjectSettings wanted = settings;
+    wanted.start_scene = d.settings.start_scene;
+    std::vector<Issue> issues;
+    std::optional<game::ProjectSettings> checked =
+        game::project_from_json(game::project_to_json(wanted), issues);
+    if (!checked) {
+        error =
+            issues.empty() ? std::string("These settings cannot be used.") : issues.front().message;
+        return false;
+    }
+    serialize::Json before = d.snapshot();
+    d.settings = std::move(*checked);
+    d.record("Change the project settings", std::move(before), Guid{}, "project/settings");
+    return true;
 }
 
 const std::vector<LogicFile>& Document::logic() const noexcept {
@@ -495,6 +519,14 @@ bool Document::save(std::string& error) {
         return false;
     }
     d.saved["scene"] = state.at("scene");
+    if (state.at("project") != d.saved["project"]) {
+        if (!game::write_file_atomically(d.folder / game::project_file,
+                                         serialize::to_text(state.at("project")), error)) {
+            error.insert(0, std::string(game::project_file) + ": ");
+            return false;
+        }
+        d.saved["project"] = state.at("project");
+    }
     // The logic files that changed since they were last saved.
     bool written_logic = false;
     for (const auto& [path, json] : state.at("logic").items()) {
