@@ -169,7 +169,11 @@ LogicPanel::LogicPanel(QWidget* parent) : QWidget(parent) {
         // Later, not from inside the drop: the lines go and come back.
         QTimer::singleShot(0, this, [this, path, step, onto] {
             std::string error;
-            if (!document_->move_logic_step_to(path, step, onto, error)) {
+            // A step goes where steps go; a condition, among conditions.
+            const bool moved = document_->is_logic_step(path, step)
+                                   ? document_->move_logic_step_to(path, step, onto, error)
+                                   : document_->move_logic_condition_to(path, step, onto, error);
+            if (!moved) {
                 Q_EMIT refused(text_of(error));
                 return;
             }

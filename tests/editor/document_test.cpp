@@ -1055,6 +1055,84 @@ TEST_CASE("Logic condition groups go inside groups, flip any/all, and split") {
     CHECK(d->check_logic(file).empty());
 }
 
+TEST_CASE("Logic conditions move among a Rule's conditions and its groups") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view file = "logic/moves.drules";
+    REQUIRE(d->create_logic_file(file, error));
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        for (const editor::LogicLine& line : editor::describe(found->asset, *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        }
+        return shown;
+    };
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);
+    const editor::LogicAction has_save{"game", "has_save", ""};
+    const engine::logic::BlockId open =
+        d->add_logic_condition(file, rule, editor::LogicAction{"dialogue", "is_open", ""}, error);
+    const engine::logic::BlockId one = d->add_logic_condition(file, rule, has_save, error);
+    const engine::logic::BlockId two = d->add_logic_condition(file, rule, has_save, error);
+    REQUIRE(d->set_logic_slot(file, two, 0, reflect::Value{std::int64_t{2}}, error));
+    const engine::logic::BlockId three = d->add_logic_condition(file, rule, has_save, error);
+    REQUIRE(d->set_logic_slot(file, three, 0, reflect::Value{std::int64_t{3}}, error));
+    const engine::logic::BlockId wait =
+        d->add_logic_step(file, rule, editor::LogicAction{"", "wait", ""}, error);
+    REQUIRE(wait.is_valid());
+    const engine::logic::BlockId group = d->group_logic_conditions(file, open, error);
+    REQUIRE(group.is_valid());
+    // [any(open, 1), 2, 3]. Refusals first: not a condition; not onto a step; not into itself.
+    CHECK_FALSE(d->move_logic_condition_to(file, wait, two, error));
+    CHECK(error == "Only conditions can be moved among conditions.");
+    CHECK_FALSE(d->move_logic_condition_to(file, two, wait, error));
+    CHECK(error == "Conditions go on a Rule, in a group, or after another condition.");
+    CHECK_FALSE(d->move_logic_condition_to(file, group, one, error));
+    CHECK(error == "A group cannot go inside itself.");
+    // Onto a group: first in it. Onto a condition: after it, in whichever list it is in.
+    REQUIRE(d->move_logic_condition_to(file, three, group, error));
+    CHECK(d->undo_label() == "Move a condition");
+    REQUIRE(d->move_logic_condition_to(file, two, one, error));
+    CHECK(lines() == std::vector<std::string>{
+                         "When the game starts",
+                         "  If any of these:",
+                         "    slot 3 has a save (game)",
+                         "    a message is open (dialogue)",
+                         "    slot 1 has a save (game)",
+                         "    slot 2 has a save (game)",
+                         "  Wait 1 seconds",
+                     });
+    CHECK(d->check_logic(file).empty());
+    // Onto its own group: first in it. Onto the Rule (which matches any): first of them.
+    REQUIRE(d->move_logic_condition_to(file, two, group, error));
+    CHECK(lines()[2] == "    slot 2 has a save (game)");
+    REQUIRE(d->move_logic_condition_to(file, one, rule, error));
+    CHECK(lines()[2] == "    slot 1 has a save (game)");
+    // A whole group moves too; a group left with one condition is just that condition.
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    REQUIRE(d->undo()); // [any(open, 1), 2, 3] again
+    REQUIRE(d->move_logic_condition_to(file, group, three, error));
+    REQUIRE(d->move_logic_condition_to(file, open, two, error));
+    CHECK(lines() == std::vector<std::string>{
+                         "When the game starts",
+                         "  If slot 2 has a save (game)",
+                         "  If a message is open (dialogue)",
+                         "  If slot 3 has a save (game)",
+                         "  If slot 1 has a save (game)",
+                         "  Wait 1 seconds",
+                     });
+    CHECK_FALSE(d->is_logic_block(file, group)); // dissolved
+    CHECK(d->check_logic(file).empty());
+    REQUIRE(d->undo());
+    CHECK(lines()[3] == "  If any of these:"); // the group back, after slot 3
+}
+
 TEST_CASE("Logic variables: made, set, compared, renamed where used, and deleted") {
     const Sample sample;
     const auto d = sample.open();

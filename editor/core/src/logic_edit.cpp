@@ -1274,6 +1274,69 @@ bool Document::move_logic_step_to(std::string_view path, BlockId step, BlockId t
     return true;
 }
 
+bool Document::move_logic_condition_to(std::string_view path, BlockId condition, BlockId target,
+                                       std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const Header from = file != nullptr ? find_header(file->asset, condition) : Header{};
+    if (from.condition == nullptr) {
+        error = "Only conditions can be moved among conditions.";
+        return false;
+    }
+    if (target == condition) {
+        return true; // where it is
+    }
+    // Not into itself: a condition inside the group moved cannot be its new place.
+    if (Header inside;
+        is_group(*from.condition) && find_condition(from.condition->operands, target, inside)) {
+        error = "A group cannot go inside itself.";
+        return false;
+    }
+    const Header onto = find_header(file->asset, target);
+    const bool on_rule =
+        onto.rule != nullptr && onto.condition == nullptr && onto.rule->id == target;
+    if (onto.condition == nullptr && !on_rule) {
+        error = "Conditions go on a Rule, in a group, or after another condition.";
+        return false;
+    }
+    engine::serialize::Json before = d.snapshot();
+    const auto first = [](std::vector<logic::Expr>& list, logic::Expr e) {
+        list.insert(list.begin(), std::move(e));
+    };
+    // Onto its own group: first in it, the group as it is.
+    if (onto.condition != nullptr && onto.condition == from.group) {
+        logic::Expr taken = std::move(*from.condition);
+        from.conditions->erase(from.conditions->begin() + static_cast<std::ptrdiff_t>(from.index));
+        first(*from.conditions, std::move(taken));
+        d.record("Move a condition", std::move(before));
+        return true;
+    }
+    logic::Expr taken = std::move(*from.condition);
+    from.conditions->erase(from.conditions->begin() + static_cast<std::ptrdiff_t>(from.index));
+    // A group left with one condition is just that condition.
+    if (from.group != nullptr && from.group->operands.size() == 1) {
+        logic::Expr last = std::move(from.group->operands[0]);
+        *from.group = std::move(last);
+    }
+    // Found again: taking the condition out may have moved where it goes.
+    const Header to = find_header(file->asset, target);
+    if (to.condition != nullptr && is_group(*to.condition)) {
+        first(to.condition->operands, std::move(taken));
+    } else if (to.condition != nullptr) {
+        to.conditions->insert(to.conditions->begin() + static_cast<std::ptrdiff_t>(to.index) + 1,
+                              std::move(taken));
+    } else if (std::vector<logic::Expr>* list = conditions_at(to); list != nullptr) {
+        first(*list, std::move(taken));
+    } else {
+        // Not expected (the target was found before), but never lose the condition.
+        from.rule->conditions.push_back(std::move(taken));
+        error = "That condition cannot go there.";
+        return false;
+    }
+    d.record("Move a condition", std::move(before));
+    return true;
+}
+
 bool Document::is_logic_step(std::string_view path, BlockId block) const {
     LogicFile* file = impl_->logic_file(path);
     return file != nullptr && find_step(file->asset, block).list != nullptr;

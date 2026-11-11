@@ -308,6 +308,12 @@ public:
     /// as one step of undo. Refused, with `error`, into itself or onto a non-step place.
     bool move_logic_step_to(std::string_view path, engine::logic::BlockId step,
                             engine::logic::BlockId target, std::string& error);
+    /// Moves a condition (or a whole group) of a Rule: after the condition `target`, first
+    /// in the group `target`, or first among the conditions of the Rule `target`, as one
+    /// step of undo. A group it leaves with one condition becomes that condition. Refused,
+    /// with `error`, into itself or onto anything else.
+    bool move_logic_condition_to(std::string_view path, engine::logic::BlockId condition,
+                                 engine::logic::BlockId target, std::string& error);
     /// True if `block` is a step of the logic file (one that can be deleted or moved).
     [[nodiscard]] bool is_logic_step(std::string_view path, engine::logic::BlockId block) const;
     /// What stops the logic file at `path` from running, checked by the compiler against

@@ -1001,4 +1001,38 @@ TEST_CASE("The Logic view moves a step by dragging it onto another line") {
     CHECK(moved->parent()->text(0) == QStringLiteral("Repeat 2 times:"));
     CHECK(tree->currentItem() == moved);
     CHECK(e.window.document()->undo_label() == "Move a step");
+
+    // Conditions drag too: the second dropped on the first's new group goes into it.
+    const QString start = QStringLiteral("When the game starts");
+    tree->setCurrentItem(item(start));
+    choose(QStringLiteral("condition:dialogue/is_open"));
+    tree->setCurrentItem(item(start));
+    choose(QStringLiteral("condition:game/has_save"));
+    tree->setCurrentItem(item(start));
+    choose(QStringLiteral("condition:game/has_save"));
+    auto* group = panel->findChild<QPushButton*>(QStringLiteral("logic_group"));
+    REQUIRE(group != nullptr);
+    tree->setCurrentItem(item(start)->child(0));
+    group->click();
+    QApplication::processEvents();
+    QTreeWidgetItem* any = item(QStringLiteral("If any of these:"));
+    REQUIRE(any != nullptr);
+    REQUIRE(any->childCount() == 2);
+    QTreeWidgetItem* loose = item(QStringLiteral("If slot 1 has a save (game)"));
+    REQUIRE(loose != nullptr);
+    tree->setCurrentItem(loose);
+    tree->scrollToItem(any);
+    const QPoint onto = tree->visualItemRect(any).center();
+    QDragEnterEvent entered(onto, Qt::MoveAction, &lines, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(tree->viewport(), &entered);
+    QDropEvent grouped(QPointF(onto), Qt::MoveAction, &lines, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(tree->viewport(), &grouped);
+    for (int i = 0; i < 3; ++i) {
+        QApplication::processEvents();
+    }
+    any = item(QStringLiteral("If any of these:"));
+    REQUIRE(any != nullptr);
+    CHECK(any->childCount() == 3);
+    CHECK(tree->currentItem() == any->child(0)); // first in the group, still selected
+    CHECK(e.window.document()->undo_label() == "Move a condition");
 }
