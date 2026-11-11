@@ -1086,6 +1086,34 @@ TEST_CASE("Logic values from variables, event values and properties, with sums")
     CHECK_FALSE(d->set_logic_source(file, wait, 0,
                                     editor::LogicSource{Kind::Variable, "", "nope", ""}, error));
     CHECK(error == "That cannot give this value.");
+    // Compared: the event's answer, and the hero's speed; their values are of their kind.
+    const auto comparable = [&](engine::logic::BlockId block, Kind kind, std::string_view member) {
+        for (const editor::LogicSource& c : d->logic_comparables(file, block)) {
+            if (c.kind == kind && c.member == member) {
+                return c;
+            }
+        }
+        FAIL("not comparable: " << member);
+        return editor::LogicSource{};
+    };
+    const engine::logic::BlockId answered =
+        d->add_logic_comparison(file, rule, comparable(rule, Kind::EventValue, "answer"), error);
+    REQUIRE(answered.is_valid());
+    REQUIRE(d->set_logic_slot(file, answered, 1, reflect::Value{std::int64_t{1}}, error));
+    const engine::logic::BlockId fast =
+        d->add_logic_comparison(file, wait, comparable(wait, Kind::Property, "speed"), error);
+    REQUIRE(fast.is_valid());
+    slots = d->logic_slots(file, fast);
+    REQUIRE(slots.size() == 2);
+    CHECK(slots[1].kind == reflect::ValueKind::Float);
+    REQUIRE(d->set_logic_slot(file, fast, 0, reflect::Value{std::string(">")}, error));
+    REQUIRE(d->set_logic_slot(file, fast, 1, reflect::Value{4.0}, error));
+    CHECK(lines()[1] == "  If [answer] = 1");
+    CHECK(lines()[4] == "  If speed of hero > 4:");
+    CHECK_FALSE(d->add_logic_comparison(
+                     file, rule, editor::LogicSource{Kind::Property, "hero", "nope", ""}, error)
+                    .is_valid());
+    CHECK(d->check_logic(file).empty());
     // Outside a Rule with values, there are no event values to take.
     const engine::logic::BlockId start =
         d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);

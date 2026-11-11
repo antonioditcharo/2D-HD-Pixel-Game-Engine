@@ -806,6 +806,13 @@ TEST_CASE("The Logic view takes values from the event, variables and sums") {
     number->setValue(3);
     QApplication::processEvents();
     CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to variable_1 + 3"));
+    // Compared: the answer, from the Compare menu, on the Rule.
+    tree->setCurrentItem(tree->currentItem()->parent());
+    choose(QStringLiteral("compare:answer"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("If [answer] = 0"));
+    tree->setCurrentItem(tree->currentItem()->parent());
+    choose(QStringLiteral("compare:hero/speed"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("If speed of hero = 0"));
     auto* problems = panel->findChild<QLabel*>(QStringLiteral("logic_problems"));
     REQUIRE(problems != nullptr);
     CHECK(problems->text() == QStringLiteral("logic/logic_1.drules runs: no problems."));

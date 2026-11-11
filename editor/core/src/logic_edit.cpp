@@ -386,8 +386,12 @@ std::optional<logic::CompareOp> comparison_of(std::string_view sign) {
 /// True if `e` is a variable compared with a written value, as add_logic_comparison()
 /// makes them.
 bool is_comparison(const logic::Expr& e) {
-    return e.kind == logic::ExprKind::Compare && e.operands.size() == 2 &&
-           e.operands[0].kind == logic::ExprKind::Variable;
+    if (e.kind != logic::ExprKind::Compare || e.operands.size() != 2) {
+        return false;
+    }
+    const logic::ExprKind left = e.operands[0].kind;
+    return left == logic::ExprKind::Variable || left == logic::ExprKind::Property ||
+           left == logic::ExprKind::EventValue;
 }
 
 /// The written number inside a value: the value itself if it is written, or the number
@@ -620,9 +624,8 @@ void each_expr(logic::LogicAsset& asset, const Visit& visit) {
 
 /// The slots of a comparison made by add_logic_comparison(): its operator, and the value
 /// compared with, of the variable's kind.
-void comparison_slots(const logic::LogicAsset& asset, const logic::Expr& c,
+void comparison_slots(std::optional<reflect::ValueKind> kind, const logic::Expr& c,
                       std::vector<LogicSlot>& slots) {
-    const logic::Variable* v = find_variable(asset, c.operands[0].member);
     LogicSlot sign;
     sign.argument = 0;
     sign.label = "Is";
@@ -633,7 +636,7 @@ void comparison_slots(const logic::LogicAsset& asset, const logic::Expr& c,
     LogicSlot with;
     with.argument = 1;
     with.label = "Than";
-    with.kind = v != nullptr ? v->kind : reflect::ValueKind::Text;
+    with.kind = kind.value_or(reflect::ValueKind::Text);
     with.value = c.operands[1].literal;
     slots.push_back(std::move(with));
 }
@@ -696,6 +699,50 @@ logic::Expr* slot_target(logic::LogicAsset& asset, BlockId block, std::size_t ar
     return h.condition != nullptr ? in_test(*h.condition) : nullptr;
 }
 
+/// The Rule `block` is, or is inside (a condition or a step of it); null if none.
+logic::Rule* rule_of(logic::LogicAsset& asset, BlockId block) {
+    for (logic::Rule& rule : asset.rules) {
+        Header inside;
+        if (rule.id == block || find_condition(rule.conditions, block, inside) ||
+            find_in(rule.actions, block).list != nullptr ||
+            find_in(rule.otherwise, block).list != nullptr) {
+            return &rule;
+        }
+    }
+    return nullptr;
+}
+
+/// The kind of value `left` (a variable, a property or an event value) holds, seen from
+/// `block`; nothing if it is not known.
+std::optional<reflect::ValueKind> kind_of(const Lookup& look, logic::LogicAsset& asset,
+                                          BlockId block, const logic::Expr& left) {
+    switch (left.kind) {
+    case logic::ExprKind::Variable:
+        if (const logic::Variable* v = find_variable(asset, left.member)) {
+            return v->kind;
+        }
+        return std::nullopt;
+    case logic::ExprKind::Property:
+        if (const reflect::PropertyInfo* p = find_property(look, left.object, left.member)) {
+            return p->kind;
+        }
+        return std::nullopt;
+    case logic::ExprKind::EventValue:
+        if (const logic::Rule* rule = rule_of(asset, block); rule != nullptr) {
+            for (const reflect::TypeInfo* type : types_of(look, rule->object)) {
+                if (const reflect::EventInfo* event = type->find_event(rule->event)) {
+                    if (const reflect::ParameterInfo* p = event->find_parameter(left.member)) {
+                        return p->kind;
+                    }
+                }
+            }
+        }
+        return std::nullopt;
+    default:
+        return std::nullopt;
+    }
+}
+
 } // namespace
 
 std::vector<LogicSlot> Document::header_slots(logic::LogicAsset& asset, BlockId block) const {
@@ -703,7 +750,9 @@ std::vector<LogicSlot> Document::header_slots(logic::LogicAsset& asset, BlockId 
     const Header h = find_header(asset, block);
     std::vector<LogicSlot> slots;
     if (h.condition != nullptr && is_comparison(tested(*h.condition))) {
-        comparison_slots(asset, tested(*h.condition), slots);
+        const logic::Expr& c = tested(*h.condition);
+        comparison_slots(kind_of(Lookup{d.registry, *d.world}, asset, block, c.operands[0]), c,
+                         slots);
     } else if (h.condition != nullptr) {
         const logic::Expr& c = tested(*h.condition);
         const reflect::FunctionInfo* f =
@@ -839,7 +888,9 @@ std::vector<LogicSlot> Document::unfilled_slots(std::string_view path, BlockId s
     case StmtKind::WaitUntil:
         // A variable compared with a value: the operator and the value.
         if (!s.arguments.empty() && is_comparison(tested(s.arguments[0]))) {
-            comparison_slots(file->asset, tested(s.arguments[0]), slots);
+            const logic::Expr& c = tested(s.arguments[0]);
+            comparison_slots(
+                kind_of(Lookup{d.registry, *d.world}, file->asset, step, c.operands[0]), c, slots);
             break;
         }
         // The values of its condition, when it is one of an object's conditions.
@@ -1331,17 +1382,38 @@ bool Document::remove_logic_variable(std::string_view path, std::string_view nam
 
 BlockId Document::add_logic_comparison(std::string_view path, BlockId block,
                                        std::string_view variable, std::string& error) {
-    Impl& d = *impl_;
-    LogicFile* file = d.logic_file(path);
+    LogicFile* file = impl_->logic_file(path);
     const logic::Variable* v = file != nullptr ? find_variable(file->asset, variable) : nullptr;
     if (v == nullptr) {
         error = "There is no variable " + std::string(variable) + ".";
         return BlockId{};
     }
+    return add_logic_comparison(
+        path, block,
+        LogicSource{LogicSource::Kind::Variable, "", std::string(variable), v->id, v->kind}, error);
+}
+
+BlockId Document::add_logic_comparison(std::string_view path, BlockId block,
+                                       const LogicSource& left, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    const std::vector<LogicSource> comparable = logic_comparables(path, block);
+    const auto found =
+        std::find_if(comparable.begin(), comparable.end(), [&](const LogicSource& s) {
+            return s.kind == left.kind && s.object == left.object && s.member == left.member;
+        });
+    if (file == nullptr || found == comparable.end()) {
+        error = left.member + " cannot be compared here.";
+        return BlockId{};
+    }
     const BlockId id = next_id(file->asset);
-    logic::Expr test =
-        logic::ir::compare(logic::CompareOp::Equal, logic::ir::variable(std::string(variable)),
-                           logic::ir::literal(zero_of(v->kind)));
+    logic::Expr value = found->kind == LogicSource::Kind::Variable
+                            ? logic::ir::variable(found->member)
+                        : found->kind == LogicSource::Kind::Property
+                            ? logic::ir::property(found->object, found->member)
+                            : logic::ir::event_value(found->member);
+    logic::Expr test = logic::ir::compare(logic::CompareOp::Equal, std::move(value),
+                                          logic::ir::literal(zero_of(found->value)));
     // On a Rule or a "Go to" (or one of their conditions): a condition of it.
     const Header h = find_header(file->asset, block);
     std::vector<logic::Expr>* list = h.transition != nullptr ? &h.transition->conditions
@@ -1372,7 +1444,6 @@ BlockId Document::add_logic_comparison(std::string_view path, BlockId block,
 
 std::vector<LogicSource> Document::logic_sources(std::string_view path, BlockId block,
                                                  std::size_t argument) const {
-    const Impl& d = *impl_;
     LogicFile* file = impl_->logic_file(path);
     const std::vector<LogicSlot> slots = logic_slots(path, block);
     const auto slot = std::find_if(slots.begin(), slots.end(), [argument](const LogicSlot& s) {
@@ -1382,29 +1453,42 @@ std::vector<LogicSource> Document::logic_sources(std::string_view path, BlockId 
         slot_target(file->asset, block, argument) == nullptr) {
         return {};
     }
-    const reflect::ValueKind kind = slot->kind;
     std::vector<LogicSource> sources{
-        LogicSource{LogicSource::Kind::Written, "", "", "A value written here"}};
+        LogicSource{LogicSource::Kind::Written, "", "", "A value written here", slot->kind}};
+    std::vector<LogicSource> others = sources_of(path, block, slot->kind);
+    sources.insert(sources.end(), others.begin(), others.end());
+    return sources;
+}
+
+std::vector<LogicSource> Document::logic_comparables(std::string_view path, BlockId block) const {
+    std::vector<LogicSource> all = sources_of(path, block, std::nullopt);
+    std::erase_if(all, [](const LogicSource& s) { return s.value == reflect::ValueKind::Choice; });
+    return all;
+}
+
+std::vector<LogicSource> Document::sources_of(std::string_view path, BlockId block,
+                                              std::optional<reflect::ValueKind> wanted) const {
+    const Impl& d = *impl_;
+    LogicFile* file = impl_->logic_file(path);
+    std::vector<LogicSource> sources;
+    if (file == nullptr) {
+        return sources;
+    }
+    const auto fits = [&wanted](reflect::ValueKind kind) { return !wanted || *wanted == kind; };
     for (const logic::Variable& v : file->asset.variables) {
-        if (v.kind == kind) {
-            sources.push_back(LogicSource{LogicSource::Kind::Variable, "", v.id, v.id});
+        if (fits(v.kind)) {
+            sources.push_back(LogicSource{LogicSource::Kind::Variable, "", v.id, v.id, v.kind});
         }
     }
     // The values the Rule's event carries, for blocks inside a Rule.
-    for (logic::Rule& rule : file->asset.rules) {
-        Header inside;
-        const bool in_rule = rule.id == block || find_condition(rule.conditions, block, inside) ||
-                             find_in(rule.actions, block).list != nullptr ||
-                             find_in(rule.otherwise, block).list != nullptr;
-        if (!in_rule || rule.object.empty()) {
-            continue;
-        }
-        for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, rule.object)) {
-            if (const reflect::EventInfo* event = type->find_event(rule.event)) {
+    if (const logic::Rule* rule = rule_of(file->asset, block);
+        rule != nullptr && !rule->object.empty()) {
+        for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, rule->object)) {
+            if (const reflect::EventInfo* event = type->find_event(rule->event)) {
                 for (const reflect::ParameterInfo& p : event->parameters) {
-                    if (p.kind == kind) {
+                    if (fits(p.kind)) {
                         sources.push_back(LogicSource{LogicSource::Kind::EventValue, "", p.id,
-                                                      "[" + p.id + "] (the event's)"});
+                                                      "[" + p.id + "] (the event's)", p.kind});
                     }
                 }
             }
@@ -1414,9 +1498,9 @@ std::vector<LogicSource> Document::logic_sources(std::string_view path, BlockId 
     for (const std::string& object : logic_objects()) {
         for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, object)) {
             for (const reflect::PropertyInfo& p : type->properties) {
-                if (p.kind == kind && !reflect::has_flag(p.flags, reflect::property_flag::hidden)) {
+                if (fits(p.kind) && !reflect::has_flag(p.flags, reflect::property_flag::hidden)) {
                     sources.push_back(LogicSource{LogicSource::Kind::Property, object, p.id,
-                                                  p.meta.display_name + " of " + object});
+                                                  p.meta.display_name + " of " + object, p.kind});
                 }
             }
         }

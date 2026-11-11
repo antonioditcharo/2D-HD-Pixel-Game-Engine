@@ -654,22 +654,28 @@ void LogicPanel::fill_add_menu() {
             Q_EMIT edited();
         });
     }
-    QMenu* compare = menu->addMenu(tr("Compare a variable"));
+    // Comparisons of a variable, an event value or a property with a value.
+    QMenu* compare = menu->addMenu(tr("Compare"));
     {
-        const std::string path = current().first;
-        const auto file = std::find_if(document_->logic().begin(), document_->logic().end(),
-                                       [&path](const LogicFile& f) { return f.path == path; });
-        if (file != document_->logic().end()) {
-            for (const engine::logic::Variable& v : file->asset.variables) {
-                QAction* item = compare->addAction(text_of(v.id));
-                item->setObjectName(text_of("compare:" + v.id));
-                const std::string name = v.id;
-                connect(item, &QAction::triggered, this, [this, name] {
-                    const auto [at, selected] = current();
-                    std::string error;
-                    added(at, document_->add_logic_comparison(at, selected, name, error), error);
-                });
+        const auto [path, block] = current();
+        std::map<std::string, QMenu*> compared;
+        for (const LogicSource& source : document_->logic_comparables(path, block)) {
+            QMenu* into = compare;
+            if (source.kind == LogicSource::Kind::Property) {
+                QMenu*& sub = compared[source.object];
+                if (sub == nullptr) {
+                    sub = compare->addMenu(text_of(source.object));
+                }
+                into = sub;
             }
+            QAction* item = into->addAction(text_of(source.text));
+            item->setObjectName(text_of(
+                "compare:" + (source.object.empty() ? "" : source.object + "/") + source.member));
+            connect(item, &QAction::triggered, this, [this, source] {
+                const auto [at, selected] = current();
+                std::string error;
+                added(at, document_->add_logic_comparison(at, selected, source, error), error);
+            });
         }
         compare->setEnabled(!compare->isEmpty());
     }

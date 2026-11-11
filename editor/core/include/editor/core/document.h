@@ -61,6 +61,8 @@ struct LogicSource {
     std::string object; ///< For a property.
     std::string member; ///< The variable, the event value's id, or the property.
     std::string text;   ///< In plain language, for menus.
+    /// The kind of value it gives.
+    engine::reflect::ValueKind value = engine::reflect::ValueKind::Text;
 };
 
 /// An action a new step can do: `member` of `object`, reading as `text`.
@@ -214,6 +216,15 @@ public:
     /// steps. A "Set variable" step comes from logic_actions() (object "", set_variable).
     engine::logic::BlockId add_logic_comparison(std::string_view path, engine::logic::BlockId block,
                                                 std::string_view variable, std::string& error);
+    /// The same with anything logic_comparables() offers on the left: a variable, an
+    /// event value ("[answer] = 1") or a property ("speed of hero > 4").
+    engine::logic::BlockId add_logic_comparison(std::string_view path, engine::logic::BlockId block,
+                                                const LogicSource& left, std::string& error);
+    /// What can be compared at `block`: the file's variables, the values its Rule's event
+    /// carries, and the properties of the game's objects and the scene's entities (not
+    /// choices).
+    [[nodiscard]] std::vector<LogicSource> logic_comparables(std::string_view path,
+                                                             engine::logic::BlockId block) const;
     /// Where slot `argument` of `block` can take its value from, of its kind: written
     /// here, the file's variables, the values its Rule's event carries, and the
     /// properties of the game's objects and the scene's entities.
@@ -288,6 +299,10 @@ public:
 
 private:
     struct Impl;
+    /// The sources of `wanted` kind (any, without) at `block`, written values aside.
+    [[nodiscard]] std::vector<LogicSource>
+    sources_of(std::string_view path, engine::logic::BlockId block,
+               std::optional<engine::reflect::ValueKind> wanted) const;
     /// logic_slots() before their sources are filled in.
     [[nodiscard]] std::vector<LogicSlot> unfilled_slots(std::string_view path,
                                                         engine::logic::BlockId block) const;
