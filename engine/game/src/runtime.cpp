@@ -292,7 +292,7 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
                     }
                     continue;
                 }
-                const auto* setting =
+                const auto setting =
                     std::find_if(look_numbers.begin(), look_numbers.end(),
                                  [&key](const LookNumber& n) { return n.name == key; });
                 if (setting == look_numbers.end()) {
