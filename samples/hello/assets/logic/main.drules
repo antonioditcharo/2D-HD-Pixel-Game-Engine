@@ -121,6 +121,87 @@
               ]
             }
           ]
+        },
+        {
+          "block": 9,
+          "kind": "do",
+          "member": "ask",
+          "object": "dialogue",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "Elder: Shall I tell you about the road?"
+            },
+            {
+              "kind": "literal",
+              "value": "Yes, please|No, thanks"
+            }
+          ]
+        },
+        {
+          "block": 10,
+          "kind": "wait_until",
+          "values": [
+            {
+              "kind": "not",
+              "operands": [
+                {
+                  "kind": "call",
+                  "member": "is_open",
+                  "object": "dialogue"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "block": 11,
+          "body": [
+            {
+              "block": 12,
+              "kind": "do",
+              "member": "say",
+              "object": "dialogue",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": "Elder: Follow the path east, through the gate. Home is not far."
+                }
+              ]
+            }
+          ],
+          "kind": "if",
+          "otherwise": [
+            {
+              "block": 13,
+              "kind": "do",
+              "member": "say",
+              "object": "dialogue",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": "Elder: Safe travels, then."
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "compare",
+              "op": "equal",
+              "operands": [
+                {
+                  "kind": "call",
+                  "member": "answer",
+                  "object": "dialogue"
+                },
+                {
+                  "kind": "literal",
+                  "value": 1
+                }
+              ]
+            }
+          ]
         }
       ],
       "event": "interacted",

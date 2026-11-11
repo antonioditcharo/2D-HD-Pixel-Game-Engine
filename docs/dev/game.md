@@ -319,7 +319,7 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 
 ## 10. Next increments
 
-1. **Choices in dialogue** and the rest of [ui.md](ui.md) §5.
+1. **Portraits, speakers and letter-by-letter text** and the rest of [ui.md](ui.md) §5.
 2. **Hot reload while playing:** pass asset changes to the texture cache and reload
    changed logic.
 3. **Spawning and destroying from logic,** with entities created by Rules addressable by

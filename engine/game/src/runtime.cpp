@@ -91,6 +91,17 @@ MessageLayout message_layout(std::uint32_t width, std::uint32_t height) {
     return layout;
 }
 
+/// How many pages the message showing takes in a game of `settings`' size (1 if none).
+std::size_t message_pages(const DialogueObject& dialogue, const ProjectSettings& settings) {
+    const std::string* message = dialogue.current();
+    const MessageLayout layout = message_layout(settings.width, settings.height);
+    const std::size_t lines =
+        message == nullptr ? 0
+                           : ui::wrap(ui::PixelFont::builtin(), *message, layout.text_width).size();
+    const auto per_page = static_cast<std::size_t>(layout.lines);
+    return std::max<std::size_t>(1, (lines + per_page - 1) / per_page);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------------------
@@ -325,6 +336,7 @@ struct Runtime::Impl {
     SaveObject save_object;
     DialogueObject dialogue;
     std::size_t page = 0;   ///< Of the message showing.
+    std::size_t choice = 0; ///< The answer the cursor is on, for a question.
     input::InputState idle; ///< No controls held: what movement sees while a message is open.
     std::unique_ptr<audio::AudioEngine> audio_engine;
     AudioObject audio_object;
@@ -560,24 +572,34 @@ void Runtime::step() {
     // 3. Events: each pressed action runs the Rules listening for it. Interact also
     //    reaches what each mover faces, in mover GUID order.
     for (const std::string& action : r.state.pressed_actions()) {
+        // A question's answers show on its last page; Up and Down move the cursor there.
+        const std::vector<std::string>& choices = r.dialogue.choices();
+        const bool choosing =
+            talking && !choices.empty() && r.page + 1 >= message_pages(r.dialogue, r.settings);
+        if (choosing && (action == "move_up" || action == "move_down")) {
+            r.choice = action == "move_up" ? (r.choice + choices.size() - 1) % choices.size()
+                                           : (r.choice + 1) % choices.size();
+            continue;
+        }
         if (talking && action == "interact") {
             // The next page, or the next message; the last one closing tells Rules.
-            const std::string* message = r.dialogue.current();
-            const MessageLayout layout = message_layout(r.settings.width, r.settings.height);
-            const std::size_t lines =
-                message == nullptr
-                    ? 0
-                    : ui::wrap(ui::PixelFont::builtin(), *message, layout.text_width).size();
-            const std::size_t pages =
-                std::max<std::size_t>(1, (lines + static_cast<std::size_t>(layout.lines) - 1) /
-                                             static_cast<std::size_t>(layout.lines));
-            if (r.page + 1 < pages) {
+            if (!choosing && r.page + 1 < message_pages(r.dialogue, r.settings)) {
                 ++r.page;
-            } else {
-                r.page = 0;
-                if (r.dialogue.close_current()) {
-                    r.vm->emit("dialogue", "closed");
-                }
+                continue;
+            }
+            std::optional<std::int64_t> answered;
+            if (choosing && r.dialogue.choose(r.choice)) {
+                answered = r.dialogue.answer();
+            }
+            r.page = 0;
+            r.choice = 0;
+            const bool last = r.dialogue.close_current();
+            if (answered) {
+                const std::array<reflect::Value, 1> payload{reflect::Value{*answered}};
+                r.vm->emit("dialogue", "answered", payload);
+            }
+            if (last) {
+                r.vm->emit("dialogue", "closed");
             }
             continue;
         }
@@ -729,6 +751,42 @@ bool Runtime::draw() {
                               static_cast<float>(static_cast<int>(i - first) * font.line_height()),
                           render::Color{255, 255, 255, 255});
         }
+        // A question's answers, on its last page: a box above the message, at the right,
+        // with a cursor on the answer chosen.
+        const std::vector<std::string>& choices = r.dialogue.choices();
+        const std::size_t pages = (lines.size() + static_cast<std::size_t>(box.lines) - 1) /
+                                  static_cast<std::size_t>(box.lines);
+        if (!choices.empty() && r.page + 1 >= std::max<std::size_t>(pages, 1)) {
+            const float marker = static_cast<float>(ui::measure(font, ">") + 3);
+            int widest = 0;
+            for (const std::string& choice : choices) {
+                widest = std::max(widest, ui::measure(font, choice));
+            }
+            const float width = (2.0F * message_padding) + marker + static_cast<float>(widest);
+            const float height =
+                static_cast<float>((static_cast<int>(choices.size()) * font.line_height()) - 1) +
+                (2.0F * message_padding);
+            const float x = std::max(box.x + box.width - width, message_margin);
+            const float y = std::max(box.y - 2.0F - height, message_margin);
+            r.sprites->draw(*r.white, one, render::Rect{x, y, width, height},
+                            render::Color{230, 232, 240, 255});
+            r.sprites->draw(*r.white, one,
+                            render::Rect{x + 1.0F, y + 1.0F, width - 2.0F, height - 2.0F},
+                            render::Color{18, 20, 40, 240});
+            for (std::size_t i = 0; i < choices.size(); ++i) {
+                const float line_y = y + message_padding +
+                                     static_cast<float>(static_cast<int>(i) * font.line_height());
+                const bool chosen = i == r.choice;
+                const render::Color colour =
+                    chosen ? render::Color{255, 255, 255, 255} : render::Color{150, 156, 176, 255};
+                if (chosen) {
+                    ui::draw_text(*r.sprites, *r.font, font, ">", x + message_padding, line_y,
+                                  colour);
+                }
+                ui::draw_text(*r.sprites, *r.font, font, choices[i], x + message_padding + marker,
+                              line_y, colour);
+            }
+        }
         r.sprites->end();
     }
     return true;
@@ -778,7 +836,15 @@ serialize::Json Runtime::save() const {
     for (const std::string& script : r.vm->scripts()) {
         serialize::Json values = serialize::Json::object();
         for (const auto& [name, value] : r.vm->variables(script)) {
-            std::visit([&values, &name](const auto& v) { values[name] = v; }, value);
+            if (const bool* yes = std::get_if<bool>(&value)) {
+                values[name] = *yes;
+            } else if (const std::int64_t* whole = std::get_if<std::int64_t>(&value)) {
+                values[name] = *whole;
+            } else if (const double* number = std::get_if<double>(&value)) {
+                values[name] = *number;
+            } else if (const std::string* words = std::get_if<std::string>(&value)) {
+                values[name] = *words;
+            }
         }
         variables[script] = std::move(values);
     }
@@ -847,6 +913,7 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
     r.vm->stop_all();
     r.dialogue.clear();
     r.page = 0;
+    r.choice = 0;
     for (const world::Entity root : r.world->roots()) {
         r.world->destroy(root);
     }

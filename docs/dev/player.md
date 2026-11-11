@@ -47,7 +47,7 @@ the engine does today:
 | `art/tiles.png` | Grass, path and wall tiles: the ground map, and a solid wall map one tile high, so in the Diorama style the wall stands as blocks |
 | `art/elder.png` | An elder who is a Solid Body and an Interactable |
 | `sfx/chime.wav` | Played when the player talks to the elder |
-| `logic/main.drules` | Rules for the start (a welcome message on screen), talking (the elder's words in a message box, counting talks in a variable) and the gate (a Trigger Area, with a message); and a Brain, `weather`, turning sunny and rainy |
+| `logic/main.drules` | Rules for the start (a welcome message on screen), talking (the elder's words in a message box, and a question whose answer changes the reply; counting talks in a variable) and the gate (a Trigger Area, with a message); and a Brain, `weather`, turning sunny and rainy |
 
 Switch `"render_style"` in `project.sparxel.json` to `"diorama"` to see the same village
 in 3D.

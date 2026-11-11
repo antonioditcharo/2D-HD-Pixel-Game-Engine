@@ -216,7 +216,21 @@ def main():
                     {"block": 6, "kind": "set_variable", "member": "talks",
                      "values": [{"kind": "arithmetic", "op": "add",
                                  "operands": [{"kind": "variable", "member": "talks"},
-                                              text(1)]}]}]},
+                                              text(1)]}]},
+                    # A question, then wait until it is answered, and reply.
+                    {"block": 9, "kind": "do", "object": "dialogue", "member": "ask",
+                     "values": [text("Elder: Shall I tell you about the road?"),
+                                text("Yes, please|No, thanks")]},
+                    {"block": 10, "kind": "wait_until",
+                     "values": [{"kind": "not", "operands": [
+                         {"kind": "call", "object": "dialogue", "member": "is_open"}]}]},
+                    {"block": 11, "kind": "if",
+                     "values": [{"kind": "compare", "op": "equal",
+                                 "operands": [{"kind": "call", "object": "dialogue",
+                                               "member": "answer"}, text(1)]}],
+                     "body": [say(12, "Elder: Follow the path east, through the gate. "
+                                      "Home is not far.")],
+                     "otherwise": [say(13, "Elder: Safe travels, then.")]}]},
             {"block": 7, "object": "gate", "event": "entered",
              "do": [say(8, "The gate creaks. Beyond it, the road home.")]},
         ],

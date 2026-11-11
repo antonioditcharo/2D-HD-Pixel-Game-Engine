@@ -3,7 +3,8 @@
 > **Status: v0.1.** A built-in pixel font, so every game can show text without a font
 > asset; measuring and word-wrapping; pixel-exact text drawing; and the **dialogue**
 > object, whose *"Say [text]"* action shows a message box that the player reads and closes
-> with Interact while the game waits. Tested with exact pixels.
+> with Interact while the game waits, and whose *"Ask"* action offers answers to pick
+> from. Tested with exact pixels.
 >
 > Code: [`engine/ui/include/engine/ui/text.h`](../../engine/ui/include/engine/ui/text.h),
 > [`src/text.cpp`](../../engine/ui/src/text.cpp), and the dialogue object in
@@ -22,8 +23,8 @@ pixel grid as the art looks wrong in a pixel-art game. This module starts there:
 - text measured and wrapped in whole pixels;
 - a message box that no-code logic opens with one action.
 
-Imported fonts (FreeType and HarfBuzz, ADR-010), choices, portraits and the UI editor come
-later (§5).
+Imported fonts (FreeType and HarfBuzz, ADR-010), portraits and the UI editor come later
+(§5).
 
 ## 2. Text
 
@@ -68,8 +69,12 @@ The **Dialogue** object (`dialogue`, category Story) gives logic:
 | Block | Kind | Does |
 |---|---|---|
 | *"Say [text]"* | Action | Shows the text in a message box. Said while one is showing, it waits its turn: messages show in the order they were said |
+| *"Ask [question] with answers [answers]"* | Action | Shows the question with answers to pick from, separated by `\|` (`Yes, please\|No, thanks`). Spaces around each are dropped, and so are empty ones; with none left it is an ordinary message |
 | *"A message is open"* | Condition | Whether a message box is on screen |
-| *"When the message closes"* | Event | Runs when the player closes the **last** message waiting |
+| *"The answer chosen"* | Value | The last answer picked, counted from 1; 0 before any |
+| *"The answer's text"* | Value | The words of the last answer picked |
+| *"When an answer is picked"* | Event | Runs when the player picks an answer, with `answer` counted from 1 |
+| *"When the message closes"* | Event | Runs when the player closes the **last** message waiting, after "answered" if it was a question |
 
 In the game:
 
@@ -79,6 +84,13 @@ In the game:
   Interact shows the next page, and on the last page closes the message. The press is
   used up: it does not run *"When Interact is pressed"* Rules and does not talk to the
   person in front of the player, so closing the elder's words does not open them again.
+- **Questions.** On a question's last page, its answers show in a box above the message,
+  at the right, with a `>` cursor on the chosen one (white; the others dimmer). Up and
+  Down move the cursor, wrapping round at the ends, and do not walk or run *"When Up is
+  pressed"* Rules. Interact picks the answer and closes the question. Before the last
+  page, Up and Down do nothing and Interact turns the page.
+- **Ask and wait.** *"Ask"*, then *"Wait until [not: a message is open]"*, then *"If [the
+  answer chosen] = 1"* branches a conversation. The sample's elder does this.
 - **Say and wait.** In a Rule or Sequence, *"Say [text]"* followed by *"Wait until [not: a
   message is open]"* pauses there until the player has read it, as `plan/05` §3.4's
   *"Show dialogue … and wait"* does. *Wait until* checks its condition at once and then
@@ -116,12 +128,16 @@ bottom. The text is white.
 | Pages and queueing | A long message takes exactly one Interact per wrapped line in a one-line box; a second message waits its turn; "closed" runs once, after the last |
 | Loading | Loading a save closes an open message without running "closed" |
 | The box (GPU) | Border pixels at the box's corners, the screen outside it untouched, the dark fill, and white text inside |
+| Questions | Answers parsed from `\|` with spaces and empty ones dropped; picking out of range refused; Down, Down, Down (round to the first), Up (round to the last), Up, then Interact picks the second answer: "answered" with 2 and its text, then "closed"; the hero did not move |
+| Long questions | Down on the first of two pages does nothing; Interact turns the page; then Down and Interact pick the second answer |
+| The answers box (GPU) | In a 64 × 64 game: its border exactly 2 pixels above the message box and right-aligned with it; the cursor and first answer white, the second dimmer |
+| The sample's elder | Playing the sample with recorded input: the welcome closed, the elder's greeting closed, "No, thanks" picked, and the elder's reply to it shown; every line said in order, no problems |
 | The sample | `sparxel-player` prints the welcome as `said: …` in both render styles |
 
 ## 5. Next increments
 
-1. **Choices:** *"Ask [question] with [answers]"* and the answer chosen in a variable,
-   which the dialogue graph (feature G1) builds on.
+1. **The dialogue graph** (feature G1): lines, choices, conditions and effects drawn as a
+   graph in the editor, compiled to these actions.
 2. **Speakers and portraits:** a name above the box, a face beside it, and the text
    appearing letter by letter with a blip sound.
 3. **Imported fonts:** pixel fonts from a PNG sheet, then vector fonts through FreeType

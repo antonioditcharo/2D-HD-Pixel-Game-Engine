@@ -208,6 +208,14 @@ struct Project {
             logic::BlockId{9}, "door", "entered", {}, {ir::log(10, ir::event_value("who"))}, {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{42}, "dialogue", "closed", {}, {ir::log(43, text("closed"))}, {}});
+        // Answers are logged as "answer <number> <text>".
+        rules.rules.push_back(logic::Rule{logic::BlockId{46},
+                                          "dialogue",
+                                          "answered",
+                                          {},
+                                          {ir::log(47, ir::event_value("answer")),
+                                           ir::log(48, ir::call("dialogue", "answer_text"))},
+                                          {}});
         rules.rules.push_back(
             logic::Rule{logic::BlockId{11}, "door", "exited", {}, {ir::log(12, text("bye"))}, {}});
         write_json(folder.path / "assets/logic/main.drules", serialize::logic_to_json(rules));
@@ -1187,4 +1195,158 @@ TEST_CASE("The camera stops at the map's edges, unless the project turns that of
     CHECK(pixel(pixels, 32, 15, 14) == hero_colour);
     CHECK(pixel(pixels, 32, 16, 15) == hero_colour);
     CHECK(pixel(pixels, 32, 7, 6) == rock_colour); // the rock at the origin, 1 tile up-left
+}
+
+TEST_CASE("Dialogue: questions list answers, Up and Down choose, Interact picks") {
+    game::DialogueObject parsed;
+    parsed.ask("Which?", " Yes | No ||  Maybe ");
+    CHECK(parsed.choices() == std::vector<std::string>{"Yes", "No", "Maybe"});
+    CHECK_FALSE(parsed.choose(3));
+    CHECK(parsed.answer() == 0);
+    CHECK(parsed.choose(2));
+    CHECK(parsed.answer() == 3);
+    CHECK(parsed.answer_text() == "Maybe");
+    CHECK(parsed.close_current());
+    parsed.ask("Nothing to pick", " | ");
+    CHECK(parsed.choices().empty()); // an ordinary message
+    CHECK_FALSE(parsed.choose(0));
+    CHECK(parsed.said() == std::vector<std::string>{"Which?", "Nothing to pick"});
+
+    const Project project;
+    input::Recording replay;
+    const auto press = [&replay](std::uint64_t step, input::Key k) {
+        replay.record(step, key(k), true);
+        replay.record(step + 1, key(k), false);
+    };
+    press(1, input::Key::Down); // No
+    press(3, input::Key::Down); // Maybe
+    press(5, input::Key::Down); // round to Yes
+    press(7, input::Key::Up);   // round to Maybe
+    press(9, input::Key::Up);   // No
+    press(11, input::Key::Z);   // pick it
+    const auto runtime = project.open(no_graphics(&replay));
+    // One line in a 32 x 32 game (14 pixels), so the answers show at once.
+    REQUIRE(ui::wrap(ui::PixelFont::builtin(), "Hi", 14).size() == 1);
+    runtime->dialogue().ask("Hi", "Yes|No|Maybe");
+    for (int i = 0; i < 11; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->dialogue().is_open());
+    CHECK(transform_of(*runtime, "hero").y == 0.0); // Up and Down did not walk
+    CHECK(runtime->log() == std::vector<std::string>{"start"});
+    runtime->step();
+    CHECK_FALSE(runtime->dialogue().is_open());
+    CHECK(runtime->dialogue().answer() == 2);
+    CHECK(runtime->log() == std::vector<std::string>{"start", "2", "No", "closed"});
+}
+
+TEST_CASE("A question's answers are drawn above the message") {
+    if (test_support::gpu() == nullptr) {
+        return;
+    }
+    const Project project;
+    std::vector<serialize::Issue> issues;
+    game::ProjectSettings settings =
+        game::read_project(project.folder.path, issues).value_or(game::ProjectSettings{});
+    REQUIRE(issues.empty());
+    settings.width = 64;
+    settings.height = 64;
+    write_json(project.folder.path / game::project_file, game::project_to_json(settings));
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    runtime->dialogue().ask("Go?", "Yes|No");
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    // The message box: one line, from y = 42 to 60. Two answers: 27 high, ending 2 above
+    // it (y = 13 to 40), right-aligned with it (its right edge at x = 59).
+    const render::Color border{230, 232, 240, 255};
+    CHECK(pixel(pixels, 64, 59, 42) == border);
+    CHECK(pixel(pixels, 64, 59, 13) == border);
+    CHECK(pixel(pixels, 64, 59, 39) == border);
+    CHECK(pixel(pixels, 64, 59, 40) != border);
+    CHECK(pixel(pixels, 64, 59, 12) != border);
+    // The cursor and "Yes" in white on the first answer's row (18 to 24); "No" dimmer on
+    // the second (27 to 33).
+    std::size_t white_first = 0;
+    std::size_t white_second = 0;
+    std::size_t dim_second = 0;
+    const render::Color white{255, 255, 255, 255};
+    const render::Color dim{150, 156, 176, 255};
+    for (std::uint32_t x = 20; x < 59; ++x) {
+        for (std::uint32_t y = 18; y < 25; ++y) {
+            white_first += pixel(pixels, 64, x, y) == white ? 1 : 0;
+        }
+        for (std::uint32_t y = 27; y < 34; ++y) {
+            white_second += pixel(pixels, 64, x, y) == white ? 1 : 0;
+            dim_second += pixel(pixels, 64, x, y) == dim ? 1 : 0;
+        }
+    }
+    CHECK(white_first > 10);
+    CHECK(white_second == 0);
+    CHECK(dim_second > 5);
+}
+
+TEST_CASE("Dialogue: a long question shows its answers only on its last page") {
+    const Project project;
+    input::Recording replay;
+    const auto press = [&replay](std::uint64_t step, input::Key k) {
+        replay.record(step, key(k), true);
+        replay.record(step + 1, key(k), false);
+    };
+    press(1, input::Key::Down); // first page: does not choose
+    press(3, input::Key::Z);    // next page, the last
+    press(5, input::Key::Down); // No
+    press(7, input::Key::Z);    // pick it
+    const auto runtime = project.open(no_graphics(&replay));
+    // Two lines of 14 pixels: two pages of one line in a 32 x 32 game.
+    REQUIRE(ui::wrap(ui::PixelFont::builtin(), "Hi hi", 14).size() == 2);
+    runtime->dialogue().ask("Hi hi", "Yes|No");
+    for (int i = 0; i < 8; ++i) {
+        runtime->step();
+    }
+    CHECK_FALSE(runtime->dialogue().is_open());
+    CHECK(runtime->dialogue().answer() == 2);
+    CHECK(runtime->log() == std::vector<std::string>{"start", "2", "No", "closed"});
+}
+
+TEST_CASE("The sample village: the elder asks a question and answers the choice") {
+    const TempFolder folder;
+    fs::copy(fs::path(SPARXEL_SAMPLES_DIR) / "hello", folder.path, fs::copy_options::recursive);
+    input::Recording replay;
+    const auto press = [&replay](std::uint64_t step, input::Key k) {
+        replay.record(step, key(k), true);
+        replay.record(step + 1, key(k), false);
+    };
+    press(1, input::Key::Z);    // close the welcome
+    press(4, input::Key::Z);    // close the elder's greeting
+    press(6, input::Key::Down); // "No, thanks"
+    press(8, input::Key::Z);    // pick it
+    game::RuntimeOptions options = no_graphics(&replay);
+    options.save_folder = folder.path / "saves";
+    std::vector<serialize::Issue> issues;
+    const auto runtime = game::Runtime::open(folder.path, options, issues);
+    INFO(issues_text(issues));
+    REQUIRE(runtime != nullptr);
+    CHECK(issues.empty());
+    for (int i = 0; i < 3; ++i) {
+        runtime->step();
+    }
+    CHECK_FALSE(runtime->dialogue().is_open());
+    // Talking to the elder, as Interact facing it would.
+    const std::array<reflect::Value, 1> by{reflect::Value{std::string("hero")}};
+    REQUIRE(game::emit(runtime->vm(), runtime->world(), runtime->world().find_named("elder").at(0),
+                       "interacted", by));
+    for (int i = 0; i < 6; ++i) {
+        runtime->step(); // steps 3 to 8
+    }
+    CHECK(runtime->dialogue().answer_text() == "No, thanks");
+    const std::vector<std::string> expected{
+        "Welcome to the village! Arrow keys to walk, Z to talk.",
+        "Elder: Welcome, traveller. The road east leads home.",
+        "Elder: Shall I tell you about the road?", "Elder: Safe travels, then."};
+    CHECK(runtime->dialogue().said() == expected);
+    REQUIRE(runtime->dialogue().current() != nullptr);
+    CHECK(*runtime->dialogue().current() == "Elder: Safe travels, then.");
+    CHECK(runtime->problems().empty());
 }
