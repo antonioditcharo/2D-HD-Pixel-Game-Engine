@@ -818,6 +818,12 @@ TEST_CASE("The Logic view takes values from the event, variables and sums") {
     number->setValue(3);
     QApplication::processEvents();
     CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to variable_1 + 3"));
+    // Plus the answer instead of a written number; then written again.
+    from(QStringLiteral("with:0:/answer"));
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to variable_1 + [answer]"));
+    from(QStringLiteral("with:0:/"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to variable_1 + 1"));
     // Compared: the answer, from the Compare menu, on the Rule.
     tree->setCurrentItem(tree->currentItem()->parent());
     choose(QStringLiteral("compare:answer"));

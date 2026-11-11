@@ -606,6 +606,23 @@ void LogicPanel::show_fields() {
                             });
                 }
             }
+            // A sum's second value: written, or from elsewhere (talks + bonus).
+            if (slot.kind == reflect::ValueKind::Int || slot.kind == reflect::ValueKind::Float) {
+                QMenu* with = menu->addMenu(tr("Sum with"));
+                with->setObjectName(QStringLiteral("sum_with:%1").arg(argument));
+                for (const LogicSource& source : sources) {
+                    QAction* item = with->addAction(text_of(source.text));
+                    item->setObjectName(text_of("with:" + std::to_string(argument) + ":" +
+                                                source.object + "/" + source.member));
+                    connect(item, &QAction::triggered, this,
+                            [this, file, block, argument, source, later] {
+                                later([this, file, block, argument, source](std::string& error) {
+                                    return document_->set_logic_sum_with(file, block, argument,
+                                                                         source, error);
+                                });
+                            });
+                }
+            }
             from->setMenu(menu);
             line->addWidget(from);
         }

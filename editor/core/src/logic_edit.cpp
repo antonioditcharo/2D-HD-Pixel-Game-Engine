@@ -1636,6 +1636,51 @@ bool Document::set_logic_arithmetic(std::string_view path, BlockId block, std::s
     return true;
 }
 
+bool Document::set_logic_sum_with(std::string_view path, BlockId block, std::size_t argument,
+                                  const LogicSource& with, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    logic::Expr* value = file != nullptr ? slot_target(file->asset, block, argument) : nullptr;
+    if (value == nullptr || value->kind != logic::ExprKind::Arithmetic ||
+        value->operands.size() != 2) {
+        error = "Add a sum to the value first.";
+        return false;
+    }
+    const std::vector<LogicSlot> slots = logic_slots(path, block);
+    const auto slot = std::find_if(slots.begin(), slots.end(), [argument](const LogicSlot& s) {
+        return s.argument == argument;
+    });
+    std::vector<LogicSource> offered = sources_of(path, block, slot->kind);
+    offered.push_back(LogicSource{LogicSource::Kind::Written, "", "", "", slot->kind});
+    const bool fits = std::any_of(offered.begin(), offered.end(), [&](const LogicSource& s) {
+        return s.kind == with.kind && s.object == with.object && s.member == with.member;
+    });
+    if (!fits) {
+        error = "That cannot give this value.";
+        return false;
+    }
+    engine::serialize::Json before = d.snapshot();
+    logic::Expr& second = value->operands[1];
+    switch (with.kind) {
+    case LogicSource::Kind::Written:
+        second = logic::ir::literal(slot->kind == reflect::ValueKind::Int
+                                        ? reflect::Value{std::int64_t{1}}
+                                        : reflect::Value{1.0});
+        break;
+    case LogicSource::Kind::Variable:
+        second = logic::ir::variable(with.member);
+        break;
+    case LogicSource::Kind::EventValue:
+        second = logic::ir::event_value(with.member);
+        break;
+    case LogicSource::Kind::Property:
+        second = logic::ir::property(with.object, with.member);
+        break;
+    }
+    d.record("Change a value's sum", std::move(before));
+    return true;
+}
+
 bool Document::is_logic_test(std::string_view path, BlockId block) const {
     LogicFile* file = impl_->logic_file(path);
     if (file == nullptr) {

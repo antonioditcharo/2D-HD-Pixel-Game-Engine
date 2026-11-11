@@ -240,6 +240,10 @@ public:
     bool set_logic_arithmetic(std::string_view path, engine::logic::BlockId block,
                               std::size_t argument, std::optional<engine::logic::ArithmeticOp> op,
                               std::string& error);
+    /// What a sum's second value is: a written number again, or a variable, event value or
+    /// property of the value's kind (talks + bonus). The value must have a sum already.
+    bool set_logic_sum_with(std::string_view path, engine::logic::BlockId block,
+                            std::size_t argument, const LogicSource& with, std::string& error);
     /// Every event a Rule can start on: the game starting, and the events of the game's
     /// objects and of the scene's named entities' components.
     [[nodiscard]] std::vector<LogicEvent> logic_events() const;

@@ -1067,6 +1067,16 @@ TEST_CASE("Logic values from variables, event values and properties, with sums")
     CHECK(lines()[1] == "  Set talks to talks + 2");
     REQUIRE(d->set_logic_arithmetic(file, set, 0, engine::logic::ArithmeticOp::Multiply, error));
     CHECK(lines()[1] == "  Set talks to talks × 2");
+    // Times another value: the answer; the slot then reads it all, not a written number.
+    REQUIRE(d->set_logic_sum_with(file, set, 0, source(set, 0, Kind::EventValue, "answer"), error));
+    CHECK(lines()[1] == "  Set talks to talks × [answer]");
+    slots = d->logic_slots(file, set);
+    CHECK_FALSE(value_slot().typed);
+    CHECK(value_slot().from == "talks × [answer]");
+    REQUIRE(
+        d->set_logic_sum_with(file, set, 0, editor::LogicSource{Kind::Written, "", "", ""}, error));
+    CHECK(lines()[1] == "  Set talks to talks × 1");
+    CHECK(d->check_logic(file).empty());
     REQUIRE(d->set_logic_arithmetic(file, set, 0, std::nullopt, error));
     CHECK(lines()[1] == "  Set talks to talks");
     // Writing a value makes it written again.
