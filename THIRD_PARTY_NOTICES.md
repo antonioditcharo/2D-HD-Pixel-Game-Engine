@@ -281,3 +281,10 @@ the runtime.
 The shader compiler (SDL_shadercross with DXC and SPIRV-Cross) runs only while building
 Sparxel. None of its code is part of the engine or of exported games, so it needs no
 notice here.
+
+## Qt (the editor only)
+
+The editor (`sparxel-editor`) uses Qt 6 Widgets, under the GNU Lesser General Public
+License version 3, linked dynamically (ADR-005). Qt is not part of the player or of
+exported games, so the notices above are complete for them. Distributing the editor will
+ship Qt's licence texts and notices beside it, and allow replacing its Qt libraries.

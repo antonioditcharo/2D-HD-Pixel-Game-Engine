@@ -60,12 +60,13 @@ jobs:
           cmake --version
           ninja --version
 
-      - name: Install a software GPU
+      - name: Install a software GPU and Qt
         # Mesa's lavapipe is a Vulkan driver that runs on the CPU, so the renderer's
-        # golden-pixel tests run here without a graphics card.
+        # golden-pixel tests run here without a graphics card. Qt 6 is for the editor.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers \
+            qt6-base-dev qt6-base-dev-tools libgl-dev
 
       - name: Restore vcpkg binary cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -86,7 +87,7 @@ jobs:
           echo "VCPKG_DEFAULT_BINARY_CACHE=$RUNNER_TEMP/vcpkg-cache" >> "$GITHUB_ENV"
 
       - name: Configure
-        run: cmake --preset linux-dev -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+        run: cmake --preset linux-dev -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DSPARXEL_REQUIRE_EDITOR=ON
       - name: Build
         run: cmake --build --preset linux-dev
       - name: Test
@@ -127,12 +128,30 @@ jobs:
           echo VCPKG_ROOT=%RUNNER_TEMP%\vcpkg>> "%GITHUB_ENV%"
           echo VCPKG_DEFAULT_BINARY_CACHE=%RUNNER_TEMP%\vcpkg-cache>> "%GITHUB_ENV%"
 
+      - name: Restore Qt
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\Qt
+          key: qt-windows-6.8.3-msvc2022_64-aqt3.2.1
+
+      - name: Install Qt 6 for the editor
+        # The official prebuilt Qt, downloaded by aqtinstall (a pinned PyPI package).
+        shell: cmd
+        run: |
+          if exist "%RUNNER_TEMP%\Qt\6.8.3\msvc2022_64\bin\Qt6Core.dll" goto installed
+          python -m pip install --disable-pip-version-check aqtinstall==3.2.1 || exit /b 1
+          python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --outputdir "%RUNNER_TEMP%\Qt" || exit /b 1
+          :installed
+          echo CMAKE_PREFIX_PATH=%RUNNER_TEMP%\Qt\6.8.3\msvc2022_64>> "%GITHUB_ENV%"
+          echo QT_PLUGIN_PATH=%RUNNER_TEMP%\Qt\6.8.3\msvc2022_64\plugins>> "%GITHUB_ENV%"
+          echo %RUNNER_TEMP%\Qt\6.8.3\msvc2022_64\bin>> "%GITHUB_PATH%"
+
       - name: Configure, build and test
         shell: cmd
         run: |
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
           if not defined VSINSTALL (echo Visual Studio with C++ tools was not found & exit /b 1)
           call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
-          cmake --preset ${{ matrix.preset }} -DCMAKE_COMPILE_WARNING_AS_ERROR=ON || exit /b 1
+          cmake --preset ${{ matrix.preset }} -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DSPARXEL_REQUIRE_EDITOR=ON || exit /b 1
           cmake --build --preset ${{ matrix.preset }} || exit /b 1
           ctest --preset ${{ matrix.preset }} || exit /b 1

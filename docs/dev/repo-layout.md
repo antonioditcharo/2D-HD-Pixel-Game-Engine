@@ -21,8 +21,9 @@
 ├── player/            sparxel-player: plays a project folder; what exported games run.
 ├── samples/           Sample projects (hello: a small village), made by tools/make_sample.py.
 ├── editor/            Editor-side code. May use engine/, never the other way round.
-│   └── exporter/      Exporting games, and the sparxel-export command. The editor
-│                      application itself is not started.
+│   ├── core/          The editor's model: documents, undo, picking, preview (no Qt).
+│   ├── app/           sparxel-editor, the Qt 6 application.
+│   └── exporter/      Exporting games, and the sparxel-export command.
 ├── tests/             Unit tests, one folder per engine module; shared helpers in
 │                      tests/support/.
 ├── tools/             Development scripts. Never shipped.

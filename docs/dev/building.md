@@ -16,6 +16,7 @@ install Mesa's software Vulkan driver (`sudo apt-get install mesa-vulkan-drivers
 | Ninja | any recent version | Included with Visual Studio's CMake tools |
 | vcpkg | tag `2026.10.16` | Provides third-party libraries |
 | Git | any recent version | |
+| Qt | 6.4 or newer, Widgets | Only for the editor ([editor.md](editor.md)). Without it, everything else builds and the editor is skipped. On Windows, the Qt online installer or `python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64`; then pass its folder as `CMAKE_PREFIX_PATH` and put its `bin` on `PATH` to run the editor |
 
 ## 1. Get vcpkg (once)
 
@@ -58,6 +59,9 @@ needs the "C++ Clang tools for Windows" component of Visual Studio, or LLVM on t
 Build output goes to `build/<preset>/`, which Git ignores.
 
 ## Linux (development only)
+
+On Ubuntu, `sudo apt-get install qt6-base-dev qt6-base-dev-tools libgl-dev` gives the
+editor Qt.
 
 ```sh
 git clone --branch 2026.10.16 https://github.com/microsoft/vcpkg ~/vcpkg

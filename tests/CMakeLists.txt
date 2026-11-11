@@ -235,3 +235,37 @@ add_test(NAME export_and_play
         -DWORK=${CMAKE_CURRENT_BINARY_DIR}/export_and_play
         -P "${CMAKE_CURRENT_SOURCE_DIR}/exporter/export_and_play.cmake"
 )
+
+# The editor's model: documents, undo, saving, picking and the preview.
+add_executable(editor_core_tests
+    test_main.cpp
+    editor/document_test.cpp
+)
+target_link_libraries(editor_core_tests PRIVATE
+    editor::core
+    doctest::doctest
+)
+target_compile_definitions(editor_core_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS
+    SPARXEL_SAMPLES_DIR="${PROJECT_SOURCE_DIR}/samples")
+target_include_directories(editor_core_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+engine_configure_test_target(editor_core_tests)
+
+add_test(NAME editor_core COMMAND editor_core_tests)
+
+# The editor application, when Qt 6 is there to build it.
+if(TARGET editor_app)
+    add_executable(editor_app_tests
+        editor_app/main.cpp
+        editor_app/app_test.cpp
+    )
+    target_link_libraries(editor_app_tests PRIVATE
+        editor::app
+        doctest::doctest
+    )
+    target_compile_definitions(editor_app_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS
+        SPARXEL_SAMPLES_DIR="${PROJECT_SOURCE_DIR}/samples"
+        SPARXEL_PLAYER="$<TARGET_FILE:sparxel_player>")
+    add_dependencies(editor_app_tests sparxel_player)
+    engine_configure_test_target(editor_app_tests)
+    add_test(NAME editor_app COMMAND editor_app_tests)
+endif()

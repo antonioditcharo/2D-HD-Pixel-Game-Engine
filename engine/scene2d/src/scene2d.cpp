@@ -19,9 +19,11 @@ void register_types(reflect::Registry& registry) {
                          .tooltip("Where the object is in the map.");
     transform.property<&Transform2D::x>("x")
         .unit(reflect::Unit::Tiles)
+        .display_name("Across")
         .tooltip("Distance from the left of the map.");
     transform.property<&Transform2D::y>("y")
         .unit(reflect::Unit::Tiles)
+        .display_name("Down")
         .tooltip("Distance from the top of the map.");
     transform.property<&Transform2D::layer>("layer").range(-100, 100).flags(advanced).tooltip(
         "Higher layers are drawn on top. Within a layer, lower objects are drawn on top.");
