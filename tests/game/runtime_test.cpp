@@ -812,7 +812,7 @@ TEST_CASE("Rules play music and sounds from assets") {
     REQUIRE(problems.size() == 3);
     CHECK(problems[0] == "There is no sound sfx/nothing.wav in assets/.");
     CHECK(problems[1] == "maps/start.dscene: " + scene->guid.to_string() +
-                             " is not a sound miniaudio can read (WAV, FLAC or MP3).");
+                             " is not a sound miniaudio can read (WAV, Ogg Vorbis, FLAC or MP3).");
     sounds.set_music_volume(50);
     CHECK(mixer->volume(audio::Bus::Music) == 0.5);
     sounds.set_sound_volume(250);

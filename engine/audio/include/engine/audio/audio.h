@@ -1,9 +1,9 @@
 #pragma once
 
 // Audio (ADR-009): sound effects and music on miniaudio, mixed into two buses, Music and
-// Sounds, under a master volume. Sounds come from encoded bytes in memory (WAV, FLAC or
-// MP3), so the asset database stays the only thing that reads files. miniaudio types never
-// appear here.
+// Sounds, under a master volume. Sounds come from encoded bytes in memory (WAV, Ogg Vorbis,
+// FLAC or MP3), so the asset database stays the only thing that reads files. miniaudio types
+// never appear here.
 //
 // See docs/dev/audio.md.
 
@@ -39,9 +39,9 @@ public:
     AudioEngine& operator=(AudioEngine&&) = delete;
     ~AudioEngine();
 
-    /// Decodes a sound's file bytes (WAV, FLAC or MP3) and keeps it under `key`, such as
-    /// its asset GUID. A key already loaded is replaced (for hot reload); sounds playing
-    /// from the old data stop. False, with last_error(), if the bytes cannot be decoded.
+    /// Decodes a sound's file bytes (WAV, Ogg Vorbis, FLAC or MP3) and keeps it under `key`,
+    /// such as its asset GUID. A key already loaded is replaced (for hot reload); sounds
+    /// playing from the old data stop. False, with last_error(), if the bytes cannot be decoded.
     bool load(std::string_view key, std::vector<std::uint8_t> bytes);
     [[nodiscard]] bool is_loaded(std::string_view key) const;
     /// Forgets a sound, stopping it wherever it plays.

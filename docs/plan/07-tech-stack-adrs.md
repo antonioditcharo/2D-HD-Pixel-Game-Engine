@@ -205,8 +205,8 @@
 
 - **Decision:** **miniaudio**, public domain or MIT-0 [S72]. It is a single-file library
   with a WASAPI backend, a node graph for mixing and effects, and optional 3D
-  spatialization. It decodes WAV, FLAC and MP3. Vorbis/OGG needs an added, permissively
-  licensed decoder, to be selected later.
+  spatialization. It decodes WAV, FLAC and MP3. Ogg Vorbis comes from **stb_vorbis**
+  (public domain or MIT), which miniaudio uses when it is compiled in beside it.
 - **Sparxel builds on top of it:** buses, snapshots, ducking, adaptive music, zones and
   footstep surfaces.
 - **Alternatives:** FMOD or Wwise as the core engine. Those add licence tiers (Wwise is
@@ -332,6 +332,7 @@
 | Jolt Physics | MIT [S69] | Yes | Include the licence notice |
 | Box2D v3 | MIT [S67] | Yes | Include the licence notice |
 | miniaudio | Public domain or MIT-0 [S72] | Yes | None |
+| stb_vorbis | Public domain or MIT (licence at the end of `stb_vorbis.c`) | Yes | None (taken as public domain) |
 | FreeType | FTL (BSD-style with credit) or GPLv2 [S80]; we use FTL | Yes | Credit in documentation |
 | HarfBuzz | "Old MIT" [S79] | Yes | Include the licence notice |
 | Steamworks SDK | Valve Steamworks SDK Access Agreement [S91] | Optional; only `redistributable_bin`, supplied by the creator | Never committed to this repository; the creator accepts Valve's agreement |

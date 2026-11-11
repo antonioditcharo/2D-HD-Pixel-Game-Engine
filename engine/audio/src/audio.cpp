@@ -11,6 +11,10 @@
 #endif
 #define MA_NO_RESOURCE_MANAGER
 #define MA_NO_GENERATION
+// Ogg Vorbis: miniaudio decodes it when stb_vorbis's declarations come first; the
+// implementation follows at the end of this file, as miniaudio's documentation asks.
+#define STB_VORBIS_HEADER_ONLY
+#include <stb_vorbis.c> // NOLINT(bugprone-suspicious-include): stb ships it as a .c file
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio.h>
 
@@ -193,7 +197,8 @@ bool AudioEngine::load(std::string_view key, std::vector<std::uint8_t> bytes) {
     ma_decoder decoder;
     const ma_result result = ma_decoder_init_memory(bytes.data(), bytes.size(), &config, &decoder);
     if (result != MA_SUCCESS) {
-        a.error = std::string(key) + " is not a sound miniaudio can read (WAV, FLAC or MP3).";
+        a.error =
+            std::string(key) + " is not a sound miniaudio can read (WAV, Ogg Vorbis, FLAC or MP3).";
         return false;
     }
     auto pcm = std::make_shared<Pcm>();
@@ -368,3 +373,7 @@ const std::string& AudioEngine::last_error() const noexcept {
 }
 
 } // namespace engine::audio
+
+// stb_vorbis's implementation, last: it defines short macros that must not reach our code.
+#undef STB_VORBIS_HEADER_ONLY
+#include <stb_vorbis.c> // NOLINT(bugprone-suspicious-include)

@@ -13,8 +13,7 @@ Rules:
   redistribution. Optional modules that need them read the SDK from a path the user
   supplies (ADR-014).
 
-Current dependencies (all via vcpkg):
-
-| Library | Used for | Licence |
-|---|---|---|
-| doctest | Unit tests only; not shipped in games | MIT |
+Nothing is vendored here today: every dependency comes from vcpkg
+([`vcpkg.json`](../vcpkg.json)). Their licences are in the table in
+[`docs/plan/07-tech-stack-adrs.md`](../docs/plan/07-tech-stack-adrs.md), and the notices
+games ship in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).

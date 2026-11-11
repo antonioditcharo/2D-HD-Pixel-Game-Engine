@@ -1,8 +1,8 @@
 # Audio
 
-> **Status: v0.1.** Sound effects and looping music from WAV, FLAC and MP3 assets, mixed
-> into Music and Sounds buses under a master volume, with fades and crossfades, and
-> no-code actions to play them. Tested by mixing headless and checking the samples.
+> **Status: v0.2.** Sound effects and looping music from WAV, Ogg Vorbis, FLAC and MP3
+> assets, mixed into Music and Sounds buses under a master volume, with fades and
+> crossfades, and no-code actions to play them. Tested by mixing headless and checking the samples.
 >
 > Code: [`engine/audio/include/engine/audio/audio.h`](../../engine/audio/include/engine/audio/audio.h),
 > [`src/audio.cpp`](../../engine/audio/src/audio.cpp), and the logic object in
@@ -22,7 +22,7 @@ top. miniaudio's types never appear in a header, and only `src/audio.cpp` includ
 ```cpp
 std::string error;
 auto audio = audio::AudioEngine::create({}, error);     // the sound card; null if none
-audio->load("chime", wav_bytes);                        // decodes WAV, FLAC or MP3
+audio->load("chime", wav_bytes);                        // WAV, Ogg Vorbis, FLAC or MP3
 audio->play_sound("chime", /*volume*/ 0.8, /*pitch*/ 1.0);
 audio->load("town", music_bytes);
 audio->play_music("town", /*fade_seconds*/ 1.0);       // crossfades from the music before
@@ -43,6 +43,10 @@ audio->set_volume(audio::Bus::Music, 0.5);
 - **Decoding up front.** `load()` decodes the whole sound with miniaudio's decoder into
   floats at the engine's rate and channel count, so playing never touches the disk or
   waits. Each playing voice reads that shared data through its own buffer reference.
+- **Ogg Vorbis** is decoded by stb_vorbis (public domain or MIT), compiled into
+  `src/audio.cpp` beside miniaudio, which then reads `.ogg` files like any other. Its
+  implementation is included at the very end of the file, because it defines short
+  macros that must not reach Sparxel's code.
   miniaudio's resource manager, and its loading threads, are compiled out.
 - **Limits for hostile files:** bytes that are not a sound, or decode to nothing, are
   refused with a message; a sound longer than 30 minutes is refused rather than filling
@@ -87,14 +91,14 @@ All mix headless and read the samples, so they run anywhere, with no sound card:
 |---|---|
 | Sounds | A 0.1 s sound plays once at exactly its level; volume, bus and master volume multiply; two sounds add; pitch 2 ends in half the time |
 | Music | Loops without a gap; playing it again does not restart it; the bus volume; stopping; a one-second fade in (silent, half, full); a crossfade (old full, both half, new alone); a fade out |
+| Ogg Vorbis | Half a second of a 440 Hz tone at 0.5 ([`tests/audio/data/`](../../tests/audio/data/), made with ffmpeg and libvorbis) decodes and plays: over its middle 0.4 s the RMS level is that of a sine of 0.5 (to 3%), the peak 0.5 (to 5%), and there are 176 cycles; then silence, with no voice left |
 | Bad sounds | Junk bytes, nothing, and a sound with no samples refused with messages; playing unknown keys refused; unloading stops a playing sound and the music; loading a key again replaces it |
 | In a game | A Rule on game start plays the theme by path; Interact's Rule plays a chime over it (0.5 + 0.25); missing and unreadable sounds reported; volumes in percent clamped; no engine, no problems |
 
 ## 6. Next increments
 
-1. **Ogg Vorbis**, through an added, permissively licensed decoder (ADR-009).
-2. **Streaming** long music from disk instead of decoding it all, once memory use matters.
-3. **Snapshots and ducking:** lowering the music while a character speaks.
-4. **Positional sound** for the Diorama style: sounds placed in the world, quieter with
+1. **Streaming** long music from disk instead of decoding it all, once memory use matters.
+2. **Snapshots and ducking:** lowering the music while a character speaks.
+3. **Positional sound** for the Diorama style: sounds placed in the world, quieter with
    distance.
-5. **Footstep surfaces**, **zones** and **adaptive music** (ADR-009).
+4. **Footstep surfaces**, **zones** and **adaptive music** (ADR-009).

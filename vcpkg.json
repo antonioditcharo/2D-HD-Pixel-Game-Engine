@@ -18,7 +18,8 @@
     {
       "name": "sdl3-shadercross",
       "host": true
-    }
+    },
+    "stb"
   ],
   "overrides": [
     {

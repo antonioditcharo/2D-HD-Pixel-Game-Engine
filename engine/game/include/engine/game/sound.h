@@ -1,9 +1,9 @@
 #pragma once
 
 // The "audio" object logic uses for sound: "Play sound [x]", "Play music [x] fading over
-// [n] seconds", "Stop the music" and the volumes. Sounds are asset files (WAV, FLAC or
-// MP3), named by GUID (what the editor writes) or by their path in assets/; each is read
-// and decoded the first time it plays.
+// [n] seconds", "Stop the music" and the volumes. Sounds are asset files (WAV, Ogg Vorbis,
+// FLAC or MP3), named by GUID (what the editor writes) or by their path in assets/; each is
+// read and decoded the first time it plays.
 //
 // See docs/dev/audio.md §4.
 

@@ -1,12 +1,15 @@
 // Audio mixed headless, so every test reads the exact output instead of listening: levels,
-// buses, looping music, fades, pitch and bad files.
+// buses, looping music, fades, pitch, Ogg Vorbis and bad files.
 
 #include "engine/audio/audio.h"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
@@ -137,11 +140,49 @@ TEST_CASE("Music loops, fades and crossfades") {
     CHECK(flat(out, rate / 2 + 10, rate, 0.0F));
 }
 
+TEST_CASE("Ogg Vorbis sounds decode and play") {
+    // Half a second of a 440 Hz tone at 0.5 in both channels, made with ffmpeg and
+    // libvorbis (tests/audio/data/README.md). Vorbis is lossy, so the tone is checked by
+    // its loudness and pitch rather than sample by sample.
+    std::ifstream file(SPARXEL_AUDIO_TEST_DATA "/tone-440hz.ogg", std::ios::binary);
+    REQUIRE(file);
+    const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)),
+                                          std::istreambuf_iterator<char>());
+    REQUIRE(bytes.size() > 1000);
+
+    const auto engine = make_engine();
+    REQUIRE(engine->load("tone", bytes));
+    REQUIRE(engine->play_sound("tone"));
+    const std::vector<float> out = mix(*engine, rate); // a second: the tone, then silence
+
+    // The middle of the tone, away from the encoder's edges: 0.4 s.
+    const std::size_t from = rate / 20;
+    const std::size_t to = rate * 9 / 20;
+    double squares = 0.0;
+    float peak = 0.0F;
+    int rises = 0; // upward zero crossings: one per cycle
+    for (std::size_t i = from; i < to; ++i) {
+        squares += double{out[i]} * out[i];
+        peak = std::max(peak, std::abs(out[i]));
+        rises += (out[i - 1] < 0.0F && out[i] >= 0.0F) ? 1 : 0;
+    }
+    const double rms = std::sqrt(squares / static_cast<double>(to - from));
+    CHECK(rms == doctest::Approx(0.5 / std::sqrt(2.0)).epsilon(0.03)); // a sine of 0.5
+    CHECK(peak == doctest::Approx(0.5).epsilon(0.05));
+    CHECK(rises >= 175); // 440 Hz for 0.4 s: 176 cycles
+    CHECK(rises <= 177);
+
+    // Then it ends: silence, and no voice left.
+    CHECK(flat(out, rate * 11 / 20, rate, 0.0F));
+    CHECK(engine->playing_sounds() == 0);
+}
+
 TEST_CASE("Bad sounds are refused, and unloading stops a sound") {
     const auto engine = make_engine();
     const std::vector<std::uint8_t> junk{'n', 'o', 't', ' ', 'a', ' ', 's', 'o', 'u', 'n', 'd'};
     CHECK_FALSE(engine->load("junk", junk));
-    CHECK(engine->last_error() == "junk is not a sound miniaudio can read (WAV, FLAC or MP3).");
+    CHECK(engine->last_error() ==
+          "junk is not a sound miniaudio can read (WAV, Ogg Vorbis, FLAC or MP3).");
     CHECK_FALSE(engine->load("empty", {}));
     CHECK_FALSE(engine->load("silent", wav(0, 0)));
     CHECK_FALSE(engine->play_sound("nothing"));

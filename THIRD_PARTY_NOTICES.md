@@ -276,6 +276,14 @@ David Reid, offered as a choice of two licences: public domain (the Unlicense) o
 Attribution. Neither requires a notice; it is listed so this file names every library in
 the runtime.
 
+## stb_vorbis
+
+Version 1.22, from https://github.com/nothings/stb (vcpkg's `stb`, commit 2c980bb of
+2026-08-02). Used by the audio module to decode Ogg Vorbis. Written by Sean Barrett and
+contributors, offered as a choice of two licences: public domain (the Unlicense) or MIT.
+Sparxel takes it under the public domain dedication, which requires no notice; it is
+listed so this file names every library in the runtime.
+
 ## Build-time tools
 
 The shader compiler (SDL_shadercross with DXC and SPIRV-Cross) runs only while building

@@ -119,7 +119,8 @@ target_link_libraries(engine_audio_tests PRIVATE
     engine::audio
     doctest::doctest
 )
-target_compile_definitions(engine_audio_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+target_compile_definitions(engine_audio_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS
+    SPARXEL_AUDIO_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/audio/data")
 target_include_directories(engine_audio_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 engine_configure_test_target(engine_audio_tests)
 

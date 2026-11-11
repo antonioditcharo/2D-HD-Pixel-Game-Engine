@@ -84,8 +84,9 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     asset_tree_->setAccessibleName(tr("Assets"));
     asset_tree_->setModel(asset_model_);
     asset_model_->setNameFilters({QStringLiteral("*.png"), QStringLiteral("*.wav"),
-                                  QStringLiteral("*.mp3"), QStringLiteral("*.flac"),
-                                  QStringLiteral("*.dscene"), QStringLiteral("*.drules")});
+                                  QStringLiteral("*.ogg"), QStringLiteral("*.mp3"),
+                                  QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
+                                  QStringLiteral("*.drules")});
     asset_model_->setNameFilterDisables(false);
     for (int column = 1; column < 4; ++column) {
         asset_tree_->hideColumn(column);
