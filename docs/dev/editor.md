@@ -32,6 +32,7 @@ sparxel-editor samples/hello
 | **Assets** (left) | The project's `assets/` folder: pictures, sounds, scenes and logic |
 | **Tiles** (left) | With a tilemap selected, its tileset's tiles and an eraser. Choosing one puts the scene in **paint mode** (Classic 2D): the left button paints the tile into the cell under the cursor, the right button erases, the middle button still moves the camera. Each stroke is one undo step; painting past the map's right or bottom edge grows it. Choosing the tile again, Escape, or selecting something else stops painting |
 | **Inspector** (right) | The selected entity's name, and a group for each component with a field for each property: a tick box for yes/no, number fields with the property's range, step and unit, a list for choices, and a list of the project's pictures for an image or tileset. Read-only properties are shown but cannot be changed; *Show advanced settings* adds the advanced ones. Each group can be removed, and *Add a component…* lists those the entity does not have |
+| **Logic** (right, beside the inspector) | Every logic file of the project, its Rules, Sequences and Brains as plain language: *When [who] interacts with it (elder)*, then its steps (*Say “…” (dialogue)*, *Wait until not a message is open (dialogue)*, *If the answer chosen (dialogue) = 1:*), nested as they run. Read-only for now |
 | **Commands** | Open, Save (Ctrl+S), Undo and Redo (with what they will undo, for example *Undo Change Speed of hero*), New entity (where the camera looks), Delete, **Play** (F5: saves, then starts `sparxel-player` on the project) and **Export** (saves, asks for an empty folder, then exports: [export.md](export.md)) |
 
 The title shows a star while there are unsaved changes, and closing asks whether to save
@@ -55,6 +56,12 @@ them.
 - **`editor::Preview`** draws a Document on a headless GPU device and returns pixels:
   the same `draw_world` / `draw_diorama` and `PostProcessor` the game uses, so what the
   editor shows is what the game shows. The scene view puts those pixels on screen.
+- **Logic as language** (`editor::describe`): each Rule, Sequence and Brain becomes
+  lines built from the blocks' own reflected texts (`block_text`): an action's text with
+  its values filled in, a property's display name, events with their values in brackets,
+  and operators as symbols. Members are found on the game's objects by name, and on
+  entities through their components, so a new component's blocks read well with no
+  editor change. Every line keeps its block id, for highlighting and explaining later.
 - **Picking** (`editor::pick`) finds the entity drawn on top at a map point in Classic 2D,
   in the draw order the game uses (layer, then y, then GUID): a sprite whose picture
   covers the point, else a tilemap with a tile there.
@@ -75,6 +82,7 @@ them.
 | Properties | An edit changes the world and marks the scene changed, labelled *Change Speed of hero*; typing three values is one undo step back to the original; after a field loses focus the next change is its own step; a new edit clears redo; a value of the wrong kind and a component the entity lacks are refused, with nothing changed |
 | Painting | A stroke over three cells is one undo step; painting past the right edge grows the map, with empty cells between; cells above or left of its corner, and entities without a tilemap, are refused; erasing; a new stroke after `end_merge()` is its own step |
 | Entities and components | Create, add a component (twice refused), rename, delete and undo (same GUID and components back), remove a component and undo; a drag of five moves is one step; undoing everything returns to the scene as opened |
+| Logic as language | The sample's logic file found and read in full, line for line (its three Rules with their steps, the If and Otherwise, and the weather Brain's states, steps and timed transitions); every line traced to a block; conditions, all-of, not, waits, repeats, runs, Otherwise, event values and an unknown object read sensibly |
 | Saving | The scene file is written; reopening finds the edit; saving keeps the history |
 | Picking | The hero's exact picture bounds; the hero, the elder, the ground and the walls (drawn after the ground) at points, and nothing outside the map |
 | Preview (GPU) | The sample drawn at 320 × 180 with the hero's robe and the wall's stone at exact pixels, and the hero moved 2 tiles after an edit |
@@ -82,9 +90,10 @@ them.
 
 ## 5. Next increments
 
-1. **Placing assets** by dragging them from the assets list into the scene, and
+1. **Editing logic** in the Logic view: blocks picked from the reflected lists,
+   values typed in place, and steps dragged, all compiled and checked as you go.
+2. **Placing assets** by dragging them from the assets list into the scene, and
    rectangle and fill tools for painting.
-2. **The logic editors:** Rules, Sequences and Brains as blocks (`plan/05`).
 3. **Selection and gizmos in the Diorama style,** picking through the 3D camera.
 4. **Docking layouts** with Qt Advanced Docking System (ADR-005), saved per user.
 5. **Project creation** from templates, and the project settings in a dialog.

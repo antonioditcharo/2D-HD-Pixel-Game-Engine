@@ -91,6 +91,17 @@ TEST_CASE("The editor opens the sample: its entities, its scene, its name") {
         QApplication::processEvents();
         e.window.grab().save(shot);
     }
+    // The logic, as plain language: one file; its three Rules and a Brain.
+    QTreeWidget* logic = e.window.logic_view();
+    REQUIRE(logic->topLevelItemCount() == 1);
+    QTreeWidgetItem* file = logic->topLevelItem(0);
+    CHECK(file->text(0) == QStringLiteral("logic/main.drules"));
+    REQUIRE(file->childCount() == 4);
+    CHECK(file->child(0)->text(0) == QStringLiteral("When the game starts"));
+    CHECK(file->child(1)->text(0) == QStringLiteral("When [who] interacts with it (elder)"));
+    CHECK(file->child(1)->childCount() == 7); // its steps; the If holds its own
+    CHECK(file->child(3)->text(0) == QStringLiteral("Brain weather"));
+    CHECK(file->child(3)->child(0)->text(0) == QStringLiteral("State sunny"));
     CHECK_FALSE(e.window.open_project(e.sample.path / "missing"));
     CHECK(e.window.document() != nullptr); // the open project stays open
 }

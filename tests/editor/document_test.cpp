@@ -3,6 +3,7 @@
 
 #include "engine/foundation/guid.h"
 #include "engine/game/behaviours.h"
+#include "engine/logic/ir.h"
 #include "engine/scene2d/scene2d.h"
 
 #include <doctest/doctest.h>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "editor/core/document.h"
+#include "editor/core/logic_text.h"
 #include "editor/core/preview.h"
 #include "support/gpu.h"
 
@@ -341,4 +343,74 @@ TEST_CASE("The preview draws the scene as the game would") {
     const std::size_t i = (std::size_t{131} * 320 + 158 + 32) * 4;
     CHECK(std::array<int, 3>{after.rgba.at(i), after.rgba.at(i + 1), after.rgba.at(i + 2)} ==
           std::array<int, 3>{60, 96, 200});
+}
+
+TEST_CASE("Logic reads as plain language") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::vector<serialize::Issue> issues;
+    const std::vector<editor::LogicFile> files = editor::logic_files(*d, issues);
+    CHECK(issues.empty());
+    REQUIRE(files.size() == 1);
+    CHECK(files[0].path == "logic/main.drules");
+    std::vector<std::string> shown;
+    for (const editor::LogicLine& line : editor::describe(files[0].asset, *d)) {
+        shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        CHECK(line.block.is_valid()); // every line can be traced to its block
+    }
+    const std::vector<std::string> expected{
+        "When the game starts",
+        "  Say \u201cWelcome to the village! Arrow keys to walk, Z to talk.\u201d (dialogue)",
+        "When [who] interacts with it (elder)",
+        "  Say \u201cElder: Welcome, traveller. The road east leads home.\u201d (dialogue)",
+        "  Play sound \u201csfx/chime.wav\u201d (audio)",
+        "  Set talks to talks + 1",
+        std::string("  Ask \u201cElder: Shall I tell you about the road?\u201d with answers ") +
+            "\u201cYes, please|No, thanks\u201d (dialogue)",
+        "  Wait until not a message is open (dialogue)",
+        "  If the answer chosen (dialogue) = 1:",
+        std::string("    Say \u201cElder: Follow the path east, through the gate. ") +
+            "Home is not far.\u201d (dialogue)",
+        "  Otherwise:",
+        "    Say \u201cElder: Safe travels, then.\u201d (dialogue)",
+        "When [who] walks in (gate)",
+        "  Say \u201cThe gate creaks. Beyond it, the road home.\u201d (dialogue)",
+        "Brain weather",
+        "  State sunny",
+        "    On enter:",
+        "      Log \u201cThe sun is out.\u201d",
+        "      Set ambient light of lighting to 0.55",
+        "      Set sunlight of lighting to 0.45",
+        "    Go to rain after 30 seconds",
+        "  State rain",
+        "    On enter:",
+        "      Log \u201cIt starts to rain.\u201d",
+        "      Set ambient light of lighting to 0.25",
+        "      Set sunlight of lighting to 0.1",
+        "    Go to sunny after 15 seconds",
+    };
+    CHECK(shown == expected);
+
+    // Operators, conditions, otherwise and missing objects read sensibly too.
+    namespace ir = engine::logic::ir;
+    engine::logic::LogicAsset asset;
+    asset.rules.push_back(engine::logic::Rule{
+        engine::logic::BlockId{1},
+        "",
+        "game_start",
+        {ir::all({ir::compare(engine::logic::CompareOp::GreaterEqual, ir::variable("hp"),
+                              ir::literal(reflect::Value{std::int64_t{3}})),
+                  ir::negate(ir::literal(reflect::Value{false}))})},
+        {ir::wait(2, ir::literal(reflect::Value{0.5})),
+         ir::repeat(3, ir::literal(reflect::Value{std::int64_t{2}}), {ir::run(4, "intro")}),
+         ir::do_action(5, "nobody", "dance")},
+        {ir::log(6, ir::event_value("who"))}});
+    shown.clear();
+    for (const editor::LogicLine& line : editor::describe(asset, *d)) {
+        shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+    }
+    CHECK(shown == std::vector<std::string>{"When the game starts", "  If (hp \u2265 3 and not no)",
+                                            "  Wait 0.5 seconds",
+                                            "  Repeat 2 times:", "    Run intro and wait for it",
+                                            "  dance (nobody)", "  Otherwise:", "    Log [who]"});
 }

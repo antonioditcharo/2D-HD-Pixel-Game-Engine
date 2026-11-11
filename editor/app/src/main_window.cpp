@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 
+#include "editor/core/logic_text.h"
 #include "editor/exporter/exporter.h"
 #include "inspector.h"
 #include "scene_view.h"
@@ -111,6 +112,19 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     inspector_dock->setObjectName(QStringLiteral("inspector_dock"));
     inspector_dock->setWidget(side);
     addDockWidget(Qt::RightDockWidgetArea, inspector_dock);
+
+    // Right, beside the inspector: the project's logic, as plain language.
+    logic_ = new QTreeWidget(this);
+    logic_->setObjectName(QStringLiteral("logic"));
+    logic_->setHeaderHidden(true);
+    logic_->setAccessibleName(tr("Logic"));
+    logic_->setWordWrap(true);
+    auto* logic_dock = new QDockWidget(tr("Logic"), this);
+    logic_dock->setObjectName(QStringLiteral("logic_dock"));
+    logic_dock->setWidget(logic_);
+    addDockWidget(Qt::RightDockWidgetArea, logic_dock);
+    tabifyDockWidget(inspector_dock, logic_dock);
+    inspector_dock->raise();
     resizeDocks({entities, inspector_dock}, {240, 340}, Qt::Horizontal);
 
     // Left, below: the tiles of the selected tilemap, to paint with.
@@ -192,6 +206,7 @@ bool MainWindow::open_project(const fs::path& folder) {
     const QString assets = path_text(folder / "assets");
     asset_tree_->setRootIndex(asset_model_->setRootPath(assets));
     rebuild_outliner();
+    rebuild_logic();
     update_title_and_actions();
     if (!issues.empty()) {
         report(tr("Opened, with notes:\n%1").arg(issues_text(issues)));
@@ -245,6 +260,34 @@ void MainWindow::rebuild_outliner() {
         }
     }
     outliner_->expandAll();
+}
+
+void MainWindow::rebuild_logic() {
+    logic_->clear();
+    if (document_ == nullptr) {
+        return;
+    }
+    std::vector<engine::serialize::Issue> issues;
+    for (const LogicFile& file : logic_files(*document_, issues)) {
+        auto* top = new QTreeWidgetItem(QStringList{text_of(file.path)});
+        logic_->addTopLevelItem(top);
+        // Each line nests under the last line one level up.
+        std::vector<QTreeWidgetItem*> parents{top};
+        for (const LogicLine& line : describe(file.asset, *document_)) {
+            const auto depth = static_cast<std::size_t>(line.depth);
+            parents.resize(std::min(parents.size(), depth + 1));
+            auto* item = new QTreeWidgetItem(QStringList{text_of(line.text)});
+            item->setData(0, Qt::UserRole,
+                          QVariant::fromValue(static_cast<qulonglong>(line.block.value)));
+            parents.back()->addChild(item);
+            parents.push_back(item);
+        }
+    }
+    for (const engine::serialize::Issue& issue : issues) {
+        logic_->addTopLevelItem(new QTreeWidgetItem(
+            QStringList{text_of(issue.path) + QStringLiteral(": ") + text_of(issue.message)}));
+    }
+    logic_->expandAll();
 }
 
 void MainWindow::changed(bool structure) {
