@@ -51,6 +51,8 @@ struct LogicSlot {
     /// variable, an event value or a property, in plain language.
     bool typed = true;
     std::string from;
+    /// Whether the value is a sum (talks + 1, talks × [answer]), which can take more parts.
+    bool sum = false;
 };
 
 /// Where a value can come from instead of being written: a variable of the file, a value
@@ -252,11 +254,16 @@ public:
                           const LogicSource& source, std::string& error);
     /// Adds a written number to a numeric value that comes from somewhere (talks + 1), or
     /// changes how (−, ×, ÷), or with nothing, takes it away. The number is then the
-    /// slot's written value.
+    /// slot's written value. On a longer sum, these act on its last part.
     bool set_logic_arithmetic(std::string_view path, engine::logic::BlockId block,
                               std::size_t argument, std::optional<engine::logic::ArithmeticOp> op,
                               std::string& error);
-    /// What a sum's second value is: a written number again, or a variable, event value or
+    /// Adds one more part to a sum, after all the others (talks + [answer] + 1): a written
+    /// number, which is then the slot's written value; set_logic_sum_with() changes it.
+    /// The parts work in order, each on the result so far.
+    bool extend_logic_sum(std::string_view path, engine::logic::BlockId block, std::size_t argument,
+                          engine::logic::ArithmeticOp op, std::string& error);
+    /// What a sum's last part is: a written number again, or a variable, event value or
     /// property of the value's kind (talks + bonus). The value must have a sum already.
     bool set_logic_sum_with(std::string_view path, engine::logic::BlockId block,
                             std::size_t argument, const LogicSource& with, std::string& error);

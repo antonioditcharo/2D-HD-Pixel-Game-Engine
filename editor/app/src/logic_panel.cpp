@@ -618,7 +618,8 @@ void LogicPanel::show_fields() {
                       std::tuple{tr("Times a number"), "multiply", std::optional<Op>(Op::Multiply)},
                       std::tuple{tr("Divided by a number"), "divide",
                                  std::optional<Op>(Op::Divide)},
-                      std::tuple{tr("No sum"), "none", std::optional<Op>()}}) {
+                      std::tuple{slot.sum ? tr("Without the last part") : tr("No sum"), "none",
+                                 std::optional<Op>()}}) {
                     QAction* item = menu->addAction(label);
                     item->setObjectName(QStringLiteral("sum:%1:").arg(argument) +
                                         QString::fromLatin1(id));
@@ -633,7 +634,30 @@ void LogicPanel::show_fields() {
                             });
                 }
             }
-            // A sum's second value: written, or from elsewhere (talks + bonus).
+            // One more part after a sum (talks + [answer] + 1), a number to begin with.
+            if (slot.sum) {
+                QMenu* more = menu->addMenu(tr("Then"));
+                more->setObjectName(QStringLiteral("sum_more:%1").arg(argument));
+                using Op = engine::logic::ArithmeticOp;
+                for (const auto& [label, id, op] :
+                     {std::tuple{tr("Plus a number"), "add", Op::Add},
+                      std::tuple{tr("Minus a number"), "subtract", Op::Subtract},
+                      std::tuple{tr("Times a number"), "multiply", Op::Multiply},
+                      std::tuple{tr("Divided by a number"), "divide", Op::Divide}}) {
+                    QAction* item = more->addAction(label);
+                    item->setObjectName(QStringLiteral("more:%1:").arg(argument) +
+                                        QString::fromLatin1(id));
+                    const Op chosen = op;
+                    connect(item, &QAction::triggered, this,
+                            [this, file, block, argument, chosen, later] {
+                                later([this, file, block, argument, chosen](std::string& error) {
+                                    return document_->extend_logic_sum(file, block, argument,
+                                                                       chosen, error);
+                                });
+                            });
+                }
+            }
+            // A sum's last part: written, or from elsewhere (talks + bonus).
             if (slot.kind == reflect::ValueKind::Int || slot.kind == reflect::ValueKind::Float) {
                 QMenu* with = menu->addMenu(tr("Sum with"));
                 with->setObjectName(QStringLiteral("sum_with:%1").arg(argument));

@@ -134,23 +134,42 @@ public:
             }
             return "(" + joined + ")";
         }
-        case ExprKind::Compare:
-        case ExprKind::Arithmetic: {
+        case ExprKind::Compare: {
             static constexpr std::array<const char*, 6> compare{" = ", " ≠ ", " < ",
                                                                 " ≤ ", " > ", " ≥ "};
-            static constexpr std::array<const char*, 4> arithmetic{" + ", " − ", " × ", " ÷ "};
-            const char* op = e.kind == ExprKind::Compare
-                                 ? compare.at(static_cast<std::size_t>(e.compare))
-                                 : arithmetic.at(static_cast<std::size_t>(e.arithmetic));
-            return (e.operands.size() > 0 ? expr(e.operands[0]) : std::string("…")) + op +
+            return (e.operands.size() > 0 ? expr(e.operands[0]) : std::string("…")) +
+                   compare.at(static_cast<std::size_t>(e.compare)) +
                    (e.operands.size() > 1 ? expr(e.operands[1]) : std::string("…"));
         }
+        case ExprKind::Arithmetic:
+            return sum_start(e) + " " +
+                   (e.operands.size() > 1 ? part(e.operands[1], e, false) : std::string("…"));
         }
         return "…";
     }
 
     void line(int depth, std::string text, logic::BlockId block, bool otherwise = false) {
         lines_.push_back(LogicLine{depth, std::move(text), block, otherwise});
+    }
+
+    /// A sum without its last part, with that part's sign: "talks +", or
+    /// "(talks + [answer]) ×" when the parts so far must be worked out first.
+    [[nodiscard]] std::string sum_start(const Expr& sum) const {
+        static constexpr std::array<const char*, 4> signs{"+", "−", "×", "÷"};
+        return (sum.operands.empty() ? std::string("…") : part(sum.operands[0], sum, true)) + " " +
+               signs.at(static_cast<std::size_t>(sum.arithmetic));
+    }
+
+    /// One part of `sum`, in brackets when it is a sum that would otherwise read as
+    /// working differently: (a + b) × c, a − (b + c).
+    [[nodiscard]] std::string part(const Expr& e, const Expr& sum, bool first) const {
+        const auto rank = [](logic::ArithmeticOp op) {
+            return op == logic::ArithmeticOp::Multiply || op == logic::ArithmeticOp::Divide ? 2 : 1;
+        };
+        const bool bracket =
+            e.kind == ExprKind::Arithmetic && (first ? rank(e.arithmetic) < rank(sum.arithmetic)
+                                                     : rank(e.arithmetic) <= rank(sum.arithmetic));
+        return bracket ? "(" + expr(e) + ")" : expr(e);
     }
 
     /// True for a group of conditions made in the editor: it and each of its conditions
@@ -271,6 +290,11 @@ std::vector<LogicFile> logic_files(Document& document, std::vector<serialize::Is
 std::string describe_value(const Expr& value, const Document& document) {
     std::vector<LogicLine> unused;
     return Writer(document, unused).expr(value);
+}
+
+std::string describe_sum_start(const Expr& sum, const Document& document) {
+    std::vector<LogicLine> unused;
+    return Writer(document, unused).sum_start(sum);
 }
 
 std::vector<LogicLine> describe(const logic::LogicAsset& asset, const Document& document) {

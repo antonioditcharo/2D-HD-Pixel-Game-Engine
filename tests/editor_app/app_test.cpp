@@ -897,6 +897,12 @@ TEST_CASE("The Logic view takes values from the event, variables and sums") {
     CHECK(shown->text() == QStringLiteral("[answer]"));
     // From the variable itself, plus a number: the number is a field again.
     from(QStringLiteral("source:0:/variable_1"));
+    const auto source_menu = [&] {
+        auto* button = panel->findChild<QToolButton*>(QStringLiteral("logic_source:0"));
+        REQUIRE(button != nullptr);
+        return button->menu();
+    };
+    CHECK(source_menu()->findChild<QMenu*>(QStringLiteral("sum_more:0")) == nullptr); // no sum
     from(QStringLiteral("sum:0:add"));
     CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to variable_1 + 1"));
     auto* number = panel->findChild<QSpinBox*>(QStringLiteral("logic_slot:0"));
@@ -909,6 +915,27 @@ TEST_CASE("The Logic view takes values from the event, variables and sums") {
     CHECK(tree->currentItem()->text(0) ==
           QStringLiteral("Set variable_1 to variable_1 + [answer]"));
     from(QStringLiteral("with:0:/"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to variable_1 + 1"));
+    // A third part, then times a number: a field again, beside all that comes before it.
+    from(QStringLiteral("more:0:multiply"));
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to (variable_1 + 1) \u00d7 1"));
+    number = panel->findChild<QSpinBox*>(QStringLiteral("logic_slot:0"));
+    REQUIRE(number != nullptr);
+    number->setValue(4);
+    QApplication::processEvents();
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to (variable_1 + 1) \u00d7 4"));
+    bool beside = false;
+    for (const QLabel* label : panel->findChildren<QLabel*>()) {
+        beside = beside || label->text() == QStringLiteral("(variable_1 + 1) \u00d7");
+    }
+    CHECK(beside);
+    // Without the last part: back to two.
+    QAction* drop = source_menu()->findChild<QAction*>(QStringLiteral("sum:0:none"));
+    REQUIRE(drop != nullptr);
+    CHECK(drop->text() == QStringLiteral("Without the last part"));
+    from(QStringLiteral("sum:0:none"));
     CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to variable_1 + 1"));
     // Compared: the answer, from the Compare menu, on the Rule.
     tree->setCurrentItem(tree->currentItem()->parent());

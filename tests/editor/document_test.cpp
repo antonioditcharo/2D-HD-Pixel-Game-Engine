@@ -1196,6 +1196,43 @@ TEST_CASE("Logic values from variables, event values and properties, with sums")
     slots = d->logic_slots(file, set);
     CHECK_FALSE(value_slot().typed);
     CHECK(value_slot().from == "talks × [answer]");
+    CHECK(value_slot().sum);
+    // Longer sums: one more part, a written number to begin with, edited in place; the
+    // parts work in order, and the line says so with brackets where it must.
+    using Op = engine::logic::ArithmeticOp;
+    REQUIRE(d->extend_logic_sum(file, set, 0, Op::Add, error));
+    slots = d->logic_slots(file, set);
+    CHECK(value_slot().typed);
+    CHECK(value_slot().from == "talks × [answer] +");
+    CHECK(value_slot().value == reflect::Value{std::int64_t{1}});
+    REQUIRE(d->set_logic_slot(file, set, 0, reflect::Value{std::int64_t{3}}, error));
+    CHECK(lines()[1] == "  Set talks to talks × [answer] + 3");
+    REQUIRE(d->extend_logic_sum(file, set, 0, Op::Multiply, error));
+    slots = d->logic_slots(file, set);
+    CHECK(value_slot().from == "(talks × [answer] + 3) ×");
+    REQUIRE(d->set_logic_sum_with(file, set, 0, source(set, 0, Kind::Variable, "talks"), error));
+    CHECK(lines()[1] == "  Set talks to (talks × [answer] + 3) × talks");
+    CHECK(d->check_logic(file).empty());
+    {
+        // In the asset: ((talks × answer) + 3) × talks, each part on the result so far.
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        const engine::logic::Stmt& step = found->asset.rules.at(0).actions.at(0);
+        const engine::logic::Expr& value = step.arguments.at(0);
+        REQUIRE(value.kind == engine::logic::ExprKind::Arithmetic);
+        CHECK(value.arithmetic == Op::Multiply);
+        CHECK(value.operands.at(1).kind == engine::logic::ExprKind::Variable);
+        const engine::logic::Expr& so_far = value.operands.at(0);
+        CHECK(so_far.arithmetic == Op::Add);
+        CHECK(so_far.operands.at(0).arithmetic == Op::Multiply);
+        CHECK(so_far.operands.at(1).literal == reflect::Value{std::int64_t{3}});
+    }
+    // Without the last part, twice: back to talks × [answer].
+    REQUIRE(d->set_logic_arithmetic(file, set, 0, std::nullopt, error));
+    CHECK(lines()[1] == "  Set talks to talks × [answer] + 3");
+    REQUIRE(d->set_logic_arithmetic(file, set, 0, std::nullopt, error));
+    CHECK(lines()[1] == "  Set talks to talks × [answer]");
     REQUIRE(
         d->set_logic_sum_with(file, set, 0, editor::LogicSource{Kind::Written, "", "", ""}, error));
     CHECK(lines()[1] == "  Set talks to talks × 1");
@@ -1206,6 +1243,8 @@ TEST_CASE("Logic values from variables, event values and properties, with sums")
     REQUIRE(d->set_logic_slot(file, set, 0, reflect::Value{std::int64_t{7}}, error));
     CHECK(lines()[1] == "  Set talks to 7");
     CHECK_FALSE(d->set_logic_arithmetic(file, set, 0, engine::logic::ArithmeticOp::Add, error));
+    CHECK_FALSE(d->extend_logic_sum(file, set, 0, Op::Add, error));
+    CHECK(error == "Add a sum to the value first.");
 
     // A number from a property: wait as many seconds as the hero's speed.
     const engine::logic::BlockId wait =

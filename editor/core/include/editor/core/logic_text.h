@@ -35,6 +35,11 @@ struct LogicLine {
 [[nodiscard]] std::string describe_value(const engine::logic::Expr& value,
                                          const Document& document);
 
+/// A sum without its last part, with that part's sign: "talks +", or
+/// "(talks + [answer]) ×" when the parts so far are worked out first.
+[[nodiscard]] std::string describe_sum_start(const engine::logic::Expr& sum,
+                                             const Document& document);
+
 /// `asset` as lines: its Rules, then Sequences, then Brains, each with its steps below
 /// it. Objects are looked up in `document`: the game's own (audio, dialogue, game, input,
 /// lighting) by name, and entities through their components.

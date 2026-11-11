@@ -420,9 +420,6 @@ void write_value(logic::Expr& e, reflect::Value value) {
     e.id = id;
 }
 
-/// The arithmetic operators as the editor writes them, in ArithmeticOp's order.
-constexpr std::array<std::string_view, 4> arithmetic_signs{"+", "\u2212", "\u00d7", "\u00f7"};
-
 struct Header;
 Header find_header(logic::LogicAsset& asset, BlockId id);
 
@@ -813,13 +810,12 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId bloc
         if (value == nullptr) {
             continue;
         }
+        slot.sum = value->kind == logic::ExprKind::Arithmetic;
         if (logic::Expr* number = written(*value)) {
             slot.typed = true;
             slot.value = number->literal;
             if (number != value) {
-                slot.from =
-                    describe_value(value->operands[0], *this) + " " +
-                    std::string(arithmetic_signs.at(static_cast<std::size_t>(value->arithmetic)));
+                slot.from = describe_sum_start(*value, *this);
             }
         } else {
             slot.typed = false;
@@ -1641,6 +1637,38 @@ bool Document::set_logic_arithmetic(std::string_view path, BlockId block, std::s
                                                               ? reflect::Value{std::int64_t{1}}
                                                               : reflect::Value{1.0}));
     }
+    value->id = id;
+    d.record("Change a value's sum", std::move(before));
+    return true;
+}
+
+bool Document::extend_logic_sum(std::string_view path, BlockId block, std::size_t argument,
+                                logic::ArithmeticOp op, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    logic::Expr* value = file != nullptr ? slot_target(file->asset, block, argument) : nullptr;
+    if (value == nullptr || value->kind != logic::ExprKind::Arithmetic) {
+        error = "Add a sum to the value first.";
+        return false;
+    }
+    const std::vector<LogicSlot> slots = logic_slots(path, block);
+    const auto slot = std::find_if(slots.begin(), slots.end(), [argument](const LogicSlot& s) {
+        return s.argument == argument;
+    });
+    if (slot == slots.end() ||
+        (slot->kind != reflect::ValueKind::Int && slot->kind != reflect::ValueKind::Float)) {
+        error = "Only numbers can be added to.";
+        return false;
+    }
+    engine::serialize::Json before = d.snapshot();
+    // The sum so far becomes the first part of the longer one: (talks + [answer]) + 1.
+    const BlockId id = value->id;
+    logic::Expr so_far = std::move(*value);
+    so_far.id = BlockId{};
+    *value = logic::ir::arithmetic(op, std::move(so_far),
+                                   logic::ir::literal(slot->kind == reflect::ValueKind::Int
+                                                          ? reflect::Value{std::int64_t{1}}
+                                                          : reflect::Value{1.0}));
     value->id = id;
     d.record("Change a value's sum", std::move(before));
     return true;
