@@ -39,10 +39,10 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 14> known_project_keys{
-    "format",       "version",         "name",       "start_scene",  "ppu",
-    "width",        "height",          "background", "render_style", "gravity",
-    "camera_pitch", "camera_distance", "camera_fov", "camera_clamp"};
+constexpr std::array<std::string_view, 16> known_project_keys{
+    "format",     "version",      "name",          "start_scene", "ppu",          "width",
+    "height",     "background",   "render_style",  "gravity",     "camera_pitch", "camera_distance",
+    "camera_fov", "camera_clamp", "ambient_light", "sun_light"};
 
 [[nodiscard]] std::string entry_path(const std::string& file, const std::string& key) {
     std::string path = file;
@@ -240,6 +240,8 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
     number("camera_pitch", settings.camera_pitch, 5.0, 85.0);
     number("camera_distance", settings.camera_distance, 1.0, 200.0);
     number("camera_fov", settings.camera_fov, 5.0, 90.0);
+    number("ambient_light", settings.ambient_light, 0.0, 2.0);
+    number("sun_light", settings.sun_light, 0.0, 2.0);
     if (const auto clamp = doc.find("camera_clamp"); clamp != doc.end()) {
         if (clamp->is_boolean()) {
             settings.camera_clamp = clamp->get<bool>();
@@ -292,6 +294,8 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["camera_distance"] = settings.camera_distance;
     json["camera_fov"] = settings.camera_fov;
     json["camera_clamp"] = settings.camera_clamp;
+    json["ambient_light"] = settings.ambient_light;
+    json["sun_light"] = settings.sun_light;
     json["gravity"] = serialize::Json::array({settings.gravity_x, settings.gravity_y});
     json["ppu"] = settings.ppu;
     json["width"] = settings.width;
@@ -312,6 +316,7 @@ void register_types(reflect::Registry& registry) {
     register_save_types(registry);
     register_audio_types(registry);
     register_dialogue_types(registry);
+    register_lighting_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -335,6 +340,7 @@ struct Runtime::Impl {
     std::unique_ptr<PhysicsLink> physics;
     SaveObject save_object;
     DialogueObject dialogue;
+    LightingObject lighting;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
     input::InputState idle; ///< No controls held: what movement sees while a message is open.
@@ -445,6 +451,12 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     if (!r.vm->bind("audio", reflect::ObjectRef::of(r.audio_object))) {
         issues.push_back(
             serialize::Issue{"", "The audio object could not be made available to logic."});
+    }
+    r.lighting.ambient = r.settings.ambient_light;
+    r.lighting.sun = r.settings.sun_light;
+    if (!r.vm->bind("lighting", reflect::ObjectRef::of(r.lighting))) {
+        issues.push_back(
+            serialize::Issue{"", "The lighting object could not be made available to logic."});
     }
     if (!r.vm->bind("dialogue", reflect::ObjectRef::of(r.dialogue))) {
         issues.push_back(
@@ -723,8 +735,13 @@ bool Runtime::draw() {
     if (r.settings.style == RenderStyle::Diorama) {
         orbit.x = camera.x;
         orbit.y = camera.y;
+        scene2d::DioramaLight light;
+        light.ambient = static_cast<float>(
+            std::clamp(std::isfinite(r.lighting.ambient) ? r.lighting.ambient : 0.55, 0.0, 2.0));
+        light.diffuse = static_cast<float>(
+            std::clamp(std::isfinite(r.lighting.sun) ? r.lighting.sun : 0.45, 0.0, 2.0));
         scene2d::draw_diorama(*r.world, *r.textures, *r.world_renderer, *r.target, orbit,
-                              r.settings.background);
+                              r.settings.background, light);
     } else {
         scene2d::draw_world(*r.world, *r.textures, *r.sprites, *r.target, camera,
                             r.settings.background);
@@ -849,6 +866,7 @@ serialize::Json Runtime::save() const {
         variables[script] = std::move(values);
     }
     json["variables"] = std::move(variables);
+    json["lighting"] = serialize::Json{{"ambient", r.lighting.ambient}, {"sun", r.lighting.sun}};
     return json;
 }
 
@@ -951,6 +969,19 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
             }
         }
     }
+    // The lighting, if the save has it (saves made before it was saved do not).
+    if (const auto lighting = json.find("lighting");
+        lighting != json.end() && lighting->is_object()) {
+        for (const auto& [key, target] :
+             {std::pair<const char*, double*>{"ambient", &r.lighting.ambient},
+              std::pair<const char*, double*>{"sun", &r.lighting.sun}}) {
+            const auto value = lighting->find(key);
+            if (value != lighting->end() && value->is_number() &&
+                std::isfinite(value->get<double>())) {
+                *target = std::clamp(value->get<double>(), 0.0, 2.0);
+            }
+        }
+    }
     r.steps = step->get<std::uint64_t>();
     // The simulation starts again from the loaded world.
     r.physics->invalidate();
@@ -994,6 +1025,10 @@ std::filesystem::path Runtime::save_folder() const {
 
 const std::vector<std::string>& Runtime::problems() const noexcept {
     return impl_->problems;
+}
+
+const LightingObject& Runtime::lighting() const noexcept {
+    return impl_->lighting;
 }
 
 const DialogueObject& Runtime::dialogue() const noexcept {

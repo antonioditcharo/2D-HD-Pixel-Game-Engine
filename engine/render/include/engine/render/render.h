@@ -276,6 +276,31 @@ struct Fog {
     float end = 0.0F; ///< At or below `start`: no fog.
 };
 
+/// A light shining in every direction from a point, fading smoothly to nothing at its
+/// radius: a torch, a lamp, a glowing window.
+struct PointLight {
+    Vec3 position;
+    float radius = 4.0F; ///< In world units; at or below 0 it lights nothing.
+    /// Red, green and blue from 0 to 1, times the light's strength (may exceed 1).
+    std::array<float, 3> color{1.0F, 1.0F, 1.0F};
+};
+
+/// The most point lights one frame can have; the renderer keeps the first this many.
+inline constexpr std::size_t max_point_lights = 16;
+
+/// How a quad takes point lights. Their light is added to the quad's colour, times
+/// `albedo`, where they reach its front.
+struct Surface {
+    Vec3 normal;       ///< Which way the quad faces. Zero: point lights do not reach it.
+    float wrap = 0.0F; ///< 0: lit only from the front (Lambert); 1: from all round, softly
+                       ///< (half-Lambert), for billboards that should not go dark from behind.
+    std::array<float, 3> albedo{1.0F, 1.0F, 1.0F}; ///< Usually the tint.
+};
+
+/// How much of a point light reaches a point `distance` away, before the angle: 1 at the
+/// light, falling smoothly to 0 at `radius`: (1 - (d / r)^2)^2.
+[[nodiscard]] float light_falloff(float distance, float radius) noexcept;
+
 /// Draws textured quads in 3D with a depth buffer: the ground, walls and billboarded
 /// sprites of a diorama.
 ///
@@ -294,13 +319,15 @@ public:
     ~WorldRenderer();
 
     /// Starts a frame into `target`, cleared to `clear`, seen through `view_projection`
-    /// from `eye` (for fog).
+    /// from `eye` (for fog), lit by up to max_point_lights of `lights` (the first ones).
     void begin(RenderTarget& target, Color clear, const Mat4& view_projection, Vec3 eye,
-               Fog fog = {});
+               Fog fog = {}, std::span<const PointLight> lights = {});
     /// Queues a quad showing the `source` pixels of `texture`. The corners are the world
     /// positions of the source's top-left, top-right, bottom-right and bottom-left.
+    /// `color` multiplies the texels (ambient and sun light times tint); point lights add
+    /// to it as `surface` says, per pixel.
     void draw(const Texture& texture, const std::array<Vec3, 4>& corners, Rect source,
-              std::array<float, 4> color = {1.0F, 1.0F, 1.0F, 1.0F});
+              std::array<float, 4> color = {1.0F, 1.0F, 1.0F, 1.0F}, const Surface& surface = {});
     /// Sends the frame to the GPU. Returns false, with the device's last_error() set, if it
     /// could not.
     bool end();

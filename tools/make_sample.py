@@ -187,6 +187,15 @@ def main():
             {"guid": "10000000000040008000000000000005", "name": "gate",
              "components": {"transform_2d": {"x": 18.0, "y": 9.0},
                             "trigger": {"width": 1.0, "height": 1.0}}},
+            # Warm lights for the Diorama style: a lantern by the gate and a lamp by the
+            # elder's house. They glow when the weather turns dark.
+            {"guid": "10000000000040008000000000000006", "name": "lantern",
+             "components": {"transform_2d": {"x": 17.5, "y": 7.5},
+                            "light": {"radius": 4.0, "height": 1.5, "intensity": 1.2}}},
+            {"guid": "10000000000040008000000000000007", "name": "lamp",
+             "components": {"transform_2d": {"x": 4.5, "y": 4.0},
+                            "light": {"radius": 3.5, "height": 1.0, "color_g": 200,
+                                      "color_b": 150}}},
         ],
     }
     write_json(assets / "maps/village.dscene", scene)
@@ -196,6 +205,10 @@ def main():
 
     def log(block, value):
         return {"block": block, "kind": "log", "values": [text(value)]}
+
+    def light(block, member, value):
+        return {"block": block, "kind": "set", "object": "lighting", "member": member,
+                "values": [text(float(value))]}
 
     def say(block, value):
         return {"block": block, "kind": "do", "object": "dialogue", "member": "say",
@@ -237,9 +250,13 @@ def main():
         "brains": [
             {"block": 20, "name": "weather",
              "states": [
-                 {"block": 21, "name": "sunny", "enter": [log(22, "The sun is out.")],
+                 {"block": 21, "name": "sunny",
+                  "enter": [log(22, "The sun is out."),
+                            light(27, "ambient", 0.55), light(28, "sun", 0.45)],
                   "go": [{"block": 23, "to": "rain", "after": 30}]},
-                 {"block": 24, "name": "rain", "enter": [log(25, "It starts to rain.")],
+                 {"block": 24, "name": "rain",
+                  "enter": [log(25, "It starts to rain."),
+                            light(29, "ambient", 0.25), light(30, "sun", 0.1)],
                   "go": [{"block": 26, "to": "sunny", "after": 15}]},
              ]},
         ],

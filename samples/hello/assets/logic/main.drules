@@ -16,6 +16,30 @@
                   "value": "The sun is out."
                 }
               ]
+            },
+            {
+              "block": 27,
+              "kind": "set",
+              "member": "ambient",
+              "object": "lighting",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": 0.55
+                }
+              ]
+            },
+            {
+              "block": 28,
+              "kind": "set",
+              "member": "sun",
+              "object": "lighting",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": 0.45
+                }
+              ]
             }
           ],
           "go": [
@@ -37,6 +61,30 @@
                 {
                   "kind": "literal",
                   "value": "It starts to rain."
+                }
+              ]
+            },
+            {
+              "block": 29,
+              "kind": "set",
+              "member": "ambient",
+              "object": "lighting",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": 0.25
+                }
+              ]
+            },
+            {
+              "block": 30,
+              "kind": "set",
+              "member": "sun",
+              "object": "lighting",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": 0.1
                 }
               ]
             }

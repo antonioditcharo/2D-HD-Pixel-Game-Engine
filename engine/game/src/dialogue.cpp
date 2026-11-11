@@ -1,5 +1,7 @@
 #include "engine/game/dialogue.h"
 
+#include "engine/game/lighting.h"
+
 #include <algorithm>
 #include <string_view>
 #include <utility>
@@ -89,6 +91,23 @@ void register_dialogue_types(reflect::Registry& registry) {
     dialogue.event<>("closed")
         .text("When the message closes")
         .tooltip("Happens when the player closes the last message.");
+}
+
+void register_lighting_types(reflect::Registry& registry) {
+    auto lighting = registry.add_type<LightingObject>("lighting")
+                        .display_name("Lighting")
+                        .category("Visuals")
+                        .tooltip("How bright the scene is, in the Diorama style.");
+    lighting.property<&LightingObject::ambient>("ambient")
+        .range(0.0, 2.0)
+        .step(0.05)
+        .display_name("Ambient light")
+        .tooltip("Light from everywhere: low for night and caves, so lights stand out.");
+    lighting.property<&LightingObject::sun>("sun")
+        .range(0.0, 2.0)
+        .step(0.05)
+        .display_name("Sunlight")
+        .tooltip("How strong the sun (or the moon) is.");
 }
 
 } // namespace engine::game

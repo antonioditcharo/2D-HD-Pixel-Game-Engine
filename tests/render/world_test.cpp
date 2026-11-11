@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <numbers>
+#include <span>
 #include <vector>
 
 #include "support/gpu.h"
@@ -204,4 +205,81 @@ TEST_CASE("Perspective makes far things smaller") {
     CHECK(pixel(pixels, 16, 9, 9) == red);
     CHECK(pixel(pixels, 16, 5, 8) == background);
     CHECK(pixel(pixels, 16, 10, 8) == background);
+}
+
+TEST_CASE("Point lights fall off with distance and light only what faces them") {
+    CHECK(render::light_falloff(0.0F, 4.0F) == 1.0F);
+    CHECK(render::light_falloff(2.0F, 4.0F) == doctest::Approx(0.5625)); // (1 - 1/4)^2
+    CHECK(render::light_falloff(4.0F, 4.0F) == 0.0F);
+    CHECK(render::light_falloff(9.0F, 4.0F) == 0.0F);
+    CHECK(render::light_falloff(1.0F, 0.0F) == 0.0F);
+    CHECK(render::light_falloff(std::nanf(""), 4.0F) == 0.0F);
+
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const auto target = device->create_render_target(16, 16);
+    const auto world = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(world != nullptr);
+    const auto white = solid(*device, Color{255, 255, 255, 255});
+    const Mat4 camera = Mat4::orthographic(-8, 8, -8, 8, 1, 20) *
+                        Mat4::look_at(Vec3{0, 0, 10}, Vec3{0, 0, 0}, Vec3{0, 1, 0});
+    const Vec3 eye{0, 0, 10};
+    const std::array<float, 4> dark{0.0F, 0.0F, 0.0F, 1.0F};
+    // A red light 2 units in front of the middle of a wall facing it, reaching 4 units.
+    const std::array<render::PointLight, 1> red_light{
+        render::PointLight{Vec3{0.5F, 0.5F, 2.0F}, 4.0F, {1.0F, 0.0F, 0.0F}}};
+    const auto draw = [&](const render::Surface& surface, std::span<const render::PointLight> l) {
+        world->begin(*target, background, camera, eye, render::Fog{}, l);
+        world->draw(*white, facing(-8, -8, 8, 8, 0), Rect{0, 0, 1, 1}, dark, surface);
+        REQUIRE(world->end());
+        return target->read_pixels();
+    };
+    render::Surface wall;
+    wall.normal = Vec3{0, 0, 1};
+    const std::vector<std::uint8_t> pixels = draw(wall, red_light);
+    // Pixel (8, 7) covers x 0..1, y 0..1, so its centre is right under the light: 2 away,
+    // facing it squarely: 0.5625 of full red.
+    CHECK(near_colour(pixel(pixels, 16, 8, 7), Color{143, 0, 0, 255}, 2));
+    // Further along the wall: weaker, then nothing beyond the radius (3.5 units away
+    // along the wall is 4.03 from the light).
+    const Color off_centre = pixel(pixels, 16, 10, 7); // centre x = 2.5: 2.83 away
+    CHECK(off_centre.r > 20);
+    CHECK(off_centre.r < 143);
+    CHECK(pixel(pixels, 16, 12, 7) == Color{0, 0, 0, 255}); // x = 4.5: 4.47 away
+    CHECK(pixel(pixels, 16, 0, 0) == Color{0, 0, 0, 255});
+
+    // Facing away, with no wrap: unlit. With wrap 1 (billboards): half of facing it.
+    wall.normal = Vec3{0, 0, -1};
+    CHECK(pixel(draw(wall, red_light), 16, 8, 7) == Color{0, 0, 0, 255});
+    wall.wrap = 1.0F;
+    CHECK(pixel(draw(wall, red_light), 16, 8, 7) == Color{0, 0, 0, 255}); // dot = -1: (−1+1)/2 = 0
+    wall.normal = Vec3{1, 0, 0}; // side-on: dot 0, so half with wrap 1
+    CHECK(near_colour(pixel(draw(wall, red_light), 16, 8, 7), Color{72, 0, 0, 255}, 2));
+
+    // The albedo multiplies the light; no normal means no point light at all.
+    wall = render::Surface{};
+    wall.normal = Vec3{0, 0, 1};
+    wall.albedo = {0.5F, 1.0F, 1.0F};
+    CHECK(near_colour(pixel(draw(wall, red_light), 16, 8, 7), Color{72, 0, 0, 255}, 2));
+    CHECK(pixel(draw(render::Surface{}, red_light), 16, 8, 7) == Color{0, 0, 0, 255});
+
+    // Lights add up, and with the quad's own colour; broken lights are skipped.
+    const std::array<render::PointLight, 3> two{
+        render::PointLight{Vec3{0.5F, 0.5F, 2.0F}, 4.0F, {1.0F, 0.0F, 0.0F}},
+        render::PointLight{Vec3{0.5F, 0.5F, 2.0F}, 4.0F, {0.0F, 0.0F, 1.0F}},
+        render::PointLight{Vec3{0.5F, 0.5F, std::nanf("")}, 4.0F, {0.0F, 1.0F, 0.0F}}};
+    wall = render::Surface{};
+    wall.normal = Vec3{0, 0, 1};
+    CHECK(near_colour(pixel(draw(wall, two), 16, 8, 7), Color{143, 0, 143, 255}, 2));
+
+    // More than max_point_lights: only the first ones count.
+    std::vector<render::PointLight> many(
+        render::max_point_lights + 4,
+        render::PointLight{Vec3{0.5F, 0.5F, 2.0F}, 4.0F, {0.01F, 0.0F, 0.0F}});
+    const Color sum = pixel(draw(wall, many), 16, 8, 7);
+    // 16 lights of 0.01 at 0.5625: 0.09 of 255 = 23; all 20 would be 29.
+    CHECK(std::abs(int{sum.r} - 23) <= 1);
 }

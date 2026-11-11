@@ -158,12 +158,16 @@ struct Project {
         const auto pressed = [](const char* action) {
             return ir::compare(logic::CompareOp::Equal, ir::event_value("action"), text(action));
         };
-        rules.rules.push_back(logic::Rule{logic::BlockId{20},
-                                          "input",
-                                          "pressed",
-                                          {pressed("cancel")},
-                                          {ir::do_action(21, "game", "save", {whole(2)})},
-                                          {}});
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{20},
+                        "input",
+                        "pressed",
+                        {pressed("cancel")},
+                        {ir::do_action(21, "game", "save", {whole(2)}),
+                         // Dusk falls: the lighting object, as a day-night Brain would use it.
+                         ir::set(49, "lighting", "ambient", ir::literal(reflect::Value{0.25})),
+                         ir::set(50, "lighting", "sun", ir::literal(reflect::Value{0.1}))},
+                        {}});
         rules.rules.push_back(logic::Rule{logic::BlockId{22},
                                           "input",
                                           "pressed",
@@ -337,6 +341,8 @@ TEST_CASE("Project settings are read, checked and written back") {
     diorama.camera_distance = 9.5;
     diorama.camera_fov = 25.0;
     diorama.camera_clamp = false;
+    diorama.ambient_light = 0.2;
+    diorama.sun_light = 1.5;
     write_json(folder.path / game::project_file, game::project_to_json(diorama));
     issues.clear();
     const game::ProjectSettings again =
@@ -347,6 +353,8 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(again.camera_distance == 9.5);
     CHECK(again.camera_fov == 25.0);
     CHECK_FALSE(again.camera_clamp);
+    CHECK(again.ambient_light == 0.2);
+    CHECK(again.sun_light == 1.5);
 
     // Out-of-range values and a wrong style refuse the project; unknown entries do not.
     serialize::Json json = game::project_to_json(settings);
@@ -355,6 +363,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     json["render_style"] = "isometric";
     json["camera_pitch"] = 90;
     json["camera_clamp"] = "yes";
+    json["sun_light"] = 3;
     json["shiny"] = true;
     write_json(folder.path / game::project_file, json);
     issues.clear();
@@ -367,7 +376,8 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(paths == std::vector<std::string>{
                        "project.sparxel.json/ppu", "project.sparxel.json/background",
                        "project.sparxel.json/shiny", "project.sparxel.json/camera_pitch",
-                       "project.sparxel.json/camera_clamp", "project.sparxel.json/render_style"});
+                       "project.sparxel.json/sun_light", "project.sparxel.json/camera_clamp",
+                       "project.sparxel.json/render_style"});
 
     json = game::project_to_json(settings);
     json["shiny"] = true;
@@ -1349,4 +1359,39 @@ TEST_CASE("The sample village: the elder asks a question and answers the choice"
     REQUIRE(runtime->dialogue().current() != nullptr);
     CHECK(*runtime->dialogue().current() == "Elder: Safe travels, then.");
     CHECK(runtime->problems().empty());
+}
+
+TEST_CASE("Lighting starts from the project and logic changes it") {
+    const Project project;
+    std::vector<serialize::Issue> issues;
+    game::ProjectSettings settings =
+        game::read_project(project.folder.path, issues).value_or(game::ProjectSettings{});
+    REQUIRE(issues.empty());
+    settings.ambient_light = 0.4;
+    settings.sun_light = 0.9;
+    write_json(project.folder.path / game::project_file, game::project_to_json(settings));
+    input::Recording replay;
+    replay.record(1, key(input::Key::X), true); // Cancel: its Rule sets dusk
+    const auto runtime = project.open(no_graphics(&replay));
+    CHECK(runtime->lighting().ambient == 0.4);
+    CHECK(runtime->lighting().sun == 0.9);
+    runtime->step();
+    runtime->step();
+    CHECK(runtime->lighting().ambient == 0.25);
+    CHECK(runtime->lighting().sun == 0.1);
+
+    // Saved with the game, and restored; a save without it (made before lighting was
+    // saved) keeps the current lighting.
+    serialize::Json saved = runtime->save();
+    CHECK(saved["lighting"]["ambient"] == 0.25);
+    const auto other = project.open(no_graphics(nullptr));
+    std::vector<serialize::Issue> load_issues;
+    REQUIRE(other->load(saved, load_issues));
+    CHECK(other->lighting().ambient == 0.25);
+    CHECK(other->lighting().sun == 0.1);
+    saved.erase("lighting");
+    const auto older = project.open(no_graphics(nullptr));
+    REQUIRE(older->load(saved, load_issues));
+    CHECK(older->lighting().ambient == 0.4);
+    CHECK(load_issues.empty());
 }

@@ -47,7 +47,8 @@ the engine does today:
 | `art/tiles.png` | Grass, path and wall tiles: the ground map, and a solid wall map one tile high, so in the Diorama style the wall stands as blocks |
 | `art/elder.png` | An elder who is a Solid Body and an Interactable |
 | `sfx/chime.wav` | Played when the player talks to the elder |
-| `logic/main.drules` | Rules for the start (a welcome message on screen), talking (the elder's words in a message box, and a question whose answer changes the reply; counting talks in a variable) and the gate (a Trigger Area, with a message); and a Brain, `weather`, turning sunny and rainy |
+| `logic/main.drules` | Rules for the start (a welcome message on screen), talking (the elder's words in a message box, and a question whose answer changes the reply; counting talks in a variable) and the gate (a Trigger Area, with a message); and a Brain, `weather`, turning sunny and rainy, and dimming the `lighting` when it rains |
+| `maps/village.dscene` | The village, with two warm Lights for the Diorama style (a lantern by the gate, a lamp by the elder) that glow when the rain dims the day |
 
 Switch `"render_style"` in `project.sparxel.json` to `"diorama"` to see the same village
 in 3D.
@@ -62,6 +63,7 @@ in 3D.
 | Test | Checks |
 |---|---|
 | `player_classic_2d`, `player_diorama` | CTest plays a copy of the sample headless for 120 frames in each style: it must start, report no problems, and print the welcome message (`said: Welcome to the village`) and the Brain's first line |
+| `player_long_run` | 2,000 frames in the Diorama style, past the rain at 30 seconds (it must print *It starts to rain.*). Headless runs once grew in memory every frame and crashed after about 900 frames ([rendering.md](rendering.md) §4) |
 | The sample in the Diorama style | Renders the village in 3D and checks that no path pixel appears alone in the grass. That once happened: in perspective, a texture coordinate on a tile's edge rounded into the next tile of the atlas. World quads now keep their coordinates a hundredth of a texel inside the tile ([rendering.md](rendering.md) §7); the test fails without that |
 
 ## 4. Next increments

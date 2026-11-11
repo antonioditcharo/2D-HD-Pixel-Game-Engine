@@ -117,6 +117,28 @@ void register_types(reflect::Registry& registry) {
         .tooltip("In the Diorama style, how tall each tile stands: 0 is flat ground.");
     tilemap.property<&Tilemap::solid>("solid").tooltip(
         "Every tile of this map blocks movement. Paint walls on their own map.");
+
+    auto light =
+        registry.add_type<Light>("light").display_name("Light").category("Visuals").tooltip(
+            "Light from a point, such as a torch or a lamp, in the Diorama style.");
+    light.property<&Light::color_r>("color_r").range(0, 255).display_name("Red");
+    light.property<&Light::color_g>("color_g").range(0, 255).display_name("Green");
+    light.property<&Light::color_b>("color_b").range(0, 255).display_name("Blue");
+    light.property<&Light::intensity>("intensity")
+        .range(0.0, 8.0)
+        .step(0.1)
+        .tooltip("How strong the light is: 1 is ordinary, more is brighter.");
+    light.property<&Light::radius>("radius")
+        .range(0.0, 32.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("How far the light reaches; it fades to nothing there.");
+    light.property<&Light::height>("height")
+        .range(0.0, 16.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("How high above the ground the light is.");
+    light.property<&Light::enabled>("enabled").tooltip("Turn the light off without removing it.");
 }
 
 bool register_components(world::World& world) {
@@ -124,7 +146,8 @@ bool register_components(world::World& world) {
     const bool sprite = world.register_component<Sprite>();
     const bool animation = world.register_component<SpriteAnimation>();
     const bool tilemap = world.register_component<Tilemap>();
-    return transform && sprite && animation && tilemap;
+    const bool light = world.register_component<Light>();
+    return transform && sprite && animation && tilemap && light;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -815,6 +838,52 @@ render::Mat4 diorama_view_projection(const DioramaCamera& camera, float aspect, 
            render::Mat4::look_at(o.eye, o.target, render::Vec3{0.0F, 1.0F, 0.0F});
 }
 
+std::vector<render::PointLight> diorama_lights(const world::World& world, double x, double y) {
+    struct Found {
+        double distance;
+        Guid guid;
+        render::PointLight light;
+    };
+    std::vector<Found> found;
+    if (const reflect::TypeInfo* type = world.registry().find_type<Light>()) {
+        world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+            const Light* light = ref.as<Light>();
+            const Transform2D* transform = world.get<Transform2D>(entity);
+            if (light == nullptr || transform == nullptr || !light->enabled) {
+                return;
+            }
+            const double radius = std::clamp(light->radius, 0.0, 32.0);
+            const double intensity = std::clamp(light->intensity, 0.0, 8.0);
+            const double height = std::clamp(light->height, 0.0, 16.0);
+            if (!std::isfinite(transform->x) || !std::isfinite(transform->y) ||
+                !std::isfinite(radius) || !std::isfinite(intensity) || !std::isfinite(height) ||
+                radius <= 0.0 || intensity <= 0.0) {
+                return;
+            }
+            const auto channel = [intensity](std::uint8_t c) {
+                return static_cast<float>(static_cast<double>(c) / 255.0 * intensity);
+            };
+            render::PointLight point;
+            point.position =
+                render::Vec3{static_cast<float>(transform->x), static_cast<float>(height),
+                             static_cast<float>(transform->y)};
+            point.radius = static_cast<float>(radius);
+            point.color = {channel(light->color_r), channel(light->color_g),
+                           channel(light->color_b)};
+            found.push_back(
+                Found{std::hypot(transform->x - x, transform->y - y), world.guid(entity), point});
+        });
+    }
+    std::sort(found.begin(), found.end(), [](const Found& a, const Found& b) {
+        return a.distance != b.distance ? a.distance < b.distance : a.guid < b.guid;
+    });
+    std::vector<render::PointLight> lights;
+    for (std::size_t i = 0; i < found.size() && i < render::max_point_lights; ++i) {
+        lights.push_back(found[i].light);
+    }
+    return lights;
+}
+
 DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                        render::WorldRenderer& renderer, render::RenderTarget& target,
                        const DioramaCamera& camera, render::Color clear, const DioramaLight& light,
@@ -825,7 +894,8 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
         camera, static_cast<float>(target.width()) / static_cast<float>(target.height()), &eye);
     const Orbit o = orbit(camera);
     const double ppu = static_cast<double>(std::max<std::uint32_t>(camera.ppu, 1));
-    renderer.begin(target, clear, view_projection, eye, fog);
+    const std::vector<render::PointLight> lights = diorama_lights(world, camera.x, camera.y);
+    renderer.begin(target, clear, view_projection, eye, fog, lights);
 
     const reflect::TypeInfo* transform_type = world.registry().find_type<Transform2D>();
     if (transform_type == nullptr) {
@@ -839,7 +909,15 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
     const float west_light = brightness(render::Vec3{-1, 0, 0}, light);
     const float east_light = brightness(render::Vec3{1, 0, 0}, light);
     // Billboards face the camera across the ground: their normal points at the eye.
-    const float sprite_light = brightness(render::Vec3{-o.right.z, 0.0F, o.right.x}, light);
+    const render::Vec3 sprite_normal{-o.right.z, 0.0F, o.right.x};
+    const float sprite_light = brightness(sprite_normal, light);
+    // How each kind of face takes point lights.
+    const auto surface = [](render::Vec3 normal, float wrap) {
+        render::Surface s;
+        s.normal = normal;
+        s.wrap = wrap;
+        return s;
+    };
 
     world.each(*transform_type, [&](world::Entity entity, reflect::ObjectRef ref) {
         const Transform2D* transform = ref.as<Transform2D>();
@@ -897,33 +975,36 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                             *texture,
                             {render::Vec3{left, top, north}, render::Vec3{right, top, north},
                              render::Vec3{right, top, south}, render::Vec3{left, top, south}},
-                            source, lit(top_light, render::Color{255, 255, 255, 255}));
+                            source, lit(top_light, render::Color{255, 255, 255, 255}),
+                            surface(render::Vec3{0, 1, 0}, 0.0F));
                         ++stats.drawn;
                         if (height <= 0.0F) {
                             continue;
                         }
                         // Side faces, only where no neighbouring block hides them.
-                        const auto side = [&](render::Vec3 a, render::Vec3 b, float light_level) {
+                        const auto side = [&](render::Vec3 a, render::Vec3 b, float light_level,
+                                              render::Vec3 normal) {
                             renderer.draw(
                                 *texture,
                                 {render::Vec3{a.x, top, a.z}, render::Vec3{b.x, top, b.z},
                                  render::Vec3{b.x, lift, b.z}, render::Vec3{a.x, lift, a.z}},
-                                source, lit(light_level, render::Color{255, 255, 255, 255}));
+                                source, lit(light_level, render::Color{255, 255, 255, 255}),
+                                surface(normal, 0.0F));
                             ++stats.drawn;
                         };
                         const auto gx = static_cast<std::int64_t>(x);
                         const auto gy = static_cast<std::int64_t>(y);
                         if (!filled(gx, gy + 1)) {
-                            side({left, 0, south}, {right, 0, south}, south_light);
+                            side({left, 0, south}, {right, 0, south}, south_light, {0, 0, 1});
                         }
                         if (!filled(gx, gy - 1)) {
-                            side({right, 0, north}, {left, 0, north}, north_light);
+                            side({right, 0, north}, {left, 0, north}, north_light, {0, 0, -1});
                         }
                         if (!filled(gx - 1, gy)) {
-                            side({left, 0, north}, {left, 0, south}, west_light);
+                            side({left, 0, north}, {left, 0, south}, west_light, {-1, 0, 0});
                         }
                         if (!filled(gx + 1, gy)) {
-                            side({right, 0, south}, {right, 0, north}, east_light);
+                            side({right, 0, south}, {right, 0, north}, east_light, {1, 0, 0});
                         }
                     }
                 }
@@ -960,7 +1041,15 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                 {at(left, top), at(right_edge, top), at(right_edge, bottom), at(left, bottom)},
                 source,
                 lit(sprite_light,
-                    render::Color{sprite->tint_r, sprite->tint_g, sprite->tint_b, sprite->tint_a}));
+                    render::Color{sprite->tint_r, sprite->tint_g, sprite->tint_b, sprite->tint_a}),
+                [&] {
+                    // Billboards take point lights from all round, softly, and in their tint.
+                    render::Surface s = surface(sprite_normal, 1.0F);
+                    s.albedo = {static_cast<float>(sprite->tint_r) / 255.0F,
+                                static_cast<float>(sprite->tint_g) / 255.0F,
+                                static_cast<float>(sprite->tint_b) / 255.0F};
+                    return s;
+                }());
             ++stats.drawn;
         }
     });

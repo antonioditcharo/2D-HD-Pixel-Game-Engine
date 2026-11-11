@@ -164,6 +164,14 @@ the style ([game.md](game.md) §2).
 - **Lighting** (`DioramaLight`): every face gets `ambient` plus `diffuse` times how much it
   faces the sun (`brightness()`), so tops, sides and sprites shade differently. Tests
   check the exact colours this gives.
+- **Light** (`light`): a point light at an entity's position, `height` tiles above the
+  ground, reaching `radius` tiles, in its colour times `intensity`; warm torchlight by
+  default. The 16 enabled Lights nearest the point the camera looks at are used
+  (`diorama_lights()`, ties by GUID), per pixel ([rendering.md](rendering.md) §7). Ground
+  and block faces take them from the front; sprites, as billboards, softly from all round
+  and in their tint. Lights add to the ambient and sun light, so they show best when
+  those are low: the game's `lighting` object sets them ([game.md](game.md) §3). Classic
+  2D does not draw lights yet.
 - **Depth** sorts everything; there is no draw order to manage. **Fog** fades distant
   things into the haze.
 - **What the camera shows** (`diorama_view_extent()`): the ground between where the
@@ -191,6 +199,8 @@ the others run anywhere:
 | Diorama (GPU) | Ground under the point looked at, lit from above to the exact shade; sky beyond the map; a sprite standing above the point with the ground in front, shaded as it faces the camera; still facing it a quarter turn later; fog; block faces counted; broken maps and missing images counted |
 | Diorama camera and light | `brightness()` for faces up, sideways and down, with any length of normal; the eye's position from pitch and distance; the point at the centre; north up the screen; pitch kept below 90 degrees |
 | Camera on the map | `map_bounds()` over maps with offsets, larger tiles and empty maps; `clamp_view()` in the middle, at corners, with a view larger than the map, off-centre and infinite edges, and with broken numbers |
+| Lights | `diorama_lights()`: nearest first; disabled, radius 0 and intensity 0 skipped; height clamped to 16; map (x, y) at world (x, z); colour times intensity; at most 16, the nearest |
+| A Light on the ground (GPU) | In the dark, the ground under a lamp 1 tile up with radius 2 is exactly 0.5625 of red; dimmer further off; black beyond the radius; black with the lamp off |
 | Diorama view extent | For 12 cameras (pitch 20 to 85, field of view 10 to 60), the extent's bottom, top and sides projected through `diorama_view_projection()` land on the screen's edges within 0.01 %; the top is infinite when it looks above the horizon |
 | Frames and tilemaps (GPU) | Exact pixels for frames 0, 1 and a wrapped 2; a 2 × 2 map with an empty cell and a skipped tile; a sprite over its map; tiles in view counted for an aligned and an offset camera; bad text and a missing tileset counted |
 

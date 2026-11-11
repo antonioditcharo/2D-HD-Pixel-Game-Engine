@@ -41,7 +41,7 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
 | `Texture` | RGBA8 pixels uploaded to the GPU |
 | `RenderTarget` | An offscreen image to draw into; `read_pixels()` copies it back |
 | `SpriteRenderer` | Draws textured, tinted rectangles in batches |
-| `WorldRenderer` | Draws textured quads in 3D with a depth buffer, alpha cutout, lighting colour and fog (§7) |
+| `WorldRenderer` | Draws textured quads in 3D with a depth buffer, alpha cutout, lighting colour, point lights per pixel and fog (§7) |
 
 ## 3. Sprites
 
@@ -75,6 +75,12 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
 - Tests open a real window with a Vulkan swapchain through the offscreen driver on
   lavapipe, and present small and cropped images to it. On other backends the test
   checks the message instead.
+- **Pacing.** Every submission takes a fence, and at most 3 may be unfinished: past that,
+  the device waits for the oldest. A window's swapchain paces frames, but a headless run
+  has nothing else to. Before this, headless runs queued work faster than the GPU
+  finished it: memory grew every frame (230 MB after 300 frames, 390 MB after 900) and
+  lavapipe crashed after about 900 to 1,850 frames, in both styles. Now a 3,000-frame
+  run stays at about 115 MB, and the `player_long_run` test plays 2,000 frames.
 
 ## 5. Shaders (ADR-015)
 
@@ -129,7 +135,19 @@ world->end();
 - **Alpha cutout:** texels below half opacity are discarded, neither drawn nor hiding what
   is behind. Pixel art keeps hard edges and needs no sorting, as `plan/04` §5.2 asks:
   sprites are alpha-tested and write depth.
-- **Colour:** each quad's colour multiplies its texels: lighting times tint.
+- **Colour:** each quad's colour multiplies its texels: the ambient and sun light times
+  the tint.
+- **Point lights,** per pixel: `begin()` takes up to `max_point_lights` (16)
+  `PointLight`s (position, radius, colour times strength), and each quad's `Surface`
+  says how it takes them: its normal, and a wrap from 0 (Lambert: lit only from the
+  front) to 1 (half-Lambert, for billboards, which should not go black when a light is
+  behind them). Each light adds `albedo × colour × falloff × facing` to the quad's
+  colour, where the falloff is `(1 − (d / r)²)²`: 1 at the light, smoothly 0 at its
+  radius (`light_falloff()`). A quad with no normal takes no point light. Broken lights
+  (not finite, or no radius) are skipped. Tested pixel by pixel: 0.5625 of a red light
+  2 units in front of a wall at half its radius; dimmer along the wall and nothing past
+  the radius; nothing from behind without wrap, and half side-on with wrap 1; albedo;
+  two lights adding up; only the first 16 counting.
 - **No atlas bleeding:** texture coordinates stay a hundredth of a texel inside the
   source, because in perspective a coordinate exactly on a texel's edge can round into
   the neighbouring tile of an atlas and show along tile seams (found in the sample
@@ -144,10 +162,12 @@ world->end();
 
 Towards the reference scene of Spike R (`plan/08` Phase 0, `plan/04` §4):
 
-1. **Frame pacing:** vsync choice and frame-time measurement.
+1. **Frame pacing in windows:** vsync choice and frame-time measurement.
 2. **Translucency:** sorted, blended quads for glass, water and fading sprites.
-3. **Lit billboard sprites** with normal maps, point lights and shadows (`plan/04` §5).
-4. **Post-processing:** tilt-shift depth of field, bloom and fog (`plan/04` §8).
+3. **Shadows** from the sun and from point lights, and normal-mapped sprites
+   (`plan/04` §5 and §7).
+4. **Post-processing:** tilt-shift depth of field, bloom and colour grading (`plan/04`
+   §8).
 5. **GPU timing** to measure frames against the `plan/04` §11 budgets on reference
    hardware.
 6. **The ADR-004 decision:** record whether the SDL GPU API covers the reference scene, or

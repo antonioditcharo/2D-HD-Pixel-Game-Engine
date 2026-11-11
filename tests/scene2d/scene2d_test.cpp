@@ -763,3 +763,101 @@ TEST_CASE("The Diorama view extent meets the screen's edges on the ground") {
     turned.yaw = 30.0;
     CHECK(std::isinf(scene2d::diorama_view_extent(turned, 1.0).right));
 }
+
+TEST_CASE("Lights: the nearest enabled ones, at their height, in their colour") {
+    const Fixture f;
+    const auto w = f.make_world();
+    CHECK(scene2d::diorama_lights(*w, 0.0, 0.0).empty());
+    const auto add = [&](std::string_view name, double x, double y) {
+        const world::Entity e = w->create(name);
+        scene2d::Transform2D* t = w->add<scene2d::Transform2D>(e);
+        t->x = x;
+        t->y = y;
+        return w->add<scene2d::Light>(e);
+    };
+    scene2d::Light* torch = add("torch", 3.0, 4.0); // 5 from the origin
+    torch->color_r = 255;
+    torch->color_g = 102;
+    torch->color_b = 0;
+    torch->intensity = 2.0;
+    torch->radius = 6.0;
+    torch->height = 1.5;
+    add("near", 1.0, 0.0);
+    add("off", 0.5, 0.0)->enabled = false;
+    add("no reach", 0.5, 0.0)->radius = 0.0;
+    add("no strength", 0.5, 0.0)->intensity = 0.0;
+    add("too far up", 2.0, 0.0)->height = 100.0; // kept to 16
+    std::vector<render::PointLight> lights = scene2d::diorama_lights(*w, 0.0, 0.0);
+    REQUIRE(lights.size() == 3);
+    CHECK(lights[0].position == render::Vec3{1.0F, 1.0F, 0.0F}); // nearest first
+    CHECK(lights[1].position == render::Vec3{2.0F, 16.0F, 0.0F});
+    CHECK(lights[2].position == render::Vec3{3.0F, 1.5F, 4.0F}); // map (x, y) is world (x, z)
+    CHECK(lights[2].radius == 6.0F);
+    CHECK(lights[2].color[0] == doctest::Approx(2.0)); // colour times intensity
+    CHECK(lights[2].color[1] == doctest::Approx(0.8));
+    CHECK(lights[2].color[2] == 0.0F);
+    // Nearest to another point: the torch comes first.
+    CHECK(scene2d::diorama_lights(*w, 3.0, 4.0)[0].position.z == 4.0F);
+    // No more than max_point_lights: the nearest ones.
+    for (int i = 0; i < 20; ++i) {
+        add("far", 10.0 + i, 0.0);
+    }
+    lights = scene2d::diorama_lights(*w, 0.0, 0.0);
+    REQUIRE(lights.size() == render::max_point_lights);
+    CHECK(lights.back().position.x == 22.0F); // 1, 2, 3 (torch, 5 away), then 10 to 22
+}
+
+TEST_CASE("A Light lights the Diorama ground around it, per pixel") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const Fixture f;
+    const auto w = f.make_world();
+    // A red ground 6 x 6 tiles around the origin, in the dark.
+    const world::Entity ground = w->create("ground");
+    scene2d::Transform2D* at = w->add<scene2d::Transform2D>(ground);
+    at->x = -3.0;
+    at->y = -3.0;
+    scene2d::Tilemap* map = w->add<scene2d::Tilemap>(ground);
+    map->tileset = f.red_image.to_string();
+    map->tiles = "0,0,0,0,0,0\n0,0,0,0,0,0\n0,0,0,0,0,0\n0,0,0,0,0,0\n0,0,0,0,0,0\n0,0,0,0,0,0";
+    const world::Entity lamp = w->create("lamp");
+    w->add<scene2d::Transform2D>(lamp);
+    scene2d::Light* light = w->add<scene2d::Light>(lamp);
+    light->color_r = 255;
+    light->color_g = 255;
+    light->color_b = 255;
+    light->radius = 2.0;
+    light->height = 1.0;
+
+    const auto target = device->create_render_target(17, 17);
+    const auto renderer = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(renderer != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    scene2d::DioramaCamera camera;
+    camera.pitch = 60.0;
+    camera.distance = 8.0;
+    camera.ppu = 2;
+    scene2d::DioramaLight dark;
+    dark.ambient = 0.0F;
+    dark.diffuse = 0.0F;
+    const auto draw = [&] {
+        scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, dark);
+        return target->read_pixels();
+    };
+    // Under the lamp, 1 tile below it and facing it: (1 - (1/2)^2)^2 = 0.5625 of red.
+    const std::vector<std::uint8_t> pixels = draw();
+    const Color under = pixel(pixels, 17, 8, 8);
+    CHECK(std::abs(under.r - 143) <= 3);
+    CHECK(under.g == 0);
+    // Beyond its radius the ground stays dark (but is drawn, not the background).
+    CHECK(pixel(pixels, 17, 0, 16) == Color{0, 0, 0, 255});
+    // Between: dimmer than under it.
+    const Color between = pixel(pixels, 17, 11, 8);
+    CHECK(between.r < under.r);
+
+    light->enabled = false;
+    CHECK(pixel(draw(), 17, 8, 8) == Color{0, 0, 0, 255});
+}

@@ -64,6 +64,7 @@ MyGame/
 | `gravity` | For Physics Bodies, `[across, down]` in tiles per second squared ([physics.md](physics.md)) | `[0, 0]`, each -1000 to 1000 |
 | `camera_pitch`, `camera_distance`, `camera_fov` | The Diorama camera, which follows the hero: degrees looking down, tiles away, and vertical field of view | 35 (5 to 85), 12 (1 to 200), 30 (5 to 90) |
 | `camera_clamp` | The camera stops at the map's edges (§3, Drawing) | `true` |
+| `ambient_light`, `sun_light` | The Diorama style's light at the start: from everywhere, and from the sun ([scene2d.md](scene2d.md) §7). Logic changes them with the `lighting` object | 0.55, 0.45; each 0 to 2 |
 
 - Problems are reported in plain language with where they are, for example
   `project.sparxel.json/ppu`: *"This must be a whole number from 8 to 64."* A value out of
@@ -136,8 +137,11 @@ except near the edges of the map: with `camera_clamp` on (the default), the came
 where the screen meets the edge of the tilemaps, so nothing beyond them shows
 ([scene2d.md](scene2d.md) §5). A map smaller than the screen is centred. In the Diorama
 style, a view deeper than the map keeps its near edge on the map and lets the far side,
-which reads as distance, show the background. An
-open message box is drawn over the world ([ui.md](ui.md) §3). The window shows the image
+which reads as distance, show the background. The
+**Lighting** object (`lighting`) gives logic *"Set the lighting's ambient light / sunlight
+to [n]"*, so a Brain can make dusk and night, or a Rule darken a cave; Lights then stand
+out ([scene2d.md](scene2d.md) §7). It starts from the project's `ambient_light` and
+`sun_light`, and is saved with the game (§8). An open message box is drawn over the world ([ui.md](ui.md) §3). The window shows the image
 pixel-perfect with black bars around it ([rendering.md](rendering.md) §4).
 
 ## 4. Behaviours
@@ -273,6 +277,7 @@ A save (`Runtime::save()`, format `"sparxel.save"` version 1, `plan/03` §10) ho
 | `step` | The step count, so recorded input and timers continue from the same step |
 | `world` | Every entity and component, as a scene with GUIDs ([serialization.md](serialization.md) §5), including hidden state such as an animation's time |
 | `variables` | Every logic asset's variables, by asset and name (`Vm::variables()`) |
+| `lighting` | The `lighting` object's ambient and sun light. Optional: a save without it keeps the current lighting |
 
 **Loading** (`Runtime::load()`) checks the whole save first, loading its world into a
 scratch world. A save from another game or a newer version, or a broken world, is
@@ -309,6 +314,7 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 | Facing and walking | Every facing rule; exact frames of the cycle, back and forth and starting over, at 6 frames per second; the standing frame; clamped settings; the runtime turning the hero left and animating it |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
+| Lighting | The project's `ambient_light` and `sun_light` round-trip and out-of-range values are refused; the `lighting` object starts from them, and a Rule sets both |
 | Camera on the map (GPU) | The hero in a map's corner drawn off-centre where the clamped camera puts it, and centred with `camera_clamp` off; the sample village in the Diorama style with no background on any edge of the screen (this fails without the clamp) |
 | Diorama (GPU) | The same project in the Diorama style: the hero drawn as a billboard above the centre, lit as `brightness()` says; the settings round-trip; an unknown style and an out-of-range camera refused |
 | Logic and world | Names and GUIDs resolve; an entity's event reaches Rules written with its name and with its GUID, once each; Rules act through several components; logic survives storage moves |

@@ -12,6 +12,7 @@
 #include "engine/game/behaviours.h"
 #include "engine/game/clock.h"
 #include "engine/game/dialogue.h"
+#include "engine/game/lighting.h"
 #include "engine/game/save.h"
 #include "engine/game/sound.h"
 #include "engine/input/input.h"
@@ -62,6 +63,10 @@ struct ProjectSettings {
     /// The camera stops at the edges of the map (the tilemaps), so nothing beyond them
     /// shows; a map smaller than the screen is centred.
     bool camera_clamp = true;
+    /// The Diorama style's light at the start: ambient (0 to 2) and the sun (0 to 2).
+    /// Logic changes them with the "lighting" object.
+    double ambient_light = 0.55;
+    double sun_light = 0.45;
     /// Gravity for Physics Bodies, in tiles per second squared, down the map being +y:
     /// (0, 0) for top-down games, (0, 30) or so for side views. -1000 to 1000 each.
     double gravity_x = 0.0;
@@ -157,6 +162,8 @@ public:
     [[nodiscard]] const std::vector<std::string>& problems() const noexcept;
     /// What logic said with the dialogue object, and whether a message is showing.
     [[nodiscard]] const DialogueObject& dialogue() const noexcept;
+    /// The Diorama style's ambient and sun light, as logic last set them.
+    [[nodiscard]] const LightingObject& lighting() const noexcept;
     [[nodiscard]] DialogueObject& dialogue() noexcept;
     /// The audio engine; null with AudioMode::Off or when no sound output was found.
     [[nodiscard]] audio::AudioEngine* audio() noexcept;

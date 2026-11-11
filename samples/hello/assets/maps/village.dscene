@@ -82,6 +82,37 @@
       },
       "guid": "10000000000040008000000000000005",
       "name": "gate"
+    },
+    {
+      "components": {
+        "light": {
+          "height": 1.5,
+          "intensity": 1.2,
+          "radius": 4.0
+        },
+        "transform_2d": {
+          "x": 17.5,
+          "y": 7.5
+        }
+      },
+      "guid": "10000000000040008000000000000006",
+      "name": "lantern"
+    },
+    {
+      "components": {
+        "light": {
+          "color_b": 150,
+          "color_g": 200,
+          "height": 1.0,
+          "radius": 3.5
+        },
+        "transform_2d": {
+          "x": 4.5,
+          "y": 4.0
+        }
+      },
+      "guid": "10000000000040008000000000000007",
+      "name": "lamp"
     }
   ],
   "format": "sparxel.scene",

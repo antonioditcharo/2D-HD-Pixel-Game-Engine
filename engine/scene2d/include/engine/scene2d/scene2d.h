@@ -124,8 +124,23 @@ private:
     mutable bool parsed_once_ = false;
 };
 
+/// "Light": a point light for the Diorama style, such as a torch, a lamp or a glowing
+/// window. It lights the ground, walls and characters around it, fading smoothly to
+/// nothing at its radius. Lights add to the scene's ambient and sun light, so they show
+/// best at dusk and night.
+struct Light {
+    std::uint8_t color_r = 255; ///< A warm torchlight by default.
+    std::uint8_t color_g = 180;
+    std::uint8_t color_b = 110;
+    double intensity = 1.0; ///< 0 to 8.
+    double radius = 4.0;    ///< In tiles, 0 to 32.
+    double height = 1.0;    ///< Above the ground, in tiles, 0 to 16.
+    bool enabled = true;
+};
+
 /// Registers Transform2D ("transform_2d"), Sprite ("sprite"), SpriteAnimation
-/// ("sprite_animation") and Tilemap ("tilemap") with their editor metadata.
+/// ("sprite_animation"), Tilemap ("tilemap") and Light ("light") with their editor
+/// metadata.
 void register_types(reflect::Registry& registry);
 /// Makes them all usable as components of `world`. register_types() must have run first.
 bool register_components(world::World& world);
@@ -261,6 +276,12 @@ struct DioramaLight {
 /// horizon. The sides are measured at the point, so a little more ground shows at the far
 /// corners. Infinite all round for a turned camera (yaw not 0), which is never limited.
 [[nodiscard]] Box diorama_view_extent(const DioramaCamera& camera, double aspect) noexcept;
+
+/// The point lights draw_diorama() uses: every enabled Light with a Position, at its
+/// height above the ground, nearest to the map point (x, y) first (ties by GUID), at most
+/// render::max_point_lights of them.
+[[nodiscard]] std::vector<render::PointLight> diorama_lights(const world::World& world, double x,
+                                                             double y);
 
 /// Draws the world in the Diorama style: tilemaps as ground and blocks, sprites as
 /// upright billboards facing the camera, ordered by depth, lit and fogged. Missing images

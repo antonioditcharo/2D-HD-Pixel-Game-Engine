@@ -196,6 +196,20 @@ foreach(style classic_2d diorama)
     )
 endforeach()
 
+# A long run: 2,000 frames (33 seconds of game time) in the Diorama style, past the weather
+# Brain turning to rain and dimming the light. Headless runs once grew in memory every
+# frame and crashed after about 900 frames; this keeps that from coming back.
+add_test(NAME player_long_run
+    COMMAND "${CMAKE_COMMAND}"
+        -DPLAYER=$<TARGET_FILE:sparxel_player>
+        -DSAMPLE=${PROJECT_SOURCE_DIR}/samples/hello
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/player_long_run
+        -DSTYLE=diorama
+        -DFRAMES=2000
+        "-DEXPECT=It starts to rain."
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/player/run_sample.cmake"
+)
+
 # Exporting: the exporter's checks, then an exported game played on its own.
 add_executable(editor_exporter_tests
     test_main.cpp

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <limits>
 
 #include "sprite_frag_dxil.h"
@@ -25,6 +26,8 @@ namespace engine::render {
 struct Device::Native {
     SDL_GPUDevice* device{nullptr};
     bool headless = false;
+    /// Fences of submitted work not yet known to be finished, oldest first.
+    std::deque<SDL_GPUFence*> in_flight;
 };
 
 struct Texture::Native {
@@ -38,6 +41,29 @@ struct RenderTarget::Native {
 };
 
 namespace {
+
+/// How many submissions may be unfinished on the GPU at once.
+constexpr std::size_t max_submissions_in_flight = 3;
+
+/// Submits `commands`, keeping at most max_submissions_in_flight submissions unfinished:
+/// beyond that, it waits for the oldest. A window's swapchain paces frames, but a headless
+/// run has nothing else to: without this, it queues work faster than the GPU finishes it,
+/// and memory grows every frame until the driver fails (a software GPU crashed after about
+/// 900 frames before this was added).
+bool submit_paced(Device::Native& device, SDL_GPUCommandBuffer* commands) {
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+    if (fence == nullptr) {
+        return false;
+    }
+    device.in_flight.push_back(fence);
+    while (device.in_flight.size() > max_submissions_in_flight) {
+        SDL_GPUFence* oldest = device.in_flight.front();
+        device.in_flight.pop_front();
+        static_cast<void>(SDL_WaitForGPUFences(device.device, true, &oldest, 1));
+        SDL_ReleaseGPUFence(device.device, oldest);
+    }
+    return true;
+}
 
 /// The pixel format of every texture and target: 8-bit RGBA, as pixel art is authored.
 constexpr SDL_GPUTextureFormat pixel_format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -160,6 +186,11 @@ std::vector<std::uint8_t> RenderTarget::read_pixels() {
 Device::Device(std::unique_ptr<Native> native) : native_(std::move(native)) {}
 
 Device::~Device() {
+    for (SDL_GPUFence* fence : native_->in_flight) {
+        static_cast<void>(SDL_WaitForGPUFences(native_->device, true, &fence, 1));
+        SDL_ReleaseGPUFence(native_->device, fence);
+    }
+    native_->in_flight.clear();
     SDL_DestroyGPUDevice(native_->device);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
@@ -245,7 +276,7 @@ std::unique_ptr<Texture> Device::create_texture(std::uint32_t width, std::uint32
     region.d = 1;
     SDL_UploadToGPUTexture(copy, &source, &region, false);
     SDL_EndGPUCopyPass(copy);
-    const bool submitted = SDL_SubmitGPUCommandBuffer(commands);
+    const bool submitted = submit_paced(*native_, commands);
     SDL_ReleaseGPUTransferBuffer(native_->device, buffer); // Freed once the GPU is done.
     if (!submitted) {
         last_error_ = sdl_error("Uploading a texture failed");
@@ -380,7 +411,7 @@ bool Window::present(const RenderTarget& image, Color letterbox) {
             SDL_BlitGPUTexture(commands, &blit);
         }
     }
-    if (!SDL_SubmitGPUCommandBuffer(commands)) {
+    if (!submit_paced(owner.native(), commands)) {
         owner.last_error_ = sdl_error("Presenting failed");
         return false;
     }
@@ -668,7 +699,7 @@ bool SpriteRenderer::end() {
         }
     }
     SDL_EndGPURenderPass(pass);
-    const bool submitted = SDL_SubmitGPUCommandBuffer(commands);
+    const bool submitted = submit_paced(device_.native(), commands);
     release(n.device, upload);
     if (!submitted) {
         device_.last_error_ = sdl_error("Submitting the frame failed");
@@ -779,6 +810,13 @@ struct WorldVertex {
     float g;
     float b;
     float a;
+    float nx; ///< The surface's normal and wrap, for point lights.
+    float ny;
+    float nz;
+    float wrap;
+    float albedo_r;
+    float albedo_g;
+    float albedo_b;
 };
 
 } // namespace
@@ -800,6 +838,7 @@ struct WorldRenderer::Native {
     Mat4 view_projection;
     Vec3 eye;
     Fog fog;
+    std::vector<PointLight> lights;
     std::vector<WorldVertex> vertices;
     std::vector<const Texture*> textures; ///< One per quad.
 };
@@ -867,10 +906,12 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
         buffer.slot = 0;
         buffer.pitch = sizeof(WorldVertex);
         buffer.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-        SDL_GPUVertexAttribute attributes[3]{};
+        SDL_GPUVertexAttribute attributes[5]{};
         attributes[0] = {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0};
         attributes[1] = {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, 12};
         attributes[2] = {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 20};
+        attributes[3] = {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 36};
+        attributes[4] = {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 52};
 
         SDL_GPUColorTargetDescription color{};
         color.format = pixel_format;
@@ -881,7 +922,7 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
         info.vertex_input_state.vertex_buffer_descriptions = &buffer;
         info.vertex_input_state.num_vertex_buffers = 1;
         info.vertex_input_state.vertex_attributes = attributes;
-        info.vertex_input_state.num_vertex_attributes = 3;
+        info.vertex_input_state.num_vertex_attributes = 5;
         info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
         info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
@@ -925,19 +966,31 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
     return std::unique_ptr<WorldRenderer>(new WorldRenderer(device, std::move(native)));
 }
 
+float light_falloff(float distance, float radius) noexcept {
+    if (!(radius > 0.0F) || !std::isfinite(distance) || !std::isfinite(radius) ||
+        distance >= radius) {
+        return 0.0F;
+    }
+    const float x = distance / radius;
+    const float near = 1.0F - (x * x);
+    return near * near;
+}
+
 void WorldRenderer::begin(RenderTarget& target, Color clear, const Mat4& view_projection, Vec3 eye,
-                          Fog fog) {
+                          Fog fog, std::span<const PointLight> lights) {
     native_->target = &target;
     native_->clear = clear;
     native_->view_projection = view_projection;
     native_->eye = eye;
     native_->fog = fog;
+    native_->lights.assign(lights.begin(), lights.begin() + static_cast<std::ptrdiff_t>(std::min(
+                                                                lights.size(), max_point_lights)));
     native_->vertices.clear();
     native_->textures.clear();
 }
 
 void WorldRenderer::draw(const Texture& texture, const std::array<Vec3, 4>& corners, Rect source,
-                         std::array<float, 4> color) {
+                         std::array<float, 4> color, const Surface& surface) {
     if (native_->target == nullptr) {
         return;
     }
@@ -952,7 +1005,22 @@ void WorldRenderer::draw(const Texture& texture, const std::array<Vec3, 4>& corn
     const float u1 = (source.x + source.w - inset) / tex_w;
     const float v1 = (source.y + source.h - inset) / tex_h;
     const auto corner = [&](const Vec3& p, float u, float v) {
-        return WorldVertex{p.x, p.y, p.z, u, v, color[0], color[1], color[2], color[3]};
+        return WorldVertex{p.x,
+                           p.y,
+                           p.z,
+                           u,
+                           v,
+                           color[0],
+                           color[1],
+                           color[2],
+                           color[3],
+                           surface.normal.x,
+                           surface.normal.y,
+                           surface.normal.z,
+                           surface.wrap,
+                           surface.albedo[0],
+                           surface.albedo[1],
+                           surface.albedo[2]};
     };
     const WorldVertex tl = corner(corners[0], u0, v0);
     const WorldVertex tr = corner(corners[1], u1, v0);
@@ -1063,16 +1131,40 @@ bool WorldRenderer::end() {
         camera[17] = n.eye.y;
         camera[18] = n.eye.z;
         SDL_PushGPUVertexUniformData(commands, 0, camera.data(), sizeof(camera));
+        // The pixel shader's uniforms: fog, then the point lights (see world.frag.hlsl).
         const bool fog_on = n.fog.end > n.fog.start;
-        const std::array<float, 8> fog{static_cast<float>(n.fog.color.r) / 255.0F,
-                                       static_cast<float>(n.fog.color.g) / 255.0F,
-                                       static_cast<float>(n.fog.color.b) / 255.0F,
-                                       1.0F,
-                                       n.fog.start,
-                                       fog_on ? 1.0F / (n.fog.end - n.fog.start) : 0.0F,
-                                       fog_on ? 1.0F : 0.0F,
-                                       0.0F};
-        SDL_PushGPUFragmentUniformData(commands, 0, fog.data(), sizeof(fog));
+        std::array<float, 4 * (3 + (2 * max_point_lights))> frame{};
+        frame[0] = static_cast<float>(n.fog.color.r) / 255.0F;
+        frame[1] = static_cast<float>(n.fog.color.g) / 255.0F;
+        frame[2] = static_cast<float>(n.fog.color.b) / 255.0F;
+        frame[3] = 1.0F;
+        frame[4] = n.fog.start;
+        frame[5] = fog_on ? 1.0F / (n.fog.end - n.fog.start) : 0.0F;
+        frame[6] = fog_on ? 1.0F : 0.0F;
+        std::size_t count = 0;
+        for (const PointLight& light : n.lights) {
+            const bool usable = light.radius > 0.0F && std::isfinite(light.radius) &&
+                                std::isfinite(light.position.x) &&
+                                std::isfinite(light.position.y) &&
+                                std::isfinite(light.position.z) &&
+                                std::all_of(light.color.begin(), light.color.end(),
+                                            [](float c) { return std::isfinite(c); });
+            if (!usable) {
+                continue;
+            }
+            const std::size_t position = 12 + (4 * count);
+            const std::size_t colour = 12 + (4 * max_point_lights) + (4 * count);
+            frame.at(position) = light.position.x;
+            frame.at(position + 1) = light.position.y;
+            frame.at(position + 2) = light.position.z;
+            frame.at(position + 3) = light.radius;
+            frame.at(colour) = light.color[0];
+            frame.at(colour + 1) = light.color[1];
+            frame.at(colour + 2) = light.color[2];
+            ++count;
+        }
+        frame[8] = static_cast<float>(count);
+        SDL_PushGPUFragmentUniformData(commands, 0, frame.data(), sizeof(frame));
         std::size_t first = 0;
         while (first < n.textures.size()) {
             std::size_t last = first + 1;
@@ -1090,7 +1182,7 @@ bool WorldRenderer::end() {
         }
     }
     SDL_EndGPURenderPass(pass);
-    const bool submitted = SDL_SubmitGPUCommandBuffer(commands);
+    const bool submitted = submit_paced(device_.native(), commands);
     release(n.device, upload);
     if (!submitted) {
         device_.last_error_ = sdl_error("Submitting the frame failed");
