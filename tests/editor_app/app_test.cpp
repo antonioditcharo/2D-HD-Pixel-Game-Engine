@@ -18,7 +18,6 @@
 #include <QMouseEvent>
 #include <QToolButton>
 #include <QTreeWidget>
-#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -86,10 +85,11 @@ TEST_CASE("The editor opens the sample: its entities, its scene, its name") {
     CHECK(scene.width() == 320);
     CHECK(scene.height() == 180);
     // A picture for the docs (docs/dev/editor-v0.1.png), when asked for.
-    if (const char* shot = std::getenv("SPARXEL_EDITOR_SCREENSHOT")) {
+    // (Qt's portable getter: MSVC deprecates std::getenv.)
+    if (const QString shot = qEnvironmentVariable("SPARXEL_EDITOR_SCREENSHOT"); !shot.isEmpty()) {
         e.window.select(e.guid("elder"));
         QApplication::processEvents();
-        e.window.grab().save(QString::fromUtf8(shot));
+        e.window.grab().save(shot);
     }
     CHECK_FALSE(e.window.open_project(e.sample.path / "missing"));
     CHECK(e.window.document() != nullptr); // the open project stays open
