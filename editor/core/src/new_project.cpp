@@ -125,7 +125,8 @@ std::string tiles(std::int32_t fill, bool border_only, std::int32_t line_row, st
 
 } // namespace
 
-bool create_project(const fs::path& folder, std::string_view name, std::string& error) {
+bool create_project(const fs::path& folder, std::string_view name, std::string& error,
+                    ProjectTemplate kind) {
     if (name.empty()) {
         error = "Give the game a name.";
         return false;
@@ -184,6 +185,10 @@ bool create_project(const fs::path& folder, std::string_view name, std::string& 
     engine::game::ProjectSettings settings;
     settings.name = std::string(name);
     settings.start_scene = "maps/start.dscene";
+    if (kind == ProjectTemplate::Diorama) {
+        settings.style = engine::game::RenderStyle::Diorama;
+        settings.look.tilt_shift = true;
+    }
     if (!write_text(maps / "start.dscene", serialize::to_text(scene)) ||
         !write_text(folder / "project.sparxel.json",
                     serialize::to_text(engine::game::project_to_json(settings)))) {

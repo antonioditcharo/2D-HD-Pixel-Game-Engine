@@ -3,6 +3,8 @@
 
 #include "engine/foundation/guid.h"
 #include "engine/game/behaviours.h"
+#include "engine/game/runtime.h"
+#include "engine/input/input.h"
 #include "engine/logic/ir.h"
 #include "engine/scene2d/scene2d.h"
 
@@ -623,6 +625,99 @@ TEST_CASE("A new project draws: grass, a path, stone walls and the hero") {
         CHECK(at(40, 95) == std::array<int, 3>{196, 168, 112});  // the path, along row 6
         CHECK(at(160, 84) == std::array<int, 3>{52, 96, 180});   // the hero's tunic
         CHECK(at(160, 79) == std::array<int, 3>{238, 196, 160}); // and face
+    }
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
+}
+
+TEST_CASE("A new Diorama project draws in 3D, and not as the flat one does") {
+    if (test_support::gpu() == nullptr) {
+        return;
+    }
+    std::string error;
+    const auto drawn = [&](editor::ProjectTemplate kind) {
+        const fs::path folder =
+            fs::temp_directory_path() / ("sparxel-new-" + Guid::generate().to_string());
+        REQUIRE(editor::create_project(folder, "My Quest", error, kind));
+        engine::assets::Image frame;
+        {
+            std::vector<serialize::Issue> issues;
+            const auto d = editor::Document::open(folder, issues);
+            REQUIRE(d != nullptr);
+            CHECK(issues.empty());
+            CHECK(d->settings().style == (kind == editor::ProjectTemplate::Diorama
+                                              ? game::RenderStyle::Diorama
+                                              : game::RenderStyle::Classic2D));
+            const auto preview = editor::Preview::create(error);
+            REQUIRE(preview != nullptr);
+            frame = preview->render(*d, 10.0, 6.0, error).value_or(engine::assets::Image{});
+        }
+        std::error_code ignored;
+        fs::remove_all(folder, ignored);
+        return frame;
+    };
+    const engine::assets::Image flat = drawn(editor::ProjectTemplate::TopDown2D);
+    const engine::assets::Image diorama = drawn(editor::ProjectTemplate::Diorama);
+    REQUIRE(flat.width == 320);
+    REQUIRE(diorama.width == 320);
+    REQUIRE(diorama.height == 180);
+    CHECK(diorama.rgba != flat.rgba);
+    // The scene fills the middle of the picture: green (the grass) wins there.
+    std::size_t green = 0;
+    for (std::uint32_t y = 60; y < 120; ++y) {
+        for (std::uint32_t x = 60; x < 260; ++x) {
+            const std::size_t i = (std::size_t{y} * 320 + x) * 4;
+            green += diorama.rgba.at(i + 1) > diorama.rgba.at(i) &&
+                             diorama.rgba.at(i + 1) > diorama.rgba.at(i + 2)
+                         ? 1U
+                         : 0U;
+        }
+    }
+    CAPTURE(green);
+    CHECK(green > 6000); // of 12,000
+}
+
+TEST_CASE("A new project plays: the hero walks, and the walls stop it") {
+    const fs::path folder =
+        fs::temp_directory_path() / ("sparxel-new-" + Guid::generate().to_string());
+    std::string error;
+    REQUIRE(editor::create_project(folder, "My Quest", error));
+    {
+        // The game's own runtime, with recorded input: Right held from the first step.
+        engine::input::Recording replay;
+        replay.record(0, engine::input::Binding::key(engine::input::Key::Right), true);
+        game::RuntimeOptions options;
+        options.graphics = false;
+        options.replay = &replay;
+        options.audio = game::AudioMode::Headless;
+        options.save_folder = folder / "saves";
+        std::vector<serialize::Issue> issues;
+        const std::unique_ptr<game::Runtime> runtime = game::Runtime::open(folder, options, issues);
+        for (const serialize::Issue& issue : issues) {
+            CAPTURE(issue.path);
+            CAPTURE(issue.message);
+            CHECK(false);
+        }
+        REQUIRE(runtime != nullptr);
+        const auto hero_x = [&] {
+            const world::Entity hero = runtime->world().find_named("hero").at(0);
+            return runtime->world().get<scene2d::Transform2D>(hero)->x;
+        };
+        CHECK(hero_x() == 10.0);
+        for (int i = 0; i < 60; ++i) {
+            runtime->step();
+        }
+        CHECK(hero_x() == doctest::Approx(14.0)); // a second at 4 tiles a second
+        for (int i = 0; i < 240; ++i) {
+            runtime->step();
+        }
+        // The east wall is the column from x = 19: the hero stops against it and stays.
+        const double stopped = hero_x();
+        CHECK(stopped > 18.0);
+        CHECK(stopped < 19.0);
+        runtime->step();
+        CHECK(hero_x() == stopped);
+        CHECK(runtime->vm().errors().empty());
     }
     std::error_code ignored;
     fs::remove_all(folder, ignored);

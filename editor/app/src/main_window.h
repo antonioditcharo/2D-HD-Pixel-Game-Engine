@@ -42,7 +42,8 @@ public:
     bool open_project(const std::filesystem::path& folder);
     /// Makes a new project named `name` in `folder` (new or empty), a small starter game,
     /// and opens it. Returns false, with the reason shown, if it cannot.
-    bool new_project(const std::filesystem::path& folder, const QString& name);
+    bool new_project(const std::filesystem::path& folder, const QString& name,
+                     bool diorama = false);
     /// Selects an entity everywhere: the list, the scene and the inspector.
     void select(engine::Guid entity);
 

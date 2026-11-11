@@ -198,10 +198,17 @@ void MainWindow::build_actions() {
         if (!named) {
             return;
         }
+        const QStringList kinds{tr("Classic 2D: seen from above, flat"),
+                                tr("Diorama: HD-2D, in 3D with light and shadows")};
+        const QString kind = QInputDialog::getItem(this, tr("New project"), tr("Start from:"),
+                                                   kinds, 0, false, &named);
+        if (!named) {
+            return;
+        }
         const QString folder =
             QFileDialog::getExistingDirectory(this, tr("Choose an empty folder for %1").arg(name));
         if (!folder.isEmpty()) {
-            new_project(path_of(folder), name);
+            new_project(path_of(folder), name, kind == kinds.at(1));
         }
     });
     fresh->setObjectName(QStringLiteral("new_project"));
@@ -231,12 +238,12 @@ void MainWindow::build_actions() {
     }
 }
 
-bool MainWindow::new_project(const fs::path& folder, const QString& name) {
+bool MainWindow::new_project(const fs::path& folder, const QString& name, bool diorama) {
     std::string error;
     const QByteArray bytes = name.trimmed().toUtf8();
     if (!create_project(folder,
                         std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())),
-                        error)) {
+                        error, diorama ? ProjectTemplate::Diorama : ProjectTemplate::TopDown2D)) {
         report(tr("The project could not be made:\n%1").arg(text_of(error)));
         return false;
     }

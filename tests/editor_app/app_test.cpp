@@ -142,8 +142,22 @@ TEST_CASE("File > New project makes a starter game and opens it") {
     // It is a project like any other: the hero is there to select.
     e.window.select(e.guid("hero"));
     CHECK(e.window.selection() == e.guid("hero"));
+    // The Diorama starter: the same game, opened in the 3D style.
+    const fs::path folder_3d =
+        fs::temp_directory_path() / ("sparxel-new-app-" + Guid::generate().to_string());
+    REQUIRE(e.window.new_project(folder_3d, QStringLiteral("My Diorama"), true));
+    QApplication::processEvents();
+    CHECK(e.window.document()->settings().style == engine::game::RenderStyle::Diorama);
+    CHECK(e.window.document()->settings().look.tilt_shift);
+    CHECK(e.window.document()->entities().size() == 3);
+    CHECK_FALSE(e.window.scene_view()->image().isNull());
+    // A picture of it, when asked for.
+    if (const QString shot = qEnvironmentVariable("SPARXEL_STARTER_SCREENSHOT"); !shot.isEmpty()) {
+        e.window.scene_view()->image().save(shot);
+    }
     std::error_code ignored;
     fs::remove_all(folder, ignored);
+    fs::remove_all(folder_3d, ignored);
 }
 
 TEST_CASE("Selecting in the list fills the inspector, whose fields edit the scene") {
