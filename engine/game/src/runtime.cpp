@@ -39,12 +39,12 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 21> known_project_keys{
+constexpr std::array<std::string_view, 22> known_project_keys{
     "format",       "version",         "name",       "start_scene",  "ppu",
     "width",        "height",          "background", "render_style", "gravity",
     "camera_pitch", "camera_distance", "camera_fov", "camera_clamp", "ambient_light",
     "sun_light",    "sun_angle",       "sun_height", "look",         "sprite_shadow",
-    "shadow_shape"};
+    "shadow_shape", "block_shadow"};
 
 } // namespace
 
@@ -71,6 +71,7 @@ scene2d::DioramaLight diorama_light(const ProjectSettings& settings,
         within(lighting.sun_height, scene2d::default_sun_height, 5.0, 90.0));
     light.sprite_shadow = static_cast<float>(within(settings.sprite_shadow, 0.35, 0.0, 1.0));
     light.shadows = settings.shadow_shape;
+    light.block_shadow = static_cast<float>(within(settings.block_shadow, 0.45, 0.0, 1.0));
     return light;
 }
 
@@ -308,6 +309,7 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
     number("sun_angle", settings.sun_angle, 0.0, 360.0);
     number("sun_height", settings.sun_height, 5.0, 90.0);
     number("sprite_shadow", settings.sprite_shadow, 0.0, 1.0);
+    number("block_shadow", settings.block_shadow, 0.0, 1.0);
     if (const auto shape = doc.find("shadow_shape"); shape != doc.end()) {
         if (shape->is_string() && shape->get<std::string>() == "cast") {
             settings.shadow_shape = scene2d::ShadowShape::Cast;
@@ -417,6 +419,7 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["sun_height"] = settings.sun_height;
     json["sprite_shadow"] = settings.sprite_shadow;
     json["shadow_shape"] = settings.shadow_shape == scene2d::ShadowShape::Round ? "round" : "cast";
+    json["block_shadow"] = settings.block_shadow;
     serialize::Json look = serialize::Json::object();
     look["tilt_shift"] = settings.look.tilt_shift;
     for (const LookNumber& number : look_numbers) {

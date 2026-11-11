@@ -1176,6 +1176,95 @@ TEST_CASE("See-through maps: water over a riverbed, in both styles") {
                                mix(riverbed.b, solid_water.b), 255}));
 }
 
+TEST_CASE("Blocks shadow the ground on the side away from the sun") {
+    const Fixture f;
+    const auto w = f.make_world();
+    // Red ground 8 x 8 tiles around the origin, and one block two tiles tall at (0, 0).
+    const world::Entity ground = w->create("ground");
+    scene2d::Transform2D* at = w->add<scene2d::Transform2D>(ground);
+    at->x = -4.0;
+    at->y = -4.0;
+    at->layer = -1;
+    scene2d::Tilemap* map = w->add<scene2d::Tilemap>(ground);
+    map->tileset = f.red_image.to_string();
+    const std::string row = "0,0,0,0,0,0,0,0";
+    map->tiles = row;
+    for (int i = 1; i < 8; ++i) {
+        map->tiles += "\n" + row;
+    }
+    const world::Entity block = w->create("block");
+    w->add<scene2d::Transform2D>(block);
+    scene2d::Tilemap* blocks = w->add<scene2d::Tilemap>(block);
+    blocks->tileset = f.blue_image.to_string();
+    blocks->tiles = "0";
+    blocks->height = 2.0;
+
+    scene2d::DioramaCamera camera;
+    camera.pitch = 50.0;
+    camera.distance = 14.0;
+    camera.ppu = 2;
+    scene2d::DioramaLight light;
+    light.sun = scene2d::sun_direction(90.0, 45.0); // east: shadows fall west
+    light.sprite_shadow = 0.0F;
+    // The sun's view covers the map, from below the ground to above the block.
+    const std::optional<render::SunShadow> sun = scene2d::diorama_sun_shadow(*w, camera, light);
+    REQUIRE(sun.has_value());
+    const render::SunShadow& view = sun.value_or(render::SunShadow{});
+    for (const render::Vec3 corner :
+         {render::Vec3{-4, 0, -4}, render::Vec3{4, 0, 4}, render::Vec3{0.5F, 2, 0.5F}}) {
+        const std::array<float, 4> c = view.view_projection.transform(corner);
+        CHECK(std::abs(c[0] / c[3]) <= 1.0F);
+        CHECK(std::abs(c[1] / c[3]) <= 1.0F);
+        CHECK(c[2] / c[3] >= 0.0F);
+        CHECK(c[2] / c[3] <= 1.0F);
+    }
+    // None without block shadows, with the sun set, or with no maps.
+    scene2d::DioramaLight off = light;
+    off.block_shadow = 0.0F;
+    CHECK_FALSE(scene2d::diorama_sun_shadow(*w, camera, off).has_value());
+    off = light;
+    off.sun = scene2d::sun_direction(90.0, -5.0);
+    CHECK_FALSE(scene2d::diorama_sun_shadow(*w, camera, off).has_value());
+
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    constexpr std::uint32_t size = 64;
+    const auto target = device->create_render_target(size, size);
+    const auto renderer = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(renderer != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    const auto draw = [&](float darkness) {
+        scene2d::DioramaLight l = light;
+        l.block_shadow = darkness;
+        scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, l);
+        return target->read_pixels();
+    };
+    const std::vector<std::uint8_t> plain = draw(0.0F);
+    const std::vector<std::uint8_t> shaded = draw(0.5F);
+    CHECK(renderer->last_stats().sun_casters > 0);
+    // Where a ground point is on the image.
+    const render::Mat4 vp = scene2d::diorama_view_projection(camera, 1.0F);
+    const auto at_ground = [&](float x, float y, const std::vector<std::uint8_t>& pixels) {
+        const std::array<float, 4> c = vp.transform(render::Vec3{x, -0.002F, y});
+        const auto px = static_cast<std::uint32_t>(((c[0] / c[3]) + 1.0F) / 2.0F * size);
+        const auto py = static_cast<std::uint32_t>((1.0F - (c[1] / c[3])) / 2.0F * size);
+        return pixel(pixels, size, px, py);
+    };
+    // West of the block, inside its shadow (two tiles long at 45 degrees): half as bright.
+    const Color sunny = at_ground(-1.0F, 0.5F, plain);
+    const Color shadowed = at_ground(-1.0F, 0.5F, shaded);
+    CAPTURE(sunny.r);
+    CAPTURE(shadowed.r);
+    CHECK(std::abs(static_cast<int>(shadowed.r) - static_cast<int>(sunny.r) / 2) <= 2);
+    // East of it, and beyond the shadow's end, the ground is as before.
+    CHECK(at_ground(1.5F, 0.5F, shaded) == at_ground(1.5F, 0.5F, plain));
+    CHECK(at_ground(-3.0F, 0.5F, shaded) == at_ground(-3.0F, 0.5F, plain));
+    CHECK(at_ground(-1.0F, 2.5F, shaded) == at_ground(-1.0F, 2.5F, plain));
+}
+
 TEST_CASE("Diorama rays go through the image to the ground") {
     scene2d::DioramaCamera camera;
     camera.x = 4.0;

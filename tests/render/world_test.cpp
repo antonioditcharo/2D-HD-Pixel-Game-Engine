@@ -407,3 +407,71 @@ TEST_CASE("See-through quads blend over what is behind them, farthest first") {
     CHECK(pixel(pixels, 16, 3, 8).a == 255);
     CHECK(pixel(pixels, 16, 12, 12).a == 255);
 }
+
+TEST_CASE("The sun's shadow map darkens what something stands between it and the sun") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const auto target = device->create_render_target(16, 16);
+    const auto world = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(world != nullptr);
+    const auto white = solid(*device, Color{255, 255, 255, 255});
+    const auto blue_texture = solid(*device, blue);
+    // Seen from the front, one unit per pixel: x from -8 (pixel 0) to 8, y up.
+    const Mat4 camera = Mat4::orthographic(-8, 8, -8, 8, 1, 20) *
+                        Mat4::look_at(Vec3{0, 0, 10}, Vec3{0, 0, 0}, Vec3{0, 1, 0});
+    const Vec3 eye{0, 0, 10};
+    // The sun up and to the right, at 45 degrees: something 2 in front of the wall
+    // shadows it 2 to the left.
+    const auto h = static_cast<float>(std::sqrt(0.5));
+    render::SunShadow sun;
+    sun.towards_sun = Vec3{h, 0.0F, h};
+    sun.view_projection = Mat4::orthographic(-20, 20, -20, 20, 1, 40) *
+                          Mat4::look_at(Vec3{20 * h, 0, 20 * h}, Vec3{0, 0, 0}, Vec3{0, 1, 0});
+    sun.darkness = 0.5F;
+    sun.bias = 0.0005F;
+    render::Surface wall;
+    wall.normal = Vec3{0, 0, 1};
+    const auto draw = [&](bool shadows, bool casts) {
+        world->begin(*target, background, camera, eye);
+        if (shadows) {
+            world->set_sun_shadow(sun);
+        }
+        world->draw(*white, facing(-8, -8, 8, 8, 0), Rect{0, 0, 1, 1}, {1, 1, 1, 1}, wall);
+        // A blue card 2 in front, from x 0 to 4: its shadow falls on x -2 to 2.
+        render::Surface card = wall;
+        card.casts_shadow = casts;
+        world->draw(*blue_texture, facing(0, -4, 4, 4, 2), Rect{0, 0, 1, 1}, {1, 1, 1, 1}, card);
+        REQUIRE(world->end());
+        return target->read_pixels();
+    };
+    std::vector<std::uint8_t> pixels = draw(true, true);
+    CHECK(world->last_stats().sun_casters == 2);
+    // x -2 to 0 (pixels 6 and 7): the wall, half dark. Behind the card: the card.
+    CHECK(near_colour(pixel(pixels, 16, 6, 8), Color{128, 128, 128, 255}, 2));
+    CHECK(near_colour(pixel(pixels, 16, 7, 8), Color{128, 128, 128, 255}, 2));
+    CHECK(pixel(pixels, 16, 9, 8) == blue);
+    // In the sun: left of the shadow, above and below the card's, right of the card.
+    CHECK(pixel(pixels, 16, 3, 8) == Color{255, 255, 255, 255});
+    CHECK(pixel(pixels, 16, 6, 2) == Color{255, 255, 255, 255});
+    CHECK(pixel(pixels, 16, 14, 8) == Color{255, 255, 255, 255});
+    // The card itself faces the sun and nothing is in front of it: lit.
+    // Without the sun's shadows, or with a card that does not cast, no shadow.
+    pixels = draw(false, true);
+    CHECK(world->last_stats().sun_casters == 0);
+    CHECK(pixel(pixels, 16, 6, 8) == Color{255, 255, 255, 255});
+    pixels = draw(true, false);
+    CHECK(world->last_stats().sun_casters == 1);
+    CHECK(pixel(pixels, 16, 6, 8) == Color{255, 255, 255, 255});
+    // A surface facing away from the sun is left as its shading made it.
+    world->begin(*target, background, camera, eye);
+    world->set_sun_shadow(sun);
+    render::Surface away;
+    away.normal = Vec3{-1, 0, 0};
+    world->draw(*white, facing(-8, -8, 8, 8, 0), Rect{0, 0, 1, 1}, {1, 1, 1, 1}, away);
+    world->draw(*blue_texture, facing(0, -4, 4, 4, 2), Rect{0, 0, 1, 1}, {1, 1, 1, 1}, wall);
+    REQUIRE(world->end());
+    CHECK(pixel(target->read_pixels(), 16, 6, 8) == Color{255, 255, 255, 255});
+}

@@ -286,7 +286,19 @@ struct DioramaLight {
     /// highest tile under the sprite's feet; with no tile there, none is drawn.
     float sprite_shadow = 0.35F;
     ShadowShape shadows = ShadowShape::Cast;
+    /// How dark the sun's shadows of blocks are, 0 (none) to 1: walls and houses shadow
+    /// the ground, other blocks and characters on the side away from the sun.
+    float block_shadow = 0.45F;
 };
+
+/// The sun's shadow map for a diorama (render::SunShadow): its view covers the maps, as
+/// high as their tallest block, looking along the sun's rays. Nothing with no maps, no
+/// block shadow, or the sun set. Maps wider than max_sun_shadow_tiles are covered around
+/// the camera instead, so the map's texels stay small.
+[[nodiscard]] std::optional<render::SunShadow> diorama_sun_shadow(const world::World& world,
+                                                                  const DioramaCamera& camera,
+                                                                  const DioramaLight& light);
+constexpr double max_sun_shadow_tiles = 96.0;
 
 /// How far the shadow of a point one tile up reaches across the ground, as (x, y) on the
 /// map, with the sun in direction `sun`: away from the sun, longer as it gets lower, and

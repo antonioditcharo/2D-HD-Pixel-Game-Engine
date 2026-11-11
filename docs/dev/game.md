@@ -66,6 +66,7 @@ MyGame/
 | `camera_clamp` | The camera stops at the map's edges (§3, Drawing) | `true` |
 | `look` | The frame's post-processing: tilt-shift (Diorama style only: it imitates a lens photographing a miniature, so flat Classic 2D ignores it), bloom, grading and vignette ([rendering.md](rendering.md) §8). A group of named settings; unknown ones are reported, values out of range refuse the project | Changes nothing |
 | `sprite_shadow`, `shadow_shape` | How dark each sprite's shadow is in the Diorama style, and its shape: `"cast"`, its silhouette laid away from the sun, or `"round"`, a blob at its feet ([scene2d.md](scene2d.md) §7) | 0.35 (0 to 1), `"cast"` |
+| `block_shadow` | How dark the sun's shadows of blocks are in the Diorama style ([scene2d.md](scene2d.md) §7) | 0.45; 0 to 1 |
 | `sun_angle`, `sun_height` | Where the sun is at the start: degrees clockwise from north (up the map), and above the horizon. Logic moves it with the `lighting` object | 215 (0 to 360), 55 (5 to 90) |
 | `ambient_light`, `sun_light` | The Diorama style's light at the start: from everywhere, and from the sun ([scene2d.md](scene2d.md) §7). Logic changes them with the `lighting` object | 0.55, 0.45; each 0 to 2 |
 

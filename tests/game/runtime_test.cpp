@@ -350,6 +350,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     diorama.sun_angle = 300.0;
     diorama.sun_height = 20.0;
     diorama.shadow_shape = scene2d::ShadowShape::Round;
+    diorama.block_shadow = 0.7;
     write_json(folder.path / game::project_file, game::project_to_json(diorama));
     issues.clear();
     const game::ProjectSettings again =
@@ -366,6 +367,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(again.sun_angle == 300.0);
     CHECK(again.sun_height == 20.0);
     CHECK(again.shadow_shape == scene2d::ShadowShape::Round);
+    CHECK(again.block_shadow == 0.7);
 
     // Out-of-range values and a wrong style refuse the project; unknown entries do not.
     serialize::Json json = game::project_to_json(settings);
@@ -1406,6 +1408,7 @@ TEST_CASE("Lighting starts from the project and logic changes it") {
     CHECK(light.sun.z == doctest::Approx(sun.z));
     CHECK(light.sprite_shadow == doctest::Approx(0.6));
     CHECK(light.shadows == scene2d::ShadowShape::Round);
+    CHECK(light.block_shadow == doctest::Approx(0.45)); // the default
     runtime->step();
     runtime->step();
     CHECK(runtime->lighting().ambient == 0.25);

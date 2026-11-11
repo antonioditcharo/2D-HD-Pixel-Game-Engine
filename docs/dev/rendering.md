@@ -166,6 +166,18 @@ world->end();
   Tested on a picture half opaque and half clear, dark 1 along the top fading to 0 at
   the bottom: the exact grey in three rows, the clear half and the rest untouched.
   Shadows sharing a shape are drawn together, one draw call per run.
+- **The sun's shadows** (`set_sun_shadow()`, `SunShadow`): before the frame, every
+  opaque quad that `casts_shadow` is drawn from the sun into a 2048 × 2048 depth texture
+  (`sun_depth.frag.hlsl`: depth only, cut-out texels cast nothing, with a slope-scaled
+  depth bias). The world shader then looks each pixel up in it, a little off its
+  surface along its normal, nine samples for a soft edge, and multiplies the sun's part
+  of its light (the vertex colour) by 1 − darkness where it is hidden. Faces turned away
+  from the sun are left as their shading made them; billboards always take it; point
+  lights still shine into shadows. The map is cleared once when the renderer is made,
+  so it is valid in frames without the sun's shadows. Tested: a card 2 in front of a
+  wall with the sun at 45 degrees darkens exactly the wall 2 to its left, by half (128
+  of 255); nothing without the sun's shadows, with a card that does not cast, or on a
+  wall facing away from the sun.
 - **Batching:** one draw call per run of quads sharing a texture, as for sprites.
 - **See-through quads** (glass, water, fading characters): a quad whose colour's alpha is
   below 1, or whose texture has partly see-through pixels (`Texture::translucent()`,
@@ -216,7 +228,8 @@ Towards the reference scene of Spike R (`plan/08` Phase 0, `plan/04` §4):
 
 1. **Frame pacing in windows:** vsync choice and frame-time measurement.
 2. **Water that moves:** scrolling and rippling surfaces, and reflections (`plan/04` §5).
-3. **Shadows** from blocks and from point lights, and normal-mapped sprites
+3. **Shadows** from point lights, cascades for very large maps, and normal-mapped
+   sprites
    (`plan/04` §5 and §7).
 4. **More of the Look** (`plan/04` §8): LUT colour grading, physical depth of field for
    cutscenes, volumetric light, and Looks that blend by zone and time of day.

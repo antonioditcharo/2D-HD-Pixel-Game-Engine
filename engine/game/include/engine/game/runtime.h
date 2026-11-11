@@ -76,6 +76,8 @@ struct ProjectSettings {
     /// the project file, "sprite_shadow" and "shadow_shape" ("cast" or "round").
     double sprite_shadow = 0.35;
     scene2d::ShadowShape shadow_shape = scene2d::ShadowShape::Cast;
+    /// How dark the sun's shadows of blocks are in the Diorama style, 0 (none) to 1.
+    double block_shadow = 0.45;
     /// Post-processing for the finished frame: tilt-shift, bloom, grading, vignette. The
     /// default changes nothing. In the project file, the group "look".
     render::Look look;

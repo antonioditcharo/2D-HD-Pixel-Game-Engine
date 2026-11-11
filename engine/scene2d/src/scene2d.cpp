@@ -993,6 +993,76 @@ std::optional<float> ground_top(const world::World& world, double x, double y, s
     return top;
 }
 
+std::optional<render::SunShadow> diorama_sun_shadow(const world::World& world,
+                                                    const DioramaCamera& camera,
+                                                    const DioramaLight& light) {
+    const reflect::TypeInfo* type = world.registry().find_type<Tilemap>();
+    const std::optional<Box> bounds = map_bounds(world, camera.ppu);
+    if (!(light.block_shadow > 0.0F) || type == nullptr || !bounds ||
+        !shadow_offset(light.sun).has_value()) {
+        return std::nullopt;
+    }
+    // The tallest block casts the longest shadow.
+    float tallest = 0.0F;
+    world.each(*type, [&](world::Entity, reflect::ObjectRef ref) {
+        const Tilemap* map = ref.as<Tilemap>();
+        if (map != nullptr && map->visible && std::isfinite(map->height)) {
+            tallest = std::max(tallest, static_cast<float>(std::min(map->height, 16.0)));
+        }
+    });
+    // What it covers: the maps, or around the camera on a large one.
+    Box area = *bounds;
+    const double reach = max_sun_shadow_tiles / 2.0;
+    if (area.right - area.left > max_sun_shadow_tiles) {
+        area.left = std::max(area.left, camera.x - reach);
+        area.right = std::min(area.right, camera.x + reach);
+    }
+    if (area.bottom - area.top > max_sun_shadow_tiles) {
+        area.top = std::max(area.top, camera.y - reach);
+        area.bottom = std::min(area.bottom, camera.y + reach);
+    }
+    const render::Vec3 s = unit(light.sun);
+    const render::Vec3 centre{static_cast<float>((area.left + area.right) / 2.0), tallest / 2.0F,
+                              static_cast<float>((area.top + area.bottom) / 2.0)};
+    const auto span = static_cast<float>(
+        std::hypot(area.right - area.left, area.bottom - area.top) + tallest + 4.0);
+    const render::Vec3 from{centre.x + (s.x * span), centre.y + (s.y * span),
+                            centre.z + (s.z * span)};
+    const render::Vec3 up = std::abs(s.y) > 0.99F ? render::Vec3{0, 0, -1} : render::Vec3{0, 1, 0};
+    const render::Mat4 view = render::Mat4::look_at(from, centre, up);
+    // The box of the area, from just below the ground to above the tallest block, in the
+    // sun's view: its bounds are the projection's.
+    float left = std::numeric_limits<float>::max();
+    float right = -left;
+    float bottom = left;
+    float top = -left;
+    float nearest = left;
+    float farthest = -left;
+    for (const double x : {area.left, area.right}) {
+        for (const double z : {area.top, area.bottom}) {
+            for (const float y : {-0.5F, tallest + 0.5F}) {
+                const std::array<float, 4> p =
+                    view.transform(render::Vec3{static_cast<float>(x), y, static_cast<float>(z)});
+                left = std::min(left, p[0]);
+                right = std::max(right, p[0]);
+                bottom = std::min(bottom, p[1]);
+                top = std::max(top, p[1]);
+                nearest = std::min(nearest, -p[2]);
+                farthest = std::max(farthest, -p[2]);
+            }
+        }
+    }
+    render::SunShadow shadow;
+    const float depth = (farthest - nearest) + 2.0F;
+    shadow.view_projection =
+        render::Mat4::orthographic(left, right, bottom, top, nearest - 1.0F, farthest + 1.0F) *
+        view;
+    shadow.towards_sun = s;
+    shadow.darkness = std::min(light.block_shadow, 1.0F);
+    shadow.bias = 0.03F / depth; // three hundredths of a tile
+    return shadow;
+}
+
 DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                        render::WorldRenderer& renderer, render::RenderTarget& target,
                        const DioramaCamera& camera, render::Color clear, const DioramaLight& light,
@@ -1005,6 +1075,9 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
     const double ppu = static_cast<double>(std::max<std::uint32_t>(camera.ppu, 1));
     const std::vector<render::PointLight> lights = diorama_lights(world, camera.x, camera.y);
     renderer.begin(target, clear, view_projection, eye, fog, lights);
+    if (const std::optional<render::SunShadow> sun = diorama_sun_shadow(world, camera, light)) {
+        renderer.set_sun_shadow(*sun);
+    }
 
     const reflect::TypeInfo* transform_type = world.registry().find_type<Transform2D>();
     if (transform_type == nullptr) {
@@ -1195,6 +1268,7 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                 [&] {
                     // Billboards take point lights from all round, softly, and in their tint.
                     render::Surface s = surface(sprite_normal, 1.0F);
+                    s.casts_shadow = false; // an edge-on card from the sun: its own shadow
                     s.albedo = {static_cast<float>(sprite->tint_r) / 255.0F,
                                 static_cast<float>(sprite->tint_g) / 255.0F,
                                 static_cast<float>(sprite->tint_b) / 255.0F};

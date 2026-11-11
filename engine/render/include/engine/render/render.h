@@ -300,7 +300,26 @@ struct Surface {
     float wrap = 0.0F; ///< 0: lit only from the front (Lambert); 1: from all round, softly
                        ///< (half-Lambert), for billboards that should not go dark from behind.
     std::array<float, 3> albedo{1.0F, 1.0F, 1.0F}; ///< Usually the tint.
+    /// Whether it casts the sun's shadow (WorldRenderer::set_sun_shadow()). Billboards
+    /// usually do not: seen from the sun they are edge-on cards.
+    bool casts_shadow = true;
 };
+
+/// The sun's shadows: what stands between a surface and the sun darkens the sun's part of
+/// its light, as a shadow map (depth seen from the sun) tells.
+struct SunShadow {
+    /// The sun's view: an orthographic projection looking along its rays, covering what
+    /// casts and receives shadows.
+    Mat4 view_projection;
+    Vec3 towards_sun{0.0F, 1.0F, 0.0F}; ///< Unit.
+    float darkness = 0.0F;              ///< 0 (none) to 1.
+    /// How far in front of the stored depth a surface still counts as lit, in the sun
+    /// view's depth units (0 to 1), against shadowing itself.
+    float bias = 0.001F;
+};
+
+/// The shadow map's size, in texels per side.
+inline constexpr std::uint32_t sun_shadow_size = 2048;
 
 /// How much of a point light reaches a point `distance` away, before the angle: 1 at the
 /// light, falling smoothly to 0 at `radius`: (1 - (d / r)^2)^2.
@@ -349,6 +368,11 @@ public:
     /// silhouette cast on the ground by the sun, darkest at its feet.
     void draw_shadow(const Texture& shape, const std::array<Vec3, 4>& corners, Rect source,
                      const std::array<float, 4>& darkness);
+    /// Turns on the sun's shadows for this frame (after begin(), which turns them off):
+    /// every opaque quad that casts_shadow is drawn into a shadow map from the sun first,
+    /// and every surface facing the sun is darkened where the map says it is hidden from
+    /// it. Darkness 0 turns them off.
+    void set_sun_shadow(const SunShadow& shadow);
     /// Sends the frame to the GPU. Returns false, with the device's last_error() set, if it
     /// could not.
     bool end();
@@ -357,6 +381,7 @@ public:
         std::size_t quads = 0;
         std::size_t translucent = 0; ///< Of `quads`, those blended.
         std::size_t shadows = 0;
+        std::size_t sun_casters = 0; ///< Quads drawn into the shadow map; 0 without one.
         /// One per run of quads sharing a texture, and one per run of shadows sharing a shape.
         std::size_t draw_calls = 0;
     };

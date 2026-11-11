@@ -7,6 +7,7 @@
 #include <cstring>
 #include <deque>
 #include <limits>
+#include <optional>
 
 #include "post_blur_frag_dxil.h"
 #include "post_blur_frag_spirv.h"
@@ -20,6 +21,8 @@
 #include "sprite_frag_spirv.h"
 #include "sprite_vert_dxil.h"
 #include "sprite_vert_spirv.h"
+#include "sun_depth_frag_dxil.h"
+#include "sun_depth_frag_spirv.h"
 #include "world_frag_dxil.h"
 #include "world_frag_spirv.h"
 #include "world_vert_dxil.h"
@@ -870,6 +873,11 @@ struct WorldRenderer::Native {
         float distance; ///< Squared, from the eye to the quad's middle.
     };
     std::vector<Translucent> translucent;
+    // The sun's shadows: a depth pass from the sun (sun_depth.frag.hlsl) into its map.
+    SDL_GPUGraphicsPipeline* sun_pipeline{nullptr};
+    SDL_GPUTexture* sun_map{nullptr};
+    std::vector<bool> casts; ///< Per opaque quad.
+    std::optional<SunShadow> sun;
 };
 
 WorldRenderer::WorldRenderer(Device& device, std::unique_ptr<Native> native)
@@ -887,6 +895,12 @@ WorldRenderer::~WorldRenderer() {
     }
     if (native_->blend_pipeline != nullptr) {
         SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->blend_pipeline);
+    }
+    if (native_->sun_pipeline != nullptr) {
+        SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->sun_pipeline);
+    }
+    if (native_->sun_map != nullptr) {
+        SDL_ReleaseGPUTexture(native_->device, native_->sun_map);
     }
 }
 
@@ -929,13 +943,26 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
     fragment_info.entrypoint = "main";
     fragment_info.format = vertex_info.format;
     fragment_info.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
-    fragment_info.num_samplers = 1;
+    fragment_info.num_samplers = 2; // the quad's texture, the sun's shadow map
     fragment_info.num_uniform_buffers = 1;
     SDL_GPUShader* fragment_shader = SDL_CreateGPUShader(gpu, &fragment_info);
 
     SDL_GPUGraphicsPipeline* pipeline = nullptr;
     SDL_GPUGraphicsPipeline* shadow_pipeline = nullptr;
     SDL_GPUGraphicsPipeline* blend_pipeline = nullptr;
+    SDL_GPUGraphicsPipeline* sun_pipeline = nullptr;
+    // The shadow map: a depth format the GPU can both render to and sample.
+    SDL_GPUTextureFormat sun_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+    for (const SDL_GPUTextureFormat candidate :
+         {SDL_GPU_TEXTUREFORMAT_D32_FLOAT, SDL_GPU_TEXTUREFORMAT_D16_UNORM,
+          SDL_GPU_TEXTUREFORMAT_D24_UNORM}) {
+        if (SDL_GPUTextureSupportsFormat(gpu, candidate, SDL_GPU_TEXTURETYPE_2D,
+                                         SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET |
+                                             SDL_GPU_TEXTUREUSAGE_SAMPLER)) {
+            sun_format = candidate;
+            break;
+        }
+    }
     if (vertex_shader == nullptr || fragment_shader == nullptr) {
         device.last_error_ = sdl_error("Creating the world shaders failed");
     } else {
@@ -977,6 +1004,7 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
         SDL_GPUShaderCreateInfo shadow_info = fragment_info;
         shadow_info.code = spirv ? shadow_frag_spirv.data() : shadow_frag_dxil.data();
         shadow_info.code_size = spirv ? shadow_frag_spirv.size() : shadow_frag_dxil.size();
+        shadow_info.num_samplers = 1;
         shadow_info.num_uniform_buffers = 0;
         SDL_GPUShader* shadow_shader = SDL_CreateGPUShader(gpu, &shadow_info);
         if (shadow_shader != nullptr && pipeline != nullptr) {
@@ -1012,12 +1040,43 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
             blend.depth_stencil_state.enable_depth_write = false;
             blend_pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &blend);
         }
-        if ((shadow_pipeline == nullptr || blend_pipeline == nullptr) && pipeline != nullptr) {
+        // The sun's depth pass: the world's vertex shader seeing from the sun, writing
+        // depth only, into the shadow map's format.
+        SDL_GPUShaderCreateInfo sun_info = fragment_info;
+        sun_info.code = spirv ? sun_depth_frag_spirv.data() : sun_depth_frag_dxil.data();
+        sun_info.code_size = spirv ? sun_depth_frag_spirv.size() : sun_depth_frag_dxil.size();
+        sun_info.num_samplers = 1;
+        sun_info.num_uniform_buffers = 0;
+        SDL_GPUShader* sun_shader = sun_format != SDL_GPU_TEXTUREFORMAT_INVALID
+                                        ? SDL_CreateGPUShader(gpu, &sun_info)
+                                        : nullptr;
+        if (sun_shader != nullptr && pipeline != nullptr) {
+            SDL_GPUGraphicsPipelineCreateInfo sun = info;
+            sun.fragment_shader = sun_shader;
+            sun.target_info.num_color_targets = 0;
+            sun.target_info.color_target_descriptions = nullptr;
+            sun.target_info.depth_stencil_format = sun_format;
+            sun.rasterizer_state.enable_depth_bias = true;
+            sun.rasterizer_state.depth_bias_slope_factor = 1.5F;
+            sun.rasterizer_state.depth_bias_constant_factor = 1.0F;
+            sun_pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &sun);
+        }
+        release(gpu, sun_shader);
+        if ((shadow_pipeline == nullptr || blend_pipeline == nullptr || sun_pipeline == nullptr) &&
+            pipeline != nullptr) {
             SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
             pipeline = nullptr;
             if (shadow_pipeline != nullptr) {
                 SDL_ReleaseGPUGraphicsPipeline(gpu, shadow_pipeline);
                 shadow_pipeline = nullptr;
+            }
+            if (blend_pipeline != nullptr) {
+                SDL_ReleaseGPUGraphicsPipeline(gpu, blend_pipeline);
+                blend_pipeline = nullptr;
+            }
+            if (sun_pipeline != nullptr) {
+                SDL_ReleaseGPUGraphicsPipeline(gpu, sun_pipeline);
+                sun_pipeline = nullptr;
             }
         }
     }
@@ -1061,6 +1120,43 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
         SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
         SDL_ReleaseGPUGraphicsPipeline(gpu, shadow_pipeline);
         SDL_ReleaseGPUGraphicsPipeline(gpu, blend_pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(gpu, sun_pipeline);
+        return nullptr;
+    }
+
+    // The shadow map, cleared to "nothing in the way" once, so it is valid to sample in
+    // frames without the sun's shadows.
+    SDL_GPUTextureCreateInfo map_info{};
+    map_info.type = SDL_GPU_TEXTURETYPE_2D;
+    map_info.format = sun_format;
+    map_info.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    map_info.width = sun_shadow_size;
+    map_info.height = sun_shadow_size;
+    map_info.layer_count_or_depth = 1;
+    map_info.num_levels = 1;
+    SDL_GPUTexture* sun_map = SDL_CreateGPUTexture(gpu, &map_info);
+    SDL_GPUCommandBuffer* clearing =
+        sun_map != nullptr ? SDL_AcquireGPUCommandBuffer(gpu) : nullptr;
+    if (clearing != nullptr) {
+        SDL_GPUDepthStencilTargetInfo clear{};
+        clear.texture = sun_map;
+        clear.clear_depth = 1.0F;
+        clear.load_op = SDL_GPU_LOADOP_CLEAR;
+        clear.store_op = SDL_GPU_STOREOP_STORE;
+        clear.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+        clear.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+        SDL_EndGPURenderPass(SDL_BeginGPURenderPass(clearing, nullptr, 0, &clear));
+    }
+    if (clearing == nullptr || !submit_paced(device.native(), clearing)) {
+        device.last_error_ = sdl_error("Creating the sun's shadow map failed");
+        if (sun_map != nullptr) {
+            SDL_ReleaseGPUTexture(gpu, sun_map);
+        }
+        SDL_ReleaseGPUSampler(gpu, sampler);
+        SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(gpu, shadow_pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(gpu, blend_pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(gpu, sun_pipeline);
         return nullptr;
     }
 
@@ -1069,6 +1165,8 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
     native->pipeline = pipeline;
     native->shadow_pipeline = shadow_pipeline;
     native->blend_pipeline = blend_pipeline;
+    native->sun_pipeline = sun_pipeline;
+    native->sun_map = sun_map;
     native->shadow_mask = std::move(shadow_mask);
     native->sampler = sampler;
     native->depth_format = depth_format;
@@ -1099,6 +1197,21 @@ void WorldRenderer::begin(RenderTarget& target, Color clear, const Mat4& view_pr
     native_->shadows.clear();
     native_->shadow_shapes.clear();
     native_->translucent.clear();
+    native_->casts.clear();
+    native_->sun.reset();
+}
+
+void WorldRenderer::set_sun_shadow(const SunShadow& shadow) {
+    if (native_->target == nullptr) {
+        return;
+    }
+    if (shadow.darkness > 0.0F && std::isfinite(shadow.darkness) &&
+        std::all_of(shadow.view_projection.m.begin(), shadow.view_projection.m.end(),
+                    [](float v) { return std::isfinite(v); })) {
+        native_->sun = shadow;
+    } else {
+        native_->sun.reset();
+    }
 }
 
 namespace {
@@ -1203,6 +1316,7 @@ void WorldRenderer::draw(const Texture& texture, const std::array<Vec3, 4>& corn
     const WorldVertex quad[6] = {tl, tr, bl, tr, br, bl};
     native_->vertices.insert(native_->vertices.end(), std::begin(quad), std::end(quad));
     native_->textures.push_back(&texture);
+    native_->casts.push_back(surface.casts_shadow);
 }
 
 bool WorldRenderer::end() {
@@ -1290,6 +1404,49 @@ bool WorldRenderer::end() {
         SDL_EndGPUCopyPass(copy);
     }
 
+    // The sun's shadow map: every opaque quad that casts, seen from the sun.
+    stats_.sun_casters = 0;
+    if (n.sun && vertex_count > 0) {
+        SDL_GPUDepthStencilTargetInfo map{};
+        map.texture = n.sun_map;
+        map.clear_depth = 1.0F;
+        map.load_op = SDL_GPU_LOADOP_CLEAR;
+        map.store_op = SDL_GPU_STOREOP_STORE;
+        map.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+        map.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+        SDL_GPURenderPass* sun_pass = SDL_BeginGPURenderPass(commands, nullptr, 0, &map);
+        SDL_BindGPUGraphicsPipeline(sun_pass, n.sun_pipeline);
+        SDL_GPUBufferBinding binding{};
+        binding.buffer = n.vertex_buffer;
+        SDL_BindGPUVertexBuffers(sun_pass, 0, &binding, 1);
+        std::array<float, 20> sun_camera{};
+        std::copy(n.sun->view_projection.m.begin(), n.sun->view_projection.m.end(),
+                  sun_camera.begin());
+        SDL_PushGPUVertexUniformData(commands, 0, sun_camera.data(), sizeof(sun_camera));
+        std::size_t first = 0;
+        while (first < n.textures.size()) {
+            if (!n.casts[first]) {
+                ++first;
+                continue;
+            }
+            std::size_t last = first + 1;
+            while (last < n.textures.size() && n.casts[last] &&
+                   n.textures[last] == n.textures[first]) {
+                ++last;
+            }
+            SDL_GPUTextureSamplerBinding sampler{};
+            sampler.texture = n.textures[first]->native().texture;
+            sampler.sampler = n.sampler;
+            SDL_BindGPUFragmentSamplers(sun_pass, 0, &sampler, 1);
+            SDL_DrawGPUPrimitives(sun_pass, static_cast<std::uint32_t>((last - first) * 6), 1,
+                                  static_cast<std::uint32_t>(first * 6), 0);
+            ++stats_.draw_calls;
+            stats_.sun_casters += last - first;
+            first = last;
+        }
+        SDL_EndGPURenderPass(sun_pass);
+    }
+
     SDL_GPUColorTargetInfo color{};
     color.texture = target->native().texture;
     color.clear_color =
@@ -1317,9 +1474,10 @@ bool WorldRenderer::end() {
         camera[17] = n.eye.y;
         camera[18] = n.eye.z;
         SDL_PushGPUVertexUniformData(commands, 0, camera.data(), sizeof(camera));
-        // The pixel shader's uniforms: fog, then the point lights (see world.frag.hlsl).
+        // The pixel shader's uniforms: fog, the point lights, then the sun's shadows (see
+        // world.frag.hlsl).
         const bool fog_on = n.fog.end > n.fog.start;
-        std::array<float, 4 * (3 + (2 * max_point_lights))> frame{};
+        std::array<float, 4 * (3 + (2 * max_point_lights) + 6)> frame{};
         frame[0] = static_cast<float>(n.fog.color.r) / 255.0F;
         frame[1] = static_cast<float>(n.fog.color.g) / 255.0F;
         frame[2] = static_cast<float>(n.fog.color.b) / 255.0F;
@@ -1350,17 +1508,35 @@ bool WorldRenderer::end() {
             ++count;
         }
         frame[8] = static_cast<float>(count);
+        if (n.sun) {
+            const std::size_t at = 4 * (3 + (2 * max_point_lights));
+            std::copy(n.sun->view_projection.m.begin(), n.sun->view_projection.m.end(),
+                      frame.begin() + static_cast<std::ptrdiff_t>(at));
+            frame.at(at + 16) = 1.0F;
+            frame.at(at + 17) = std::min(n.sun->darkness, 1.0F);
+            frame.at(at + 18) = 1.0F / static_cast<float>(sun_shadow_size);
+            frame.at(at + 19) = n.sun->bias;
+            frame.at(at + 20) = n.sun->towards_sun.x;
+            frame.at(at + 21) = n.sun->towards_sun.y;
+            frame.at(at + 22) = n.sun->towards_sun.z;
+        }
         SDL_PushGPUFragmentUniformData(commands, 0, frame.data(), sizeof(frame));
+        // Every world draw samples its texture and the sun's map.
+        const auto bind = [&n, pass](const Texture& texture) {
+            std::array<SDL_GPUTextureSamplerBinding, 2> samplers{};
+            samplers[0].texture = texture.native().texture;
+            samplers[0].sampler = n.sampler;
+            samplers[1].texture = n.sun_map;
+            samplers[1].sampler = n.sampler;
+            SDL_BindGPUFragmentSamplers(pass, 0, samplers.data(), 2);
+        };
         std::size_t first = 0;
         while (first < n.textures.size()) {
             std::size_t last = first + 1;
             while (last < n.textures.size() && n.textures[last] == n.textures[first]) {
                 ++last;
             }
-            SDL_GPUTextureSamplerBinding sampler{};
-            sampler.texture = n.textures[first]->native().texture;
-            sampler.sampler = n.sampler;
-            SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
+            bind(*n.textures[first]);
             SDL_DrawGPUPrimitives(pass, static_cast<std::uint32_t>((last - first) * 6), 1,
                                   static_cast<std::uint32_t>(first * 6), 0);
             ++stats_.draw_calls;
@@ -1398,10 +1574,7 @@ bool WorldRenderer::end() {
                        n.translucent[to].texture == n.translucent[from].texture) {
                     ++to;
                 }
-                SDL_GPUTextureSamplerBinding sampler{};
-                sampler.texture = n.translucent[from].texture->native().texture;
-                sampler.sampler = n.sampler;
-                SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
+                bind(*n.translucent[from].texture);
                 SDL_DrawGPUPrimitives(pass, static_cast<std::uint32_t>((to - from) * 6), 1,
                                       shadowed_count + static_cast<std::uint32_t>(from * 6), 0);
                 ++stats_.draw_calls;

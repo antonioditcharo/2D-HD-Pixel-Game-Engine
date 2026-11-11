@@ -194,8 +194,19 @@ the style ([game.md](game.md) §2).
     sun straight overhead shrinks it to nothing; choose Round for a noon sun.
   - **Round**: a soft blob at the feet, whatever the sun.
 
-  Shadows lie on the ground and do not fall on other sprites or up the sides of blocks;
-  where two overlap, they darken twice.
+  Sprites' shadows lie on the ground and do not fall on other sprites or up the sides of
+  blocks; where two overlap, they darken twice.
+- **Blocks' shadows** (`block_shadow`, 0.45 by default; 0 turns them off) come from a
+  real shadow map: the renderer draws every block and tile from the sun first
+  (`diorama_sun_shadow()` fits the sun's orthographic view to the maps, as high as the
+  tallest block, or to 96 tiles around the camera on larger ones), then darkens the
+  sun's part of the light wherever something stands between a surface and the sun. So
+  walls and houses shadow the ground, other blocks and the characters walking past, on
+  the side away from the sun, and the shadows move with it. Sprites receive them but do
+  not cast into the map (seen from the sun they are edge-on cards); they have their own
+  silhouettes above.
+
+  ![The sample village in the Diorama style with a low sun in the north: the north wall's shadow lies along the top of the grass, and the characters' silhouettes fall towards the camera](diorama-shadows.png)
 - **Depth** sorts everything; there is no draw order to manage. **Fog** fades distant
   things into the haze.
 - **Rays** (`diorama_ray()`, `ground_hit()`): the ray from the eye through any point of the
@@ -229,6 +240,7 @@ the others run anywhere:
 | Camera on the map | `map_bounds()` over maps with offsets, larger tiles and empty maps; `clamp_view()` in the middle, at corners, with a view larger than the map, off-centre and infinite edges, and with broken numbers |
 | Round shadows | `ground_top()` on flat ground (with its layer's lift), on a block, nowhere, and on a hidden map; drawn with and without shadows, the only pixels that change are around the sprite's feet, and they only get darker; off the map, none |
 | The sun | `sun_direction()` overhead, east on the horizon, south and west at known angles; the default in the south-west; `shadow_offset()` a tile long at 45 degrees and away from the sun, the right length at 60, capped at 3 for a low sun, nothing for a set sun |
+| Blocks' shadows | `diorama_sun_shadow()`'s view holds the map's corners and the block's top within its depth range; none with block shadows off or the sun set. On the GPU, a block 2 tiles tall with the sun in the east: the ground a tile west of it goes from 221 to 111 (darkness 0.5: half), while the ground east of it, past the shadow's end and beside it stays exactly as it was |
 | Cast shadows (GPU) | A figure 1 × 3 tiles on flat ground, its shadow measured against the feet on the image: with the sun east, it lies left (13.7 pixels on average) and is exactly as dark as asked (0.507 for 0.5) at the feet; west, as far right; north, down the screen towards the camera; a lower sun, longer; noon, nothing; Round, around the feet. Only the ground darkens, never the figure |
 | Lights | `diorama_lights()`: nearest first; disabled, radius 0 and intensity 0 skipped; height clamped to 16; map (x, y) at world (x, z); colour times intensity; at most 16, the nearest |
 | A Light on the ground (GPU) | In the dark, the ground under a lamp 1 tile up with radius 2 is exactly 0.5625 of red; dimmer further off; black beyond the radius; black with the lamp off |
@@ -244,5 +256,5 @@ the others run anywhere:
    between characters, with the physics module.
 3. **Several tile layers** and autotiling rules for painting.
 4. **2D lights** with normal and mask maps (`plan/04` §3, Classic 2D lighting).
-5. **Diorama, further:** shadows from blocks and from point lights, billboard modes other than Upright,
+5. **Diorama, further:** shadows from point lights, billboard modes other than Upright,
    directional sprite sets, and tilt-shift depth of field (`plan/04` §5 to §8).
