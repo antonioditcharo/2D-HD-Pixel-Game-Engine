@@ -8,7 +8,9 @@
 #include <QFileDialog>
 #include <QFileSystemModel>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QKeySequence>
+#include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProcess>
@@ -23,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "editor/core/new_project.h"
 #include "editor/exporter/exporter.h"
 #include "inspector.h"
 #include "logic_panel.h"
@@ -188,6 +191,21 @@ void MainWindow::build_actions() {
     QToolBar* tools = addToolBar(tr("Commands"));
     tools->setObjectName(QStringLiteral("commands"));
 
+    QAction* fresh = file->addAction(tr("&New project…"), this, [this] {
+        bool named = false;
+        const QString name = QInputDialog::getText(this, tr("New project"), tr("The game's name:"),
+                                                   QLineEdit::Normal, tr("My game"), &named);
+        if (!named) {
+            return;
+        }
+        const QString folder =
+            QFileDialog::getExistingDirectory(this, tr("Choose an empty folder for %1").arg(name));
+        if (!folder.isEmpty()) {
+            new_project(path_of(folder), name);
+        }
+    });
+    fresh->setObjectName(QStringLiteral("new_project"));
+    fresh->setShortcut(QKeySequence::New);
     QAction* open = file->addAction(tr("&Open project…"), this, [this] {
         const QString folder = QFileDialog::getExistingDirectory(this, tr("Open a project"));
         if (!folder.isEmpty()) {
@@ -211,6 +229,18 @@ void MainWindow::build_actions() {
     for (QAction* action : {open, save_, undo_, redo_, new_entity_, delete_, play_, export_}) {
         tools->addAction(action);
     }
+}
+
+bool MainWindow::new_project(const fs::path& folder, const QString& name) {
+    std::string error;
+    const QByteArray bytes = name.trimmed().toUtf8();
+    if (!create_project(folder,
+                        std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())),
+                        error)) {
+        report(tr("The project could not be made:\n%1").arg(text_of(error)));
+        return false;
+    }
+    return open_project(folder);
 }
 
 bool MainWindow::open_project(const fs::path& folder) {

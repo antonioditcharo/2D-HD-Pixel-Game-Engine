@@ -5,6 +5,7 @@ add_library(editor_core STATIC
     src/document.cpp
     src/logic_edit.cpp
     src/logic_text.cpp
+    src/new_project.cpp
     src/preview.cpp
 )
 add_library(editor::core ALIAS editor_core)

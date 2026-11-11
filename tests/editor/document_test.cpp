@@ -21,6 +21,7 @@
 
 #include "editor/core/document.h"
 #include "editor/core/logic_text.h"
+#include "editor/core/new_project.h"
 #include "editor/core/preview.h"
 #include "support/gpu.h"
 
@@ -419,6 +420,90 @@ TEST_CASE("Painting rectangles and fills: whole areas, each one step") {
     CHECK(count(1) == paths);
 }
 
+TEST_CASE("A new project is a small game that opens cleanly and can be edited") {
+    const fs::path folder =
+        fs::temp_directory_path() / ("sparxel-new-" + Guid::generate().to_string());
+    std::string error;
+    CHECK_FALSE(editor::create_project(folder, "", error));
+    CHECK(error == "Give the game a name.");
+    CHECK_FALSE(fs::exists(folder)); // nothing made for a refused name
+    REQUIRE(editor::create_project(folder, "My Quest", error));
+    for (const char* file :
+         {"project.sparxel.json", "assets/art/tiles.png", "assets/art/tiles.png.meta",
+          "assets/art/hero.png", "assets/art/hero.png.meta", "assets/maps/start.dscene",
+          "assets/maps/start.dscene.meta"}) {
+        CAPTURE(file);
+        CHECK(fs::is_regular_file(folder / file));
+    }
+    // Never over what is there.
+    CHECK_FALSE(editor::create_project(folder, "Another", error));
+    CHECK(error == "That folder already has something in it: choose an empty or a new one.");
+    {
+        std::vector<serialize::Issue> issues;
+        const auto d = editor::Document::open(folder, issues);
+        for (const serialize::Issue& issue : issues) {
+            CAPTURE(issue.path);
+            CAPTURE(issue.message);
+            CHECK(false);
+        }
+        REQUIRE(d != nullptr);
+        CHECK(d->settings().name == "My Quest");
+        CHECK(d->settings().start_scene == "maps/start.dscene");
+        CHECK(d->entities().size() == 3);
+        const world::Entity hero = d->world().find(guid_of(*d, "hero"));
+        const auto* at = d->world().get<scene2d::Transform2D>(hero);
+        REQUIRE(at != nullptr);
+        CHECK(at->x == 10.0);
+        CHECK(at->y == 6.0);
+        CHECK(d->world().get<game::TopDownMover>(hero) != nullptr);
+        // The ground: 20 by 12 of grass, crossed by a path; the walls: a solid ring of stone.
+        std::string parse_error;
+        const auto* ground =
+            d->world().get<scene2d::Tilemap>(d->world().find(guid_of(*d, "ground")));
+        const auto* walls = d->world().get<scene2d::Tilemap>(d->world().find(guid_of(*d, "walls")));
+        REQUIRE(ground != nullptr);
+        REQUIRE(walls != nullptr);
+        const scene2d::TileGrid* grass = ground->grid(parse_error);
+        REQUIRE(grass != nullptr);
+        CHECK(grass->width == 20);
+        CHECK(grass->height == 12);
+        CHECK(grass->at(3, 2) == 0);
+        CHECK(grass->at(3, 6) == 1);
+        const scene2d::TileGrid* ring = walls->grid(parse_error);
+        REQUIRE(ring != nullptr);
+        CHECK(walls->solid);
+        CHECK(ring->at(0, 5) == 2);
+        CHECK(ring->at(19, 11) == 2);
+        CHECK(ring->at(5, 5) == -1);
+        // Both pictures are found by the GUIDs the scene holds.
+        const Guid tileset = Guid::parse(ground->tileset).value_or(Guid{});
+        REQUIRE(tileset.is_valid());
+        const engine::assets::AssetRecord* record = d->assets().find(tileset);
+        REQUIRE(record != nullptr);
+        CHECK(record->path == "art/tiles.png");
+        const std::vector<std::uint8_t> bytes =
+            d->assets().read(tileset).value_or(std::vector<std::uint8_t>{});
+        const engine::assets::Image picture =
+            engine::assets::decode_png(bytes, parse_error).value_or(engine::assets::Image{});
+        CHECK(picture.width == 48);
+        CHECK(picture.height == 16);
+        // It edits and saves like any project.
+        REQUIRE(d->paint_tile(guid_of(*d, "ground"), 4.5, 4.5, 1));
+        REQUIRE(d->save(error));
+    }
+    std::vector<serialize::Issue> issues;
+    const auto again = editor::Document::open(folder, issues);
+    REQUIRE(again != nullptr);
+    CHECK(issues.empty());
+    std::string parse_error;
+    CHECK(again->world()
+              .get<scene2d::Tilemap>(again->world().find(guid_of(*again, "ground")))
+              ->grid(parse_error)
+              ->at(4, 4) == 1);
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
+}
+
 TEST_CASE("Saving writes the scene; reopening finds the edits") {
     const Sample sample;
     const Guid lamp_guid = [&] {
@@ -505,6 +590,42 @@ TEST_CASE("The preview draws the scene as the game would") {
     const std::size_t i = (std::size_t{131} * 320 + 158 + 32) * 4;
     CHECK(std::array<int, 3>{after.rgba.at(i), after.rgba.at(i + 1), after.rgba.at(i + 2)} ==
           std::array<int, 3>{60, 96, 200});
+}
+
+TEST_CASE("A new project draws: grass, a path, stone walls and the hero") {
+    if (test_support::gpu() == nullptr) {
+        return;
+    }
+    const fs::path folder =
+        fs::temp_directory_path() / ("sparxel-new-" + Guid::generate().to_string());
+    std::string error;
+    REQUIRE(editor::create_project(folder, "My Quest", error));
+    {
+        std::vector<serialize::Issue> issues;
+        const auto d = editor::Document::open(folder, issues);
+        REQUIRE(d != nullptr);
+        const auto preview = editor::Preview::create(error);
+        INFO(error);
+        REQUIRE(preview != nullptr);
+        // Looking at the hero's feet (10, 6), the middle of the 320 by 180 picture: the map's
+        // corner is at pixel (0, -6).
+        const std::optional<engine::assets::Image> image = preview->render(*d, 10.0, 6.0, error);
+        REQUIRE(image.has_value());
+        const engine::assets::Image& frame = image.value_or(engine::assets::Image{});
+        REQUIRE(frame.width == 320);
+        REQUIRE(frame.height == 180);
+        const auto at = [&frame](std::uint32_t x, std::uint32_t y) {
+            const std::size_t i = (std::size_t{y} * frame.width + x) * 4;
+            return std::array<int, 3>{frame.rgba.at(i), frame.rgba.at(i + 1), frame.rgba.at(i + 2)};
+        };
+        CHECK(at(2, 2) == std::array<int, 3>{120, 122, 132});    // the wall's stone
+        CHECK(at(40, 30) == std::array<int, 3>{72, 148, 76});    // grass
+        CHECK(at(40, 95) == std::array<int, 3>{196, 168, 112});  // the path, along row 6
+        CHECK(at(160, 84) == std::array<int, 3>{52, 96, 180});   // the hero's tunic
+        CHECK(at(160, 79) == std::array<int, 3>{238, 196, 160}); // and face
+    }
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
 }
 
 TEST_CASE("Logic reads as plain language") {

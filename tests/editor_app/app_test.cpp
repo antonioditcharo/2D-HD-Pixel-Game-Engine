@@ -119,6 +119,33 @@ TEST_CASE("The editor opens the sample: its entities, its scene, its name") {
     CHECK(e.window.document() != nullptr); // the open project stays open
 }
 
+TEST_CASE("File > New project makes a starter game and opens it") {
+    Editor e;
+    const fs::path folder =
+        fs::temp_directory_path() / ("sparxel-new-app-" + Guid::generate().to_string());
+    REQUIRE(e.window.findChild<QAction*>(QStringLiteral("new_project")) != nullptr);
+    // Over a project: refused, and the open project stays open.
+    CHECK_FALSE(e.window.new_project(e.sample.path, QStringLiteral("Over it")));
+    CHECK(e.window.statusBar()->currentMessage() ==
+          QStringLiteral("The project could not be made:"));
+    CHECK(e.window.document()->settings().name == "Hello Sparxel");
+    // In a new folder: made, opened, listed and drawn.
+    REQUIRE(e.window.new_project(folder, QStringLiteral("  My Quest ")));
+    QApplication::processEvents();
+    REQUIRE(e.window.document() != nullptr);
+    CHECK(e.window.document()->settings().name == "My Quest");
+    CHECK(e.window.windowTitle().contains(QStringLiteral("My Quest")));
+    CHECK(e.window.document()->entities().size() == 3);
+    CHECK(e.window.logic_view()->topLevelItemCount() == 0); // no logic yet
+    CHECK_FALSE(e.window.scene_view()->image().isNull());
+    CHECK(e.window.scene_view()->image().size() == QSize(320, 180));
+    // It is a project like any other: the hero is there to select.
+    e.window.select(e.guid("hero"));
+    CHECK(e.window.selection() == e.guid("hero"));
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
+}
+
 TEST_CASE("Selecting in the list fills the inspector, whose fields edit the scene") {
     Editor e;
     QTreeWidget* list = e.window.outliner();
