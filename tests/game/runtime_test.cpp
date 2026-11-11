@@ -946,6 +946,7 @@ TEST_CASE("The sample village in the Diorama style: no tile bleeds into its neig
         game::read_project(folder.path, issues).value_or(game::ProjectSettings{});
     REQUIRE(issues.empty());
     settings.style = game::RenderStyle::Diorama;
+    settings.look = render::Look{}; // exact colours: no tilt-shift, grading or vignette
     write_json(folder.path / game::project_file, game::project_to_json(settings));
     game::RuntimeOptions options;
     options.headless = true;
@@ -1394,4 +1395,94 @@ TEST_CASE("Lighting starts from the project and logic changes it") {
     REQUIRE(older->load(saved, load_issues));
     CHECK(older->lighting().ambient == 0.4);
     CHECK(load_issues.empty());
+}
+
+TEST_CASE("The project's look: read and written, checked, and applied under the message box") {
+    const Project project;
+    std::vector<serialize::Issue> issues;
+    game::ProjectSettings settings =
+        game::read_project(project.folder.path, issues).value_or(game::ProjectSettings{});
+    REQUIRE(issues.empty());
+    CHECK(settings.look.neutral());
+    settings.look.tilt_shift = true;
+    settings.look.blur = 2.5F;
+    settings.look.bloom = 0.25F;
+    settings.look.exposure = 2.0F;
+    settings.look.vignette = 0.5F;
+    write_json(project.folder.path / game::project_file, game::project_to_json(settings));
+    const std::optional<game::ProjectSettings> again =
+        game::read_project(project.folder.path, issues);
+    REQUIRE(again.has_value());
+    CHECK(issues.empty());
+    CHECK(again.value_or(game::ProjectSettings{}).look == settings.look);
+
+    // Out of range and of the wrong kind refuse the project; an unknown name does not.
+    serialize::Json json = game::project_to_json(settings);
+    json["look"]["blur"] = 13;
+    json["look"]["tilt_shift"] = "on";
+    json["look"]["sparkle"] = 1;
+    write_json(project.folder.path / game::project_file, json);
+    issues.clear();
+    CHECK_FALSE(game::read_project(project.folder.path, issues).has_value());
+    std::vector<std::string> paths;
+    paths.reserve(issues.size());
+    for (const serialize::Issue& issue : issues) {
+        paths.push_back(issue.path);
+    }
+    std::sort(paths.begin(), paths.end());
+    CHECK(paths == std::vector<std::string>{"project.sparxel.json/look/blur",
+                                            "project.sparxel.json/look/sparkle",
+                                            "project.sparxel.json/look/tilt_shift"});
+    json = game::project_to_json(settings);
+    json["look"] = 3;
+    write_json(project.folder.path / game::project_file, json);
+    issues.clear();
+    CHECK_FALSE(game::read_project(project.folder.path, issues).has_value());
+
+    if (test_support::gpu() == nullptr) {
+        return;
+    }
+    // Exposure 2 alone doubles the world's colours; the message box, drawn after the look,
+    // keeps its exact border.
+    game::ProjectSettings bright = settings;
+    bright.look = render::Look{};
+    bright.look.exposure = 2.0F;
+    write_json(project.folder.path / game::project_file, game::project_to_json(bright));
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->draw());
+    std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    // The hero's 2 x 2 image covers pixels 15 and 16 of rows 14 and 15 (or the rock does).
+    const render::Color hero = pixel(pixels, 32, 15, 14);
+    const auto doubled = [](render::Color c) {
+        return render::Color{static_cast<std::uint8_t>(std::min(255, c.r * 2)),
+                             static_cast<std::uint8_t>(std::min(255, c.g * 2)),
+                             static_cast<std::uint8_t>(std::min(255, c.b * 2)), 255};
+    };
+    const auto near = [](render::Color a, render::Color b) {
+        return std::abs(a.r - b.r) <= 1 && std::abs(a.g - b.g) <= 1 && std::abs(a.b - b.b) <= 1;
+    };
+    CHECK((near(hero, doubled(hero_colour)) || near(hero, doubled(rock_colour))));
+    CHECK(near(pixel(pixels, 32, 0, 0), doubled(background)));
+    runtime->dialogue().say("Hi");
+    REQUIRE(runtime->draw());
+    pixels = runtime->target()->read_pixels();
+    CHECK(pixel(pixels, 32, 4, 10) == render::Color{230, 232, 240, 255}); // the box's border
+    CHECK(near(pixel(pixels, 32, 0, 0), doubled(background)));            // around it
+
+    // Tilt-shift belongs to the Diorama style: in Classic 2D, even the strongest blur
+    // leaves every pixel as it was.
+    game::ProjectSettings tilted = settings;
+    tilted.look = render::Look{};
+    tilted.look.tilt_shift = true;
+    tilted.look.blur = 12.0F;
+    tilted.look.focus_height = 0.0F;
+    write_json(project.folder.path / game::project_file, game::project_to_json(tilted));
+    const auto flat = project.open(options);
+    REQUIRE(flat->draw());
+    pixels = flat->target()->read_pixels();
+    CHECK(pixel(pixels, 32, 14, 14) == background); // beside the hero: no blur bleeds in
+    const render::Color sharp = pixel(pixels, 32, 15, 14);
+    CHECK((sharp == hero_colour || sharp == rock_colour));
 }

@@ -187,6 +187,7 @@ private:
     friend class RenderTarget;
     friend class SpriteRenderer;
     friend class WorldRenderer;
+    friend class PostProcessor;
     friend class Window;
 };
 
@@ -346,6 +347,58 @@ private:
     Device& device_;
     std::unique_ptr<Native> native_;
     Stats stats_;
+};
+
+// ---------------------------------------------------------------------------------------
+// Post-processing: the Look (plan/04 §8)
+// ---------------------------------------------------------------------------------------
+
+/// How a finished frame is processed: tilt-shift depth of field (the "miniature diorama"
+/// look), bloom, colour grading and a vignette. The defaults change nothing.
+struct Look {
+    /// Blur above and below a sharp band across the screen, as a tilt-shift lens does.
+    bool tilt_shift = false;
+    float focus_center = 0.55F;    ///< Where the sharp band is: 0 is the top, 1 the bottom.
+    float focus_height = 0.35F;    ///< How much of the screen's height is sharp, 0 to 1.
+    float blur = 3.0F;             ///< The strongest blur, in pixels, 0 to 12.
+    float blur_ramp = 0.25F;       ///< Over how much of the height the blur grows, 0 to 1.
+    float bloom = 0.0F;            ///< How much bright parts glow, 0 (none) to 2.
+    float bloom_threshold = 0.75F; ///< From how bright (0 to 1) a pixel glows.
+    float bloom_radius = 6.0F;     ///< How far the glow spreads, in pixels, 0 to 16.
+    float exposure = 1.0F;         ///< Brightness, 0 to 4.
+    float contrast = 1.0F;         ///< 0 to 2.
+    float saturation = 1.0F;       ///< 0 (grey) to 2.
+    float vignette = 0.0F;         ///< How much the corners darken, 0 to 1.
+
+    /// True if processing would change nothing, so it can be skipped.
+    [[nodiscard]] bool neutral() const noexcept;
+    friend bool operator==(const Look&, const Look&) = default;
+};
+
+/// Applies a Look to a finished frame, in two full-screen passes on the GPU.
+class PostProcessor {
+public:
+    /// Returns null and sets the device's last_error() if the pipelines cannot be created.
+    [[nodiscard]] static std::unique_ptr<PostProcessor> create(Device& device);
+
+    PostProcessor(const PostProcessor&) = delete;
+    PostProcessor& operator=(const PostProcessor&) = delete;
+    PostProcessor(PostProcessor&&) = delete;
+    PostProcessor& operator=(PostProcessor&&) = delete;
+    ~PostProcessor();
+
+    /// Writes `source` processed by `look` into `destination`, which must be another
+    /// target of the same size. Values out of range are clamped. Returns false, with the
+    /// device's last_error() set, if it could not.
+    bool apply(const RenderTarget& source, RenderTarget& destination, const Look& look);
+
+    struct Native;
+
+private:
+    PostProcessor(Device& device, std::unique_ptr<Native> native);
+
+    Device& device_;
+    std::unique_ptr<Native> native_;
 };
 
 } // namespace engine::render

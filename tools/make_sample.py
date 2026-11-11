@@ -281,6 +281,11 @@ def main():
         "camera_pitch": 35,
         "camera_distance": 12,
         "camera_fov": 30,
+        # The HD-2D look: in the Diorama style, a tilt-shift band keeps the middle of the
+        # screen sharp; everywhere, a little bloom, warmth and a soft vignette.
+        "look": {"tilt_shift": True, "focus_center": 0.55, "focus_height": 0.4, "blur": 2.5,
+                 "blur_ramp": 0.3, "bloom": 0.35, "bloom_threshold": 0.7, "bloom_radius": 5,
+                 "contrast": 1.05, "saturation": 1.1, "vignette": 0.3},
     })
 
 

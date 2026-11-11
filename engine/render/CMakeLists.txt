@@ -16,6 +16,9 @@ engine_add_shaders(engine_render
     shaders/sprite.frag.hlsl
     shaders/world.vert.hlsl
     shaders/world.frag.hlsl
+    shaders/post.vert.hlsl
+    shaders/post_blur.frag.hlsl
+    shaders/post_final.frag.hlsl
 )
 
 engine_configure_runtime_target(engine_render)

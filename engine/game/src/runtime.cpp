@@ -39,10 +39,41 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 16> known_project_keys{
+constexpr std::array<std::string_view, 17> known_project_keys{
     "format",     "version",      "name",          "start_scene", "ppu",          "width",
     "height",     "background",   "render_style",  "gravity",     "camera_pitch", "camera_distance",
-    "camera_fov", "camera_clamp", "ambient_light", "sun_light"};
+    "camera_fov", "camera_clamp", "ambient_light", "sun_light",   "look"};
+
+/// The look a project's frames get: tilt-shift imitates a lens photographing a miniature,
+/// so it belongs to the Diorama style; flat Classic 2D keeps the rest of the look.
+render::Look effective_look(const ProjectSettings& settings) {
+    render::Look look = settings.look;
+    if (settings.style != RenderStyle::Diorama) {
+        look.tilt_shift = false;
+    }
+    return look;
+}
+
+/// The look's numbers in the project file: name, member, range.
+struct LookNumber {
+    std::string_view name;
+    float render::Look::*member;
+    float min;
+    float max;
+};
+constexpr std::array<LookNumber, 11> look_numbers{{
+    {"focus_center", &render::Look::focus_center, 0.0F, 1.0F},
+    {"focus_height", &render::Look::focus_height, 0.0F, 1.0F},
+    {"blur", &render::Look::blur, 0.0F, 12.0F},
+    {"blur_ramp", &render::Look::blur_ramp, 0.0F, 1.0F},
+    {"bloom", &render::Look::bloom, 0.0F, 2.0F},
+    {"bloom_threshold", &render::Look::bloom_threshold, 0.0F, 1.0F},
+    {"bloom_radius", &render::Look::bloom_radius, 0.0F, 16.0F},
+    {"exposure", &render::Look::exposure, 0.0F, 4.0F},
+    {"contrast", &render::Look::contrast, 0.0F, 2.0F},
+    {"saturation", &render::Look::saturation, 0.0F, 2.0F},
+    {"vignette", &render::Look::vignette, 0.0F, 1.0F},
+}};
 
 [[nodiscard]] std::string entry_path(const std::string& file, const std::string& key) {
     std::string path = file;
@@ -242,6 +273,45 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
     number("camera_fov", settings.camera_fov, 5.0, 90.0);
     number("ambient_light", settings.ambient_light, 0.0, 2.0);
     number("sun_light", settings.sun_light, 0.0, 2.0);
+    if (const auto look = doc.find("look"); look != doc.end()) {
+        if (!look->is_object()) {
+            issues.push_back(
+                serialize::Issue{file + "/look", "The look must be a group of named settings."});
+            ok = false;
+        } else {
+            for (const auto& [key, value] : look->items()) {
+                std::string where = file;
+                where += "/look/";
+                where += key;
+                if (key == "tilt_shift") {
+                    if (value.is_boolean()) {
+                        settings.look.tilt_shift = value.get<bool>();
+                    } else {
+                        issues.push_back(serialize::Issue{where, "This must be true or false."});
+                        ok = false;
+                    }
+                    continue;
+                }
+                const auto* setting =
+                    std::find_if(look_numbers.begin(), look_numbers.end(),
+                                 [&key](const LookNumber& n) { return n.name == key; });
+                if (setting == look_numbers.end()) {
+                    issues.push_back(serialize::Issue{where, unknown_entry(key)});
+                    continue;
+                }
+                if (!value.is_number() || value.get<double>() < setting->min ||
+                    value.get<double>() > setting->max) {
+                    issues.push_back(serialize::Issue{
+                        where, "This must be a number from " +
+                                   engine::text::format_number(setting->min) + " to " +
+                                   engine::text::format_number(setting->max) + "."});
+                    ok = false;
+                    continue;
+                }
+                settings.look.*(setting->member) = static_cast<float>(value.get<double>());
+            }
+        }
+    }
     if (const auto clamp = doc.find("camera_clamp"); clamp != doc.end()) {
         if (clamp->is_boolean()) {
             settings.camera_clamp = clamp->get<bool>();
@@ -296,6 +366,12 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["camera_clamp"] = settings.camera_clamp;
     json["ambient_light"] = settings.ambient_light;
     json["sun_light"] = settings.sun_light;
+    serialize::Json look = serialize::Json::object();
+    look["tilt_shift"] = settings.look.tilt_shift;
+    for (const LookNumber& number : look_numbers) {
+        look[std::string(number.name)] = static_cast<double>(settings.look.*(number.member));
+    }
+    json["look"] = std::move(look);
     json["gravity"] = serialize::Json::array({settings.gravity_x, settings.gravity_y});
     json["ppu"] = settings.ppu;
     json["width"] = settings.width;
@@ -359,6 +435,10 @@ struct Runtime::Impl {
     std::unique_ptr<render::RenderTarget> target;
     std::unique_ptr<render::SpriteRenderer> sprites;
     std::unique_ptr<render::WorldRenderer> world_renderer; ///< For the Diorama style.
+    /// With a look that changes something: the world is drawn into `scene`, and the
+    /// post-processor writes it into `target`.
+    std::unique_ptr<render::RenderTarget> scene;
+    std::unique_ptr<render::PostProcessor> post;
     std::unique_ptr<scene2d::TextureCache> textures;
     std::unique_ptr<render::Texture> font;  ///< The built-in font's atlas.
     std::unique_ptr<render::Texture> white; ///< One white pixel, for boxes.
@@ -525,8 +605,14 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         if (r.settings.style == RenderStyle::Diorama) {
             r.world_renderer = render::WorldRenderer::create(*r.device);
         }
+        const bool post = !effective_look(r.settings).neutral();
+        if (post) {
+            r.scene = r.device->create_render_target(r.settings.width, r.settings.height);
+            r.post = render::PostProcessor::create(*r.device);
+        }
         if (r.target == nullptr || r.sprites == nullptr ||
             (r.settings.style == RenderStyle::Diorama && r.world_renderer == nullptr) ||
+            (post && (r.scene == nullptr || r.post == nullptr)) ||
             (!options.headless && r.window == nullptr)) {
             issues.push_back(serialize::Issue{"", r.device->last_error()});
             return nullptr;
@@ -732,6 +818,7 @@ bool Runtime::draw() {
             camera.y = at[1];
         }
     }
+    render::RenderTarget& world_target = r.post != nullptr ? *r.scene : *r.target;
     if (r.settings.style == RenderStyle::Diorama) {
         orbit.x = camera.x;
         orbit.y = camera.y;
@@ -740,11 +827,15 @@ bool Runtime::draw() {
             std::clamp(std::isfinite(r.lighting.ambient) ? r.lighting.ambient : 0.55, 0.0, 2.0));
         light.diffuse = static_cast<float>(
             std::clamp(std::isfinite(r.lighting.sun) ? r.lighting.sun : 0.45, 0.0, 2.0));
-        scene2d::draw_diorama(*r.world, *r.textures, *r.world_renderer, *r.target, orbit,
+        scene2d::draw_diorama(*r.world, *r.textures, *r.world_renderer, world_target, orbit,
                               r.settings.background, light);
     } else {
-        scene2d::draw_world(*r.world, *r.textures, *r.sprites, *r.target, camera,
+        scene2d::draw_world(*r.world, *r.textures, *r.sprites, world_target, camera,
                             r.settings.background);
+    }
+    // The look, applied to the world only: the message box is drawn after, crisp.
+    if (r.post != nullptr && !r.post->apply(*r.scene, *r.target, effective_look(r.settings))) {
+        return false;
     }
 
     // The message box, over everything.

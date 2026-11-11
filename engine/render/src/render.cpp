@@ -8,6 +8,12 @@
 #include <deque>
 #include <limits>
 
+#include "post_blur_frag_dxil.h"
+#include "post_blur_frag_spirv.h"
+#include "post_final_frag_dxil.h"
+#include "post_final_frag_spirv.h"
+#include "post_vert_dxil.h"
+#include "post_vert_spirv.h"
 #include "sprite_frag_dxil.h"
 #include "sprite_frag_spirv.h"
 #include "sprite_vert_dxil.h"
@@ -1189,6 +1195,229 @@ bool WorldRenderer::end() {
         return false;
     }
     stats_.quads = n.textures.size();
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------
+// Post-processing
+// ---------------------------------------------------------------------------------------
+
+bool Look::neutral() const noexcept {
+    const bool no_tilt = !tilt_shift || !(blur >= 0.5F);
+    return no_tilt && !(bloom > 0.0F) && exposure == 1.0F && contrast == 1.0F &&
+           saturation == 1.0F && !(vignette > 0.0F);
+}
+
+struct PostProcessor::Native {
+    SDL_GPUDevice* device{nullptr};
+    SDL_GPUGraphicsPipeline* blur{nullptr};  ///< The first pass, into two targets.
+    SDL_GPUGraphicsPipeline* final{nullptr}; ///< The second pass.
+    SDL_GPUSampler* sampler{nullptr};
+    // The first pass's outputs, the size of the frame.
+    SDL_GPUTexture* blurred{nullptr};
+    SDL_GPUTexture* bright{nullptr};
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+};
+
+PostProcessor::PostProcessor(Device& device, std::unique_ptr<Native> native)
+    : device_(device), native_(std::move(native)) {}
+
+PostProcessor::~PostProcessor() {
+    const Native& n = *native_;
+    for (SDL_GPUTexture* texture : {n.blurred, n.bright}) {
+        if (texture != nullptr) {
+            SDL_ReleaseGPUTexture(n.device, texture);
+        }
+    }
+    SDL_ReleaseGPUSampler(n.device, n.sampler);
+    SDL_ReleaseGPUGraphicsPipeline(n.device, n.blur);
+    SDL_ReleaseGPUGraphicsPipeline(n.device, n.final);
+}
+
+std::unique_ptr<PostProcessor> PostProcessor::create(Device& device) {
+    SDL_GPUDevice* gpu = device.native().device;
+    const SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(gpu);
+    const bool spirv = (formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0;
+    if (!spirv && (formats & SDL_GPU_SHADERFORMAT_DXIL) == 0) {
+        device.last_error_ = "The GPU accepts neither SPIR-V nor DXIL shaders.";
+        return nullptr;
+    }
+    const SDL_GPUShaderFormat format =
+        spirv ? SDL_GPU_SHADERFORMAT_SPIRV : SDL_GPU_SHADERFORMAT_DXIL;
+    const auto shader = [&](const auto& spirv_code, const auto& dxil_code, SDL_GPUShaderStage stage,
+                            std::uint32_t samplers, std::uint32_t uniforms) {
+        SDL_GPUShaderCreateInfo info{};
+        info.code = spirv ? spirv_code.data() : dxil_code.data();
+        info.code_size = spirv ? spirv_code.size() : dxil_code.size();
+        info.entrypoint = "main";
+        info.format = format;
+        info.stage = stage;
+        info.num_samplers = samplers;
+        info.num_uniform_buffers = uniforms;
+        return SDL_CreateGPUShader(gpu, &info);
+    };
+    SDL_GPUShader* vertex =
+        shader(post_vert_spirv, post_vert_dxil, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
+    SDL_GPUShader* blur_pixels =
+        shader(post_blur_frag_spirv, post_blur_frag_dxil, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+    SDL_GPUShader* final_pixels =
+        shader(post_final_frag_spirv, post_final_frag_dxil, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
+
+    auto native = std::make_unique<Native>();
+    native->device = gpu;
+    if (vertex == nullptr || blur_pixels == nullptr || final_pixels == nullptr) {
+        device.last_error_ = sdl_error("Creating the post-processing shaders failed");
+    } else {
+        const auto pipeline = [&](SDL_GPUShader* pixels, std::uint32_t targets) {
+            std::array<SDL_GPUColorTargetDescription, 2> colors{};
+            for (SDL_GPUColorTargetDescription& color : colors) {
+                color.format = pixel_format;
+            }
+            SDL_GPUGraphicsPipelineCreateInfo info{};
+            info.vertex_shader = vertex;
+            info.fragment_shader = pixels;
+            info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+            info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+            info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+            info.target_info.color_target_descriptions = colors.data();
+            info.target_info.num_color_targets = targets;
+            return SDL_CreateGPUGraphicsPipeline(gpu, &info);
+        };
+        native->blur = pipeline(blur_pixels, 2);
+        native->final = pipeline(final_pixels, 1);
+        if (native->blur == nullptr || native->final == nullptr) {
+            device.last_error_ = sdl_error("Creating the post-processing pipelines failed");
+        }
+    }
+    release(gpu, vertex);
+    release(gpu, blur_pixels);
+    release(gpu, final_pixels);
+    SDL_GPUSamplerCreateInfo sampler_info{};
+    sampler_info.min_filter = SDL_GPU_FILTER_NEAREST;
+    sampler_info.mag_filter = SDL_GPU_FILTER_NEAREST;
+    sampler_info.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+    sampler_info.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    sampler_info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    sampler_info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    native->sampler = SDL_CreateGPUSampler(gpu, &sampler_info);
+    if (native->blur == nullptr || native->final == nullptr || native->sampler == nullptr) {
+        if (native->sampler == nullptr && native->blur != nullptr && native->final != nullptr) {
+            device.last_error_ = sdl_error("Creating the post-processing sampler failed");
+        }
+        if (native->sampler != nullptr) {
+            SDL_ReleaseGPUSampler(gpu, native->sampler);
+        }
+        if (native->blur != nullptr) {
+            SDL_ReleaseGPUGraphicsPipeline(gpu, native->blur);
+        }
+        if (native->final != nullptr) {
+            SDL_ReleaseGPUGraphicsPipeline(gpu, native->final);
+        }
+        return nullptr;
+    }
+    return std::unique_ptr<PostProcessor>(new PostProcessor(device, std::move(native)));
+}
+
+bool PostProcessor::apply(const RenderTarget& source, RenderTarget& destination, const Look& look) {
+    Native& n = *native_;
+    if (&source == &destination || source.width() != destination.width() ||
+        source.height() != destination.height()) {
+        device_.last_error_ = "Post-processing needs another target of the same size.";
+        return false;
+    }
+    // The intermediate targets follow the frame's size.
+    if (n.blurred == nullptr || n.width != source.width() || n.height != source.height()) {
+        for (SDL_GPUTexture** texture : {&n.blurred, &n.bright}) {
+            if (*texture != nullptr) {
+                SDL_ReleaseGPUTexture(n.device, *texture);
+            }
+            SDL_GPUTextureCreateInfo info{};
+            info.type = SDL_GPU_TEXTURETYPE_2D;
+            info.format = pixel_format;
+            info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            info.width = source.width();
+            info.height = source.height();
+            info.layer_count_or_depth = 1;
+            info.num_levels = 1;
+            *texture = SDL_CreateGPUTexture(n.device, &info);
+        }
+        n.width = source.width();
+        n.height = source.height();
+        if (n.blurred == nullptr || n.bright == nullptr) {
+            n.width = 0;
+            device_.last_error_ = sdl_error("Creating the post-processing targets failed");
+            return false;
+        }
+    }
+
+    // The uniforms both passes read (see post_blur.frag.hlsl), with every value clamped.
+    const auto clamped = [](float value, float low, float high, float fallback) {
+        return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
+    };
+    const float half_band = clamped(look.focus_height, 0.0F, 1.0F, 0.35F) / 2.0F;
+    const std::array<float, 16> uniforms{static_cast<float>(source.width()),
+                                         static_cast<float>(source.height()),
+                                         0.0F,
+                                         0.0F,
+                                         clamped(look.focus_center, 0.0F, 1.0F, 0.55F),
+                                         half_band,
+                                         look.tilt_shift ? clamped(look.blur, 0.0F, 12.0F, 0.0F)
+                                                         : 0.0F,
+                                         clamped(look.blur_ramp, 0.0F, 1.0F, 0.25F),
+                                         clamped(look.bloom_threshold, 0.0F, 1.0F, 0.75F),
+                                         clamped(look.bloom, 0.0F, 2.0F, 0.0F),
+                                         clamped(look.bloom_radius, 0.0F, 16.0F, 6.0F),
+                                         0.0F,
+                                         clamped(look.exposure, 0.0F, 4.0F, 1.0F),
+                                         clamped(look.contrast, 0.0F, 2.0F, 1.0F),
+                                         clamped(look.saturation, 0.0F, 2.0F, 1.0F),
+                                         clamped(look.vignette, 0.0F, 1.0F, 0.0F)};
+
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(n.device);
+    if (commands == nullptr) {
+        device_.last_error_ = sdl_error("Acquiring a command buffer failed");
+        return false;
+    }
+    SDL_PushGPUFragmentUniformData(commands, 0, uniforms.data(), sizeof(uniforms));
+
+    // Pass 1: the scene, blurred along rows, into the two intermediate targets.
+    std::array<SDL_GPUColorTargetInfo, 2> outputs{};
+    outputs[0].texture = n.blurred;
+    outputs[1].texture = n.bright;
+    for (SDL_GPUColorTargetInfo& output : outputs) {
+        output.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        output.store_op = SDL_GPU_STOREOP_STORE;
+    }
+    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, outputs.data(), 2, nullptr);
+    SDL_BindGPUGraphicsPipeline(pass, n.blur);
+    SDL_GPUTextureSamplerBinding scene{};
+    scene.texture = source.native().texture;
+    scene.sampler = n.sampler;
+    SDL_BindGPUFragmentSamplers(pass, 0, &scene, 1);
+    SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    SDL_EndGPURenderPass(pass);
+
+    // Pass 2: down the columns, then bloom, grading and the vignette, into the destination.
+    SDL_GPUColorTargetInfo output{};
+    output.texture = destination.native().texture;
+    output.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    output.store_op = SDL_GPU_STOREOP_STORE;
+    pass = SDL_BeginGPURenderPass(commands, &output, 1, nullptr);
+    SDL_BindGPUGraphicsPipeline(pass, n.final);
+    std::array<SDL_GPUTextureSamplerBinding, 2> inputs{};
+    inputs[0].texture = n.blurred;
+    inputs[0].sampler = n.sampler;
+    inputs[1].texture = n.bright;
+    inputs[1].sampler = n.sampler;
+    SDL_BindGPUFragmentSamplers(pass, 0, inputs.data(), 2);
+    SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    SDL_EndGPURenderPass(pass);
+
+    if (!submit_paced(device_.native(), commands)) {
+        device_.last_error_ = sdl_error("Submitting the post-processing failed");
+        return false;
+    }
     return true;
 }
 

@@ -64,6 +64,7 @@ MyGame/
 | `gravity` | For Physics Bodies, `[across, down]` in tiles per second squared ([physics.md](physics.md)) | `[0, 0]`, each -1000 to 1000 |
 | `camera_pitch`, `camera_distance`, `camera_fov` | The Diorama camera, which follows the hero: degrees looking down, tiles away, and vertical field of view | 35 (5 to 85), 12 (1 to 200), 30 (5 to 90) |
 | `camera_clamp` | The camera stops at the map's edges (§3, Drawing) | `true` |
+| `look` | The frame's post-processing: tilt-shift (Diorama style only: it imitates a lens photographing a miniature, so flat Classic 2D ignores it), bloom, grading and vignette ([rendering.md](rendering.md) §8). A group of named settings; unknown ones are reported, values out of range refuse the project | Changes nothing |
 | `ambient_light`, `sun_light` | The Diorama style's light at the start: from everywhere, and from the sun ([scene2d.md](scene2d.md) §7). Logic changes them with the `lighting` object | 0.55, 0.45; each 0 to 2 |
 
 - Problems are reported in plain language with where they are, for example
@@ -141,7 +142,8 @@ which reads as distance, show the background. The
 **Lighting** object (`lighting`) gives logic *"Set the lighting's ambient light / sunlight
 to [n]"*, so a Brain can make dusk and night, or a Rule darken a cave; Lights then stand
 out ([scene2d.md](scene2d.md) §7). It starts from the project's `ambient_light` and
-`sun_light`, and is saved with the game (§8). An open message box is drawn over the world ([ui.md](ui.md) §3). The window shows the image
+`sun_light`, and is saved with the game (§8). With a `look`, the world is drawn into a second target and post-processed into the frame;
+the message box is drawn after, so text stays crisp. An open message box is drawn over the world ([ui.md](ui.md) §3). The window shows the image
 pixel-perfect with black bars around it ([rendering.md](rendering.md) §4).
 
 ## 4. Behaviours
@@ -314,6 +316,7 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 | Facing and walking | Every facing rule; exact frames of the cycle, back and forth and starting over, at 6 frames per second; the standing frame; clamped settings; the runtime turning the hero left and animating it |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
+| Look | Read and written exactly; a value out of range, one of the wrong kind and a look that is not a group refuse the project, an unknown name is reported; on the GPU, exposure 2 doubles the world's colours while the message box keeps its exact border; in Classic 2D, even the strongest tilt-shift leaves every pixel as it was |
 | Lighting | The project's `ambient_light` and `sun_light` round-trip and out-of-range values are refused; the `lighting` object starts from them, and a Rule sets both |
 | Camera on the map (GPU) | The hero in a map's corner drawn off-centre where the clamped camera puts it, and centred with `camera_clamp` off; the sample village in the Diorama style with no background on any edge of the screen (this fails without the clamp) |
 | Diorama (GPU) | The same project in the Diorama style: the hero drawn as a billboard above the centre, lit as `brightness()` says; the settings round-trip; an unknown style and an out-of-range camera refused |

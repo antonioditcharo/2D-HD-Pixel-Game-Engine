@@ -51,7 +51,8 @@ the engine does today:
 | `maps/village.dscene` | The village, with two warm Lights for the Diorama style (a lantern by the gate, a lamp by the elder) that glow when the rain dims the day |
 
 Switch `"render_style"` in `project.sparxel.json` to `"diorama"` to see the same village
-in 3D.
+in 3D. Its `look` adds a little bloom, warmth and a vignette, and in the Diorama style a
+tilt-shift band that keeps the middle of the screen sharp.
 
 - **All of it is made by `tools/make_sample.py`:** the pixel art and the chime are drawn
   and synthesised in code, so the sample has no third-party assets and regenerates

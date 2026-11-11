@@ -158,7 +158,37 @@ world->end();
 - Translucent quads (blended, sorted back to front) are not supported yet: every texel is
   either fully drawn or cut out.
 
-## 8. Next increments
+## 8. Post-processing: the Look
+
+`PostProcessor` applies a `Look` to a finished frame (`plan/04` §8): the world is drawn into
+one target, and `apply(source, destination, look)` writes it, processed, into another of
+the same size.
+
+| Setting | Does | Range (default) |
+|---|---|---|
+| `tilt_shift`, `focus_center`, `focus_height`, `blur`, `blur_ramp` | Tilt-shift depth of field, the "miniature diorama" look: a band across the screen stays sharp, and rows above and below blur more the further they are, up to `blur` pixels over `blur_ramp` of the height | off; centre 0 to 1 (0.55), band 0 to 1 (0.35), 0 to 12 px (3), 0 to 1 (0.25) |
+| `bloom`, `bloom_threshold`, `bloom_radius` | Bright parts glow: what is brighter than the threshold spreads by the radius, added back times `bloom` | 0 to 2 (0: off), 0 to 1 (0.75), 0 to 16 px (6) |
+| `exposure`, `contrast`, `saturation` | Colour grading: brightness; around mid-grey; from grey (0) to vivid | 0 to 4, 0 to 2, 0 to 2 (all 1) |
+| `vignette` | Darkens towards the corners | 0 to 1 (0) |
+
+- **Two full-screen passes.** The first blurs along rows, by each row's tilt-shift radius
+  and for bloom, into two targets at once; the second finishes both down the columns,
+  adds the bloom, grades and applies the vignette. Blurs are Gaussian, up to 12 pixels
+  each side for tilt-shift and 16 for bloom; pixels are read with `Load`, so nothing is
+  filtered by accident.
+- **Neutral is exact.** The defaults change nothing (`neutral()`), and a neutral pass
+  copies a frame byte for byte (tested), so games without a look stay pixel-perfect;
+  the runtime skips the pass entirely then.
+- Values out of range are clamped; the source and destination must be different targets
+  of the same size.
+- **Tests (GPU):** a neutral look copies a 37 × 23 frame exactly; tilt-shift keeps the
+  band's rows exactly and turns one-pixel black and white columns mid-grey far from it;
+  bloom spreads a glow from a white dot that fades with distance, and none from a dim
+  one below the threshold; exposure 1.5, contrast 0, saturation 0 (the luma) and the
+  vignette give the expected colours, and exposure 100 is clamped to 4; targets that are
+  the same or of different sizes are refused.
+
+## 9. Next increments
 
 Towards the reference scene of Spike R (`plan/08` Phase 0, `plan/04` §4):
 
@@ -166,8 +196,8 @@ Towards the reference scene of Spike R (`plan/08` Phase 0, `plan/04` §4):
 2. **Translucency:** sorted, blended quads for glass, water and fading sprites.
 3. **Shadows** from the sun and from point lights, and normal-mapped sprites
    (`plan/04` §5 and §7).
-4. **Post-processing:** tilt-shift depth of field, bloom and colour grading (`plan/04`
-   §8).
+4. **More of the Look** (`plan/04` §8): LUT colour grading, physical depth of field for
+   cutscenes, volumetric light, and Looks that blend by zone and time of day.
 5. **GPU timing** to measure frames against the `plan/04` §11 budgets on reference
    hardware.
 6. **The ADR-004 decision:** record whether the SDL GPU API covers the reference scene, or

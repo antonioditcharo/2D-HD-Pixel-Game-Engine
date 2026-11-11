@@ -67,6 +67,9 @@ struct ProjectSettings {
     /// Logic changes them with the "lighting" object.
     double ambient_light = 0.55;
     double sun_light = 0.45;
+    /// Post-processing for the finished frame: tilt-shift, bloom, grading, vignette. The
+    /// default changes nothing. In the project file, the group "look".
+    render::Look look;
     /// Gravity for Physics Bodies, in tiles per second squared, down the map being +y:
     /// (0, 0) for top-down games, (0, 30) or so for side views. -1000 to 1000 each.
     double gravity_x = 0.0;
