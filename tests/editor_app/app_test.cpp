@@ -554,7 +554,12 @@ TEST_CASE("The Logic view authors logic from its Add menu") {
     CHECK(current() == QStringLiteral("When the game starts"));
     choose(QStringLiteral("action:/wait"));
     CHECK(current() == QStringLiteral("Wait 1 seconds"));
-    tree->setCurrentItem(tree->currentItem()->parent()->parent()); // the file
+    choose(QStringLiteral("if:game/has_save"));
+    CHECK(current() == QStringLiteral("If slot 1 has a save (game):"));
+    choose(QStringLiteral("action:/log")); // inside the If
+    CHECK(current() == QStringLiteral("Log \u201c\u201d"));
+    CHECK(tree->currentItem()->parent()->text(0) == QStringLiteral("If slot 1 has a save (game):"));
+    tree->setCurrentItem(tree->currentItem()->parent()->parent()->parent()); // the file
     choose(QStringLiteral("add_brain"));
     CHECK(current() == QStringLiteral("Brain brain_1"));
     choose(QStringLiteral("add_state"));

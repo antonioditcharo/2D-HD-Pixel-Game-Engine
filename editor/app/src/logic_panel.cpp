@@ -352,6 +352,26 @@ void LogicPanel::fill_add_menu() {
         item->setObjectName(text_of("action:" + action.object + "/" + action.member));
         connect(item, &QAction::triggered, this, [this, action] { add_step(action); });
     }
+    // If and Wait until, each with the condition it tests.
+    for (const bool wait_until : {false, true}) {
+        QMenu* branch = steps->addMenu(wait_until ? tr("Wait until") : tr("If"));
+        std::map<std::string, QMenu*> objects;
+        for (const LogicAction& condition : document_->logic_conditions()) {
+            QMenu*& sub = objects[condition.object];
+            if (sub == nullptr) {
+                sub = grouped(branch, condition.object);
+            }
+            QAction* item = sub->addAction(text_of(condition.text));
+            item->setObjectName(text_of((wait_until ? "wait_until:" : "if:") + condition.object +
+                                        "/" + condition.member));
+            connect(item, &QAction::triggered, this, [this, condition, wait_until] {
+                const auto [path, block] = current();
+                std::string error;
+                added(path, document_->add_logic_branch(path, block, condition, wait_until, error),
+                      error);
+            });
+        }
+    }
     QMenu* conditions = menu->addMenu(tr("Condition"));
     by_object.clear();
     for (const LogicAction& condition : document_->logic_conditions()) {

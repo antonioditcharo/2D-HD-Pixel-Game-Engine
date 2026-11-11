@@ -150,12 +150,20 @@ public:
     /// entities' components, by object, then as they read.
     [[nodiscard]] std::vector<LogicAction> logic_actions() const;
     /// Adds a step doing `action`, its values set to the parameters' defaults: after the
-    /// step `after`, or first under the Rule, Sequence or Brain state `after`. Returns
-    /// the new step's block id, or an invalid one with `error`.
+    /// step `after` (first inside it if it is an If or a Repeat), or first under the Rule,
+    /// Sequence or Brain state `after`. Returns the new step's block id, or an invalid one
+    /// with `error`. Besides the objects' actions, logic_actions() offers the built-in
+    /// steps (object ""): log, repeat, run and wait.
     engine::logic::BlockId add_logic_step(std::string_view path, engine::logic::BlockId after,
                                           const LogicAction& action, std::string& error);
     /// Deletes a step, with any steps inside it.
     bool remove_logic_step(std::string_view path, engine::logic::BlockId step);
+    /// Adds an "If" step (steps added while it is selected go inside it), or with
+    /// `wait_until` a "Wait until" step, testing `condition` (one of logic_conditions())
+    /// with its values the defaults. Placed as add_logic_step() places steps.
+    engine::logic::BlockId add_logic_branch(std::string_view path, engine::logic::BlockId after,
+                                            const LogicAction& condition, bool wait_until,
+                                            std::string& error);
 
     /// Every event a Rule can start on: the game starting, and the events of the game's
     /// objects and of the scene's named entities' components.

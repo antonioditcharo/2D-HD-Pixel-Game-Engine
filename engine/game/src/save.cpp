@@ -74,13 +74,19 @@ void register_save_types(reflect::Registry& registry) {
         "Saving and loading the player's progress.");
     game.action<&SaveObject::save>("save", {"slot"})
         .text("Save the game in slot {slot}")
-        .tooltip("Writes the player's progress to a save slot, from 1 to 99.");
+        .tooltip("Writes the player's progress to a save slot, from 1 to 99.")
+        .param("slot")
+        .range(1.0, 99.0);
     game.action<&SaveObject::load>("load", {"slot"})
         .text("Load the game from slot {slot}")
-        .tooltip("Goes back to the progress saved in a slot.");
+        .tooltip("Goes back to the progress saved in a slot.")
+        .param("slot")
+        .range(1.0, 99.0);
     game.condition<&SaveObject::has_save>("has_save", {"slot"})
         .text("Slot {slot} has a save")
-        .tooltip("Whether anything was saved in a slot.");
+        .tooltip("Whether anything was saved in a slot.")
+        .param("slot")
+        .range(1.0, 99.0);
 }
 
 } // namespace engine::game

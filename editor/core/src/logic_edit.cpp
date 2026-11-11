@@ -121,6 +121,21 @@ Place find_step(logic::LogicAsset& asset, BlockId id) {
     return {};
 }
 
+std::vector<Stmt>* header_list(logic::LogicAsset& asset, BlockId id);
+
+/// Where a step added at `after` goes: first inside it if it is an If or a Repeat, after it
+/// if it is another step, first under it if it is a Rule, Sequence or Brain state.
+Place where_to_add(logic::LogicAsset& asset, BlockId after) {
+    if (const Place place = find_step(asset, after); place.list != nullptr) {
+        Stmt& s = (*place.list)[place.index];
+        if (s.kind == StmtKind::If || s.kind == StmtKind::Repeat) {
+            return Place{&s.body, 0};
+        }
+        return Place{place.list, place.index + 1};
+    }
+    return Place{header_list(asset, after), 0};
+}
+
 /// The steps a new step goes first into when added under a header block: a Rule's
 /// actions, a Sequence's steps, a Brain state's steps on entering.
 std::vector<Stmt>* header_list(logic::LogicAsset& asset, BlockId id) {
@@ -563,7 +578,24 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId step
         break;
     case StmtKind::If:
     case StmtKind::WaitUntil:
-        break; // conditions are not values typed in
+        // The values of its condition, when it is one of an object's conditions.
+        if (!s.arguments.empty() && s.arguments[0].kind == logic::ExprKind::Call) {
+            const logic::Expr& c = s.arguments[0];
+            if (const reflect::FunctionInfo* f =
+                    find_function(Lookup{d.registry, *d.world}, c.object, c.member)) {
+                for (std::size_t i = 0; i < f->parameters.size() && i < c.operands.size(); ++i) {
+                    if (c.operands[i].kind != logic::ExprKind::Literal) {
+                        continue;
+                    }
+                    const reflect::ParameterInfo& p = f->parameters[i];
+                    LogicSlot one = slot(i, p.meta.display_name, p.kind, c.operands[i].literal);
+                    one.limits = p.limits;
+                    one.choice = p.choice;
+                    slots.push_back(std::move(one));
+                }
+            }
+        }
+        break;
     }
     return slots;
 }
@@ -631,6 +663,9 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
     engine::serialize::Json before = d.snapshot();
     if (place.list != nullptr && (*place.list)[place.index].kind == StmtKind::Run) {
         (*place.list)[place.index].member = *text;
+    } else if (place.list != nullptr && ((*place.list)[place.index].kind == StmtKind::If ||
+                                         (*place.list)[place.index].kind == StmtKind::WaitUntil)) {
+        (*place.list)[place.index].arguments[0].operands[argument].literal = std::move(*fitted);
     } else if (place.list != nullptr) {
         (*place.list)[place.index].arguments[argument].literal = std::move(*fitted);
     } else if (h.condition != nullptr) {
@@ -709,6 +744,7 @@ std::vector<LogicAction> Document::logic_functions(reflect::FunctionRole role) c
 std::vector<LogicAction> Document::logic_actions() const {
     // The built-in steps first (object ""), then the objects' actions.
     std::vector<LogicAction> actions{LogicAction{"", "log", "Log {text}"},
+                                     LogicAction{"", "repeat", "Repeat {times} times"},
                                      LogicAction{"", "run", "Run {sequence} and wait for it"},
                                      LogicAction{"", "wait", "Wait {seconds} seconds"}};
     std::vector<LogicAction> objects = logic_functions(reflect::FunctionRole::Action);
@@ -729,8 +765,8 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
             ? nullptr
             : find_function(Lookup{d.registry, *d.world}, action.object, action.member);
     const bool built_in =
-        action.object.empty() &&
-        (action.member == "log" || action.member == "run" || action.member == "wait");
+        action.object.empty() && (action.member == "log" || action.member == "run" ||
+                                  action.member == "wait" || action.member == "repeat");
     if (!built_in && (f == nullptr || f->role != reflect::FunctionRole::Action)) {
         error = action.object + " cannot " + action.member + ".";
         return BlockId{};
@@ -739,14 +775,9 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
         error = "There is no Sequence to run yet: add one first.";
         return BlockId{};
     }
-    std::vector<Stmt>* list = nullptr;
-    std::size_t at = 0;
-    if (const Place place = find_step(file->asset, after); place.list != nullptr) {
-        list = place.list;
-        at = place.index + 1;
-    } else {
-        list = header_list(file->asset, after);
-    }
+    const Place place = where_to_add(file->asset, after);
+    std::vector<Stmt>* list = place.list;
+    const std::size_t at = place.index;
     if (list == nullptr) {
         error = "Steps go under a Rule, a Sequence or a Brain state, or after another step.";
         return BlockId{};
@@ -757,6 +788,9 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
     if (built_in && action.member == "log") {
         step = logic::ir::log(next, logic::ir::literal(reflect::Value{std::string()}));
         label = "Log";
+    } else if (built_in && action.member == "repeat") {
+        step = logic::ir::repeat(next, logic::ir::literal(reflect::Value{std::int64_t{2}}), {});
+        label = "Repeat";
     } else if (built_in && action.member == "run") {
         step = logic::ir::run(next, file->asset.sequences.front().name);
         label = "Run";
@@ -811,6 +845,37 @@ bool Document::move_logic_step(std::string_view path, BlockId step, int by) {
 bool Document::is_logic_step(std::string_view path, BlockId block) const {
     LogicFile* file = impl_->logic_file(path);
     return file != nullptr && find_step(file->asset, block).list != nullptr;
+}
+
+BlockId Document::add_logic_branch(std::string_view path, BlockId after,
+                                   const LogicAction& condition, bool wait_until,
+                                   std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    if (file == nullptr) {
+        error = "There is no logic file " + std::string(path) + ".";
+        return BlockId{};
+    }
+    const reflect::FunctionInfo* f =
+        find_function(Lookup{d.registry, *d.world}, condition.object, condition.member);
+    if (f == nullptr || f->role != reflect::FunctionRole::Condition) {
+        error = condition.object + " has no condition " + condition.member + ".";
+        return BlockId{};
+    }
+    const Place place = where_to_add(file->asset, after);
+    if (place.list == nullptr) {
+        error = "Steps go under a Rule, a Sequence or a Brain state, or after another step.";
+        return BlockId{};
+    }
+    const std::uint64_t next = next_id(file->asset).value;
+    logic::Expr test = logic::ir::call(condition.object, condition.member, starting_operands(*f));
+    Stmt step = wait_until ? logic::ir::wait_until(next, std::move(test))
+                           : logic::ir::if_then(next, std::move(test), {}, {});
+    engine::serialize::Json before = d.snapshot();
+    place.list->insert(place.list->begin() + static_cast<std::ptrdiff_t>(place.index),
+                       std::move(step));
+    d.record(wait_until ? "Add a Wait until step" : "Add an If step", std::move(before));
+    return BlockId{next};
 }
 
 std::vector<LogicEvent> Document::logic_events() const {

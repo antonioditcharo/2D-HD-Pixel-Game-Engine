@@ -791,6 +791,61 @@ TEST_CASE("Logic is authored from nothing: files, Rules, conditions, Sequences, 
     CHECK(again->logic()[1].asset.sequences.size() == 1);
 }
 
+TEST_CASE("Logic branches and loops: If, Wait until and Repeat, with steps inside") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view file = "logic/flow.drules";
+    REQUIRE(d->create_logic_file(file, error));
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);
+    REQUIRE(rule.is_valid());
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        for (const editor::LogicLine& line : editor::describe(found->asset, *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        }
+        return shown;
+    };
+    // If there is a save in a slot: its slot is a value; a step added with it selected
+    // goes inside it.
+    const engine::logic::BlockId branch =
+        d->add_logic_branch(file, rule, editor::LogicAction{"game", "has_save", ""}, false, error);
+    REQUIRE(branch.is_valid());
+    CHECK(d->undo_label() == "Add an If step");
+    std::vector<editor::LogicSlot> slots = d->logic_slots(file, branch);
+    REQUIRE(slots.size() == 1);
+    CHECK(slots[0].kind == reflect::ValueKind::Int);
+    REQUIRE(d->set_logic_slot(file, branch, 0, reflect::Value{std::int64_t{3}}, error));
+    REQUIRE(d->add_logic_step(file, branch, editor::LogicAction{"", "wait", ""}, error).is_valid());
+    // Wait until a message is open, after the If; a Repeat after that, with a step in it.
+    const engine::logic::BlockId waiting = d->add_logic_branch(
+        file, branch, editor::LogicAction{"dialogue", "is_open", ""}, true, error);
+    REQUIRE(waiting.is_valid());
+    // (Selected, the If takes the new step inside; so the Wait until went in first.)
+    const engine::logic::BlockId loop =
+        d->add_logic_step(file, rule, editor::LogicAction{"", "repeat", ""}, error);
+    REQUIRE(loop.is_valid());
+    REQUIRE(d->set_logic_slot(file, loop, 0, reflect::Value{std::int64_t{5}}, error));
+    REQUIRE(d->add_logic_step(file, loop, editor::LogicAction{"", "log", ""}, error).is_valid());
+    CHECK_FALSE(
+        d->add_logic_branch(file, rule, editor::LogicAction{"dialogue", "say", ""}, false, error)
+            .is_valid());
+    const std::vector<std::string> expected{
+        "When the game starts",
+        "  Repeat 5 times:",
+        "    Log “”",
+        "  If slot 3 has a save (game):",
+        "    Wait until a message is open (dialogue)",
+        "    Wait 1 seconds",
+    };
+    CHECK(lines() == expected);
+    CHECK(d->check_logic(file).empty());
+}
+
 TEST_CASE("Picking in the Diorama style goes through the camera") {
     const Sample sample;
     const auto d = sample.open();
