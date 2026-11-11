@@ -119,6 +119,20 @@ void register_types(reflect::Registry& registry) {
         .tooltip("In the Diorama style, how tall each tile stands: 0 is flat ground.");
     tilemap.property<&Tilemap::solid>("solid").tooltip(
         "Every tile of this map blocks movement. Paint walls on their own map.");
+    tilemap.property<&Tilemap::animation_frames>("animation_frames")
+        .range(1, 64)
+        .display_name("Animation frames")
+        .tooltip("Animated tiles: each tile shows itself, then the next tiles of the tileset "
+                 "in turn. 1 keeps them still.");
+    tilemap.property<&Tilemap::animation_fps>("animation_fps")
+        .range(0.0, 60.0)
+        .step(1.0)
+        .display_name("Animation speed")
+        .tooltip("Frames a second of animated tiles.");
+    tilemap.property<&Tilemap::elapsed>("elapsed")
+        .unit(reflect::Unit::Seconds)
+        .flags(reflect::property_flag::hidden)
+        .tooltip("How long the tiles have been animating.");
     tilemap.property<&Tilemap::opacity>("opacity").range(0.0, 1.0).step(0.05).tooltip(
         "How solid the tiles look: lower for water over a riverbed, or glass, so "
         "what is behind shows through.");
@@ -247,6 +261,20 @@ std::string format_tiles(const TileGrid& grid) {
         }
     }
     return text;
+}
+
+std::uint32_t Tilemap::frame() const noexcept {
+    if (animation_frames <= 1 || !std::isfinite(elapsed) || !std::isfinite(animation_fps) ||
+        animation_fps <= 0.0) {
+        return 0;
+    }
+    const double index = std::floor((std::max(elapsed, 0.0) * animation_fps) + 1e-9);
+    return static_cast<std::uint32_t>(std::fmod(index, static_cast<double>(animation_frames)));
+}
+
+std::uint32_t Tilemap::shown(std::uint32_t number, std::uint64_t tile_count) const noexcept {
+    const std::uint64_t moved = std::uint64_t{number} + frame();
+    return moved < tile_count ? static_cast<std::uint32_t>(moved) : number;
 }
 
 std::uint8_t Tilemap::alpha() const noexcept {
@@ -420,12 +448,21 @@ double sweep(const world::World& world, const Box& box, Axis axis, double distan
 
 std::vector<world::Entity> animate(world::World& world, double seconds) {
     std::vector<world::Entity> finished;
+    if (!std::isfinite(seconds) || seconds < 0.0) {
+        seconds = 0.0;
+    }
+    // Animated tiles: their time runs on; Tilemap::frame() wraps it.
+    if (const reflect::TypeInfo* maps = world.registry().find_type<Tilemap>()) {
+        world.each(*maps, [seconds](world::Entity, reflect::ObjectRef ref) {
+            Tilemap* map = ref.as<Tilemap>();
+            if (map != nullptr && map->animation_frames > 1) {
+                map->elapsed = std::isfinite(map->elapsed) ? map->elapsed + seconds : seconds;
+            }
+        });
+    }
     const reflect::TypeInfo* type = world.registry().find_type<SpriteAnimation>();
     if (type == nullptr) {
         return finished;
-    }
-    if (!std::isfinite(seconds) || seconds < 0.0) {
-        seconds = 0.0;
     }
     world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
         SpriteAnimation* animation = ref.as<SpriteAnimation>();
@@ -690,7 +727,8 @@ DrawStats draw_world(const world::World& world, TextureCache& textures,
                             if (number < 0 || static_cast<std::uint64_t>(number) >= tiles) {
                                 continue; // no tile, or past the end of the tileset
                             }
-                            const auto n = static_cast<std::uint32_t>(number);
+                            const std::uint32_t n =
+                                tilemap->shown(static_cast<std::uint32_t>(number), tiles);
                             const std::uint32_t column = n % columns;
                             const std::uint32_t row = n / columns;
                             Item item = base;
@@ -1142,7 +1180,8 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                         if (number < 0 || static_cast<std::uint64_t>(number) >= tiles) {
                             continue;
                         }
-                        const auto n = static_cast<std::uint32_t>(number);
+                        const std::uint32_t n =
+                            tilemap->shown(static_cast<std::uint32_t>(number), tiles);
                         const std::uint32_t column = n % columns;
                         const std::uint32_t row = n / columns;
                         const render::Rect source{

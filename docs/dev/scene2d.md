@@ -86,6 +86,12 @@ nothing extra to write ([reflection.md](reflection.md)).
 - A tilemap sorts like a sprite whose `y` is the map's top edge. Put ground maps on a
   lower `layer` than characters. If an entity has both a Tilemap and a Sprite, the sprite
   is drawn over the map.
+- **Animated tiles** (`animation_frames`, `animation_fps`): water, lava or flowers in the
+  wind. Each painted tile shows itself and then the next tiles of its tileset in turn
+  (`Tilemap::shown()`), looping; a tile whose next one would run past the tileset stays
+  as it is. `animate()` moves the map's hidden, saved `elapsed` on with the sprites'
+  animations. Put animated tiles on their own map, with their frames side by side in
+  the tileset.
 - A Tilemap's `opacity` (0 to 1) makes its tiles see-through, in both styles: water
   painted on a map a layer above the riverbed, or glass blocks in the Diorama style.
   What is behind shows through, blended (in 3D, farthest first: [rendering.md](rendering.md)
@@ -245,6 +251,7 @@ the others run anywhere:
 | Lights | `diorama_lights()`: nearest first; disabled, radius 0 and intensity 0 skipped; height clamped to 16; map (x, y) at world (x, z); colour times intensity; at most 16, the nearest |
 | A Light on the ground (GPU) | In the dark, the ground under a lamp 1 tile up with radius 2 is exactly 0.5625 of red; dimmer further off; black beyond the radius; black with the lamp off |
 | Diorama view extent | For 12 cameras (pitch 20 to 85, field of view 10 to 60), the extent's bottom, top and sides projected through `diorama_view_projection()` land on the screen's edges within 0.01 %; the top is infinite when it looks above the horizon |
+| Animated tiles | `frame()` at 0, 0.5, 1.49 and 1.5 seconds (wrapping), still with one frame, and 0 for a broken time; `shown()` moves on, but not past the tileset; `animate()` moves a map's time on. On the GPU, a map of tile 0 with two frames at 2 a second is red, then blue half a second later, then red again, in Classic 2D (exact pixels) and the Diorama style |
 | See-through maps (GPU) | `alpha()` from `opacity`, clamped, NaN as solid; water at 0.5 over a riverbed: in Classic 2D exactly half of each; in the Diorama style the lit riverbed and lit water mixed by the alpha, four quads blended; opacity 1 and 0 blend none |
 | Frames and tilemaps (GPU) | Exact pixels for frames 0, 1 and a wrapped 2; a 2 × 2 map with an empty cell and a skipped tile; a sprite over its map; tiles in view counted for an aligned and an offset camera; bad text and a missing tileset counted |
 

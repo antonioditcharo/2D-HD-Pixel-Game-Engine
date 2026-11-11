@@ -1265,6 +1265,92 @@ TEST_CASE("Blocks shadow the ground on the side away from the sun") {
     CHECK(at_ground(-1.0F, 2.5F, shaded) == at_ground(-1.0F, 2.5F, plain));
 }
 
+TEST_CASE("Animated tiles: water that moves, in both styles") {
+    scene2d::Tilemap probe;
+    probe.animation_frames = 3;
+    probe.animation_fps = 2.0;
+    CHECK(probe.frame() == 0);
+    probe.elapsed = 0.5;
+    CHECK(probe.frame() == 1);
+    probe.elapsed = 1.49;
+    CHECK(probe.frame() == 2);
+    probe.elapsed = 1.5; // wraps
+    CHECK(probe.frame() == 0);
+    probe.elapsed = 0.5;
+    CHECK(probe.shown(4, 10) == 5);
+    CHECK(probe.shown(9, 10) == 9); // the next tile would be past the tileset
+    probe.animation_frames = 1;
+    CHECK(probe.frame() == 0); // still
+    probe.animation_frames = 3;
+    probe.elapsed = std::nan("");
+    CHECK(probe.frame() == 0);
+
+    Fixture f;
+    // A tileset of two 2 x 2 tiles side by side: red, then blue.
+    std::vector<Color> pixels;
+    for (int y = 0; y < 2; ++y) {
+        for (const Color c : {f.red, f.red, f.blue, f.blue}) {
+            pixels.push_back(c);
+        }
+    }
+    write_image(f.folder.path / "water.png", 4, 2, pixels);
+    f.db.refresh();
+    REQUIRE(f.db.find("water.png") != nullptr);
+    const Guid water_image = f.db.find("water.png")->guid;
+    const auto w = f.make_world();
+    const world::Entity water = w->create("water");
+    scene2d::Transform2D* at = w->add<scene2d::Transform2D>(water);
+    at->x = -1.0;
+    at->y = -1.0;
+    scene2d::Tilemap* map = w->add<scene2d::Tilemap>(water);
+    map->tileset = water_image.to_string();
+    map->tiles = "0,0\n0,0";
+    map->animation_frames = 2;
+    map->animation_fps = 2.0;
+    // animate() moves the map's time on, as it does sprites'.
+    static_cast<void>(scene2d::animate(*w, 0.25));
+    CHECK(map->elapsed == doctest::Approx(0.25));
+
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    scene2d::TextureCache textures(*device, f.db);
+    const auto flat = device->create_render_target(4, 4);
+    const auto sprites = render::SpriteRenderer::create(*device);
+    const auto target = device->create_render_target(17, 17);
+    const auto renderer = render::WorldRenderer::create(*device);
+    REQUIRE(flat != nullptr);
+    REQUIRE(sprites != nullptr);
+    REQUIRE(target != nullptr);
+    REQUIRE(renderer != nullptr);
+    scene2d::DioramaCamera camera;
+    camera.pitch = 45.0;
+    camera.distance = 4.0;
+    camera.ppu = 2;
+    const auto colours = [&] {
+        scene2d::draw_world(*w, textures, *sprites, *flat, scene2d::Camera2D{0.0, 0.0, 2, 1},
+                            f.background);
+        scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, {});
+        return std::array<Color, 2>{pixel(flat->read_pixels(), 4, 1, 1),
+                                    pixel(target->read_pixels(), 17, 8, 8)};
+    };
+    // A quarter second in: the first frame, red. Half a second on: blue. Then red again.
+    std::array<Color, 2> now = colours();
+    CHECK(now[0] == f.red);
+    CHECK(now[1].r > 0);
+    CHECK(now[1].b == 0);
+    static_cast<void>(scene2d::animate(*w, 0.5));
+    now = colours();
+    CHECK(now[0] == f.blue);
+    CHECK(now[1].r == 0);
+    CHECK(now[1].b > 0);
+    static_cast<void>(scene2d::animate(*w, 0.5));
+    now = colours();
+    CHECK(now[0] == f.red);
+    CHECK(now[1].b == 0);
+}
+
 TEST_CASE("Diorama rays go through the image to the ground") {
     scene2d::DioramaCamera camera;
     camera.x = 4.0;

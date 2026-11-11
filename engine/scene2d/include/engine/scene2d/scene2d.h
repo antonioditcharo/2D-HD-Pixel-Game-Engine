@@ -114,9 +114,21 @@ struct Tilemap {
     /// How solid the tiles look, 0 (invisible) to 1: below 1 they are see-through, for
     /// water over a riverbed or glass blocks; what is behind shows through, blended.
     double opacity = 1.0;
+    /// Animated tiles, for water, lava or flowers in the wind: each tile shows itself and
+    /// then the next animation_frames - 1 tiles of the tileset in turn, at animation_fps
+    /// frames a second (1 frame: still). Put animated tiles on their own map.
+    std::uint32_t animation_frames = 1;
+    double animation_fps = 4.0;
+    double elapsed = 0.0; ///< Seconds the animation has run (hidden; saved with scenes).
 
     /// The alpha the tiles are drawn with, 0 to 255, from `opacity`.
     [[nodiscard]] std::uint8_t alpha() const noexcept;
+    /// How far each tile is through its animation: 0 to animation_frames - 1.
+    [[nodiscard]] std::uint32_t frame() const noexcept;
+    /// The tile shown for painted tile `number` now: `number` plus frame(), or `number`
+    /// itself if that would run past the tileset's `tile_count`.
+    [[nodiscard]] std::uint32_t shown(std::uint32_t number,
+                                      std::uint64_t tile_count) const noexcept;
 
     /// The parsed tiles, kept until `tiles` changes. Null, with `error` set, if the text
     /// is not valid.
@@ -151,9 +163,10 @@ void register_types(reflect::Registry& registry);
 /// Makes them all usable as components of `world`. register_types() must have run first.
 bool register_components(world::World& world);
 
-/// Advances every playing SpriteAnimation by `seconds` and sets its Sprite's frame. Call
-/// it once per fixed step. Returns the entities whose animation reached its end this time
-/// (animations that do not loop), so their "finished" event can be sent.
+/// Advances every playing SpriteAnimation by `seconds` and sets its Sprite's frame, and
+/// moves animated tilemaps on (they loop, and never finish). Call it once per fixed step.
+/// Returns the entities whose animation reached its end this time (animations that do not
+/// loop), so their "finished" event can be sent.
 std::vector<world::Entity> animate(world::World& world, double seconds);
 
 /// An axis-aligned box in world units, such as a character's feet. Edges are half-open:
