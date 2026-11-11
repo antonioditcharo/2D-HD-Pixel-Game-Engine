@@ -19,6 +19,7 @@ include(EngineTargets)
 
 add_subdirectory(engine)
 add_subdirectory(player)
+add_subdirectory(editor)
 
 if(ENGINE_BUILD_TESTS)
     enable_testing()

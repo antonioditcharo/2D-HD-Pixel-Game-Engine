@@ -138,6 +138,7 @@ Details and the questions that remain open are in
 | [Game](dev/game.md) | The runtime that plays a project: behaviours, logic reaching the world, the fixed-step clock, saved games |
 | [Physics](dev/physics.md) | Rigid bodies on Box2D: falling, pushing, bouncing, contacts, Physics Bodies in games |
 | [Audio](dev/audio.md) | Sound effects and music: buses, fades, decoding, sound in no-code logic |
+| [Exporting games](dev/export.md) | Packaging a project with the player into a folder that plays the game; the checks first |
 | [UI: text and dialogue](dev/ui.md) | The built-in pixel font, measuring and wrapping text, and message boxes from no-code logic |
 | [Player and sample](dev/player.md) | Playing a project folder, headless runs and screenshots, and the Hello Sparxel sample village |
 | [Input](dev/input.md) | Named actions, bindings and presets, recording and replay, input in no-code logic |

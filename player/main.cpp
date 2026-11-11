@@ -4,13 +4,16 @@
 //   sparxel-player [project folder] [--headless] [--frames N] [--no-audio]
 //                  [--screenshot file.png]
 //
-// With no folder, it plays the folder it is started in. Lines that logic writes with Log
-// blocks are printed, and so are what characters say ("said: ...") and problems, so
+// With no folder, it plays the game exported beside it (a "game" folder next to the
+// executable, or the executable's own folder), else the folder it is started in. Lines that logic
+// writes with Log blocks are printed, and so are what characters say ("said: ...") and problems, so
 // creators see them while testing.
 //
 // See docs/dev/player.md.
 
 #include "engine/game/runtime.h"
+
+#include <SDL3/SDL_filesystem.h>
 
 #include <chrono>
 #include <cstdint>
@@ -48,9 +51,26 @@ void usage() {
                stderr);
 }
 
+/// The game to play when no folder is given: an exported game's "game" folder next to the
+/// executable, or the executable's folder itself, if either holds a project file; else the
+/// current folder.
+fs::path default_project() {
+    if (const char* base = SDL_GetBasePath(); base != nullptr) {
+        const std::string_view utf8(base); // SDL's paths are UTF-8
+        const fs::path here = fs::path(std::u8string(utf8.begin(), utf8.end()));
+        for (const fs::path& candidate : {here / "game", here}) {
+            std::error_code error;
+            if (fs::is_regular_file(candidate / game::project_file, error)) {
+                return candidate;
+            }
+        }
+    }
+    return fs::current_path();
+}
+
 std::optional<Arguments> parse(int argc, char** argv) {
     Arguments args;
-    args.project = fs::current_path();
+    args.project = default_project();
     bool have_project = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];

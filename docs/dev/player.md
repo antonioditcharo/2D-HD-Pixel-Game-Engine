@@ -19,7 +19,7 @@ sparxel-player samples/hello --headless --frames 120 --no-audio --screenshot fra
 
 | Option | Effect |
 |---|---|
-| *(folder)* | The project to play. Without one, the folder the player is started in: what an exported game does |
+| *(folder)* | The project to play. Without one: the `game` folder beside the executable, or the executable's own folder, if either holds a project file (an exported game, [export.md](export.md)); otherwise the folder the player is started in |
 | `--headless` | Draws without a window, so it needs no display, at 60 frames a second of game time as fast as the computer can; runs always play the same |
 | `--frames N` | Stops after N frames |
 | `--no-audio` | Plays without sound |

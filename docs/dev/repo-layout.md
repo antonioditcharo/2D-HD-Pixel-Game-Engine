@@ -20,8 +20,9 @@
 │   └── game/          The runtime: opens a project and runs it; logic reaching the world; the clock.
 ├── player/            sparxel-player: plays a project folder; what exported games run.
 ├── samples/           Sample projects (hello: a small village), made by tools/make_sample.py.
-├── editor/            The editor application (not started). May use engine/, never the
-│                      other way round.
+├── editor/            Editor-side code. May use engine/, never the other way round.
+│   └── exporter/      Exporting games, and the sparxel-export command. The editor
+│                      application itself is not started.
 ├── tests/             Unit tests, one folder per engine module; shared helpers in
 │                      tests/support/.
 ├── tools/             Development scripts. Never shipped.

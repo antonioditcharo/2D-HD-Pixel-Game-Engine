@@ -195,3 +195,28 @@ foreach(style classic_2d diorama)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/player/run_sample.cmake"
     )
 endforeach()
+
+# Exporting: the exporter's checks, then an exported game played on its own.
+add_executable(editor_exporter_tests
+    test_main.cpp
+    exporter/exporter_test.cpp
+)
+target_link_libraries(editor_exporter_tests PRIVATE
+    editor::exporter
+    doctest::doctest
+)
+target_compile_definitions(editor_exporter_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS
+    SPARXEL_SAMPLES_DIR="${PROJECT_SOURCE_DIR}/samples"
+    SPARXEL_PLAYER="$<TARGET_FILE:sparxel_player>")
+add_dependencies(editor_exporter_tests sparxel_player)
+engine_configure_test_target(editor_exporter_tests)
+
+add_test(NAME exporter COMMAND editor_exporter_tests)
+
+add_test(NAME export_and_play
+    COMMAND "${CMAKE_COMMAND}"
+        -DEXPORTER=$<TARGET_FILE:sparxel_export>
+        -DSAMPLE=${PROJECT_SOURCE_DIR}/samples/hello
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/export_and_play
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/exporter/export_and_play.cmake"
+)
