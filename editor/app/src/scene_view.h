@@ -33,6 +33,11 @@ public:
     /// nullopt leaves it.
     void set_painting(engine::Guid tilemap, std::optional<std::int32_t> tile);
     [[nodiscard]] bool painting() const noexcept { return paint_tile_.has_value(); }
+    /// How paint mode paints: cell by cell along the stroke, the rectangle between where
+    /// the button went down and where it came up, or the whole area joined to the cell.
+    enum class PaintTool : std::uint8_t { Pencil, Rectangle, Fill };
+    void set_paint_tool(PaintTool tool) { paint_tool_ = tool; }
+    [[nodiscard]] PaintTool paint_tool() const noexcept { return paint_tool_; }
     /// Draws the scene again (after an edit).
     void refresh();
 
@@ -89,6 +94,8 @@ private:
     engine::Guid paint_map_;
     std::optional<std::int32_t> paint_tile_;
     std::int32_t stroke_tile_ = -1; ///< What this drag paints: the tile, or -1 to erase.
+    PaintTool paint_tool_ = PaintTool::Pencil;
+    QPoint rect_to_; ///< Where a rectangle being dragged reaches now.
     QPoint drag_from_;
     QPointF entity_from_;
     QPointF ground_from_; ///< The map point under the cursor when a drag began.

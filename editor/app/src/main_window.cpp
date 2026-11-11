@@ -146,6 +146,8 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     addDockWidget(Qt::LeftDockWidgetArea, tiles);
     connect(palette_, &TilePalette::chosen_changed, this,
             [this](std::optional<std::int32_t> tile) { view_->set_painting(selection_, tile); });
+    connect(palette_, &TilePalette::tool_changed, this,
+            [this](int tool) { view_->set_paint_tool(static_cast<SceneView::PaintTool>(tool)); });
     connect(view_, &SceneView::stop_painting, this, [this] { palette_->choose(std::nullopt); });
 
     build_actions();

@@ -1,7 +1,8 @@
 #pragma once
 
 // The tile palette: the tiles of the selected tilemap's tileset, to paint with. Choosing a
-// tile puts the scene view in paint mode (left button paints, right button erases);
+// tile puts the scene view in paint mode (left button paints, right button erases), with
+// the tool chosen above the tiles: a pencil, a rectangle or a fill;
 // choosing it again, Escape, or selecting something else leaves it.
 //
 // See docs/dev/editor.md.
@@ -29,11 +30,17 @@ public:
     /// Chooses a tile (-1 erases), or stops painting with nullopt.
     void choose(std::optional<std::int32_t> tile);
 
+    /// The tool chosen: 0 pencil, 1 rectangle, 2 fill.
+    [[nodiscard]] int tool() const noexcept { return tool_; }
+
 Q_SIGNALS:
     void chosen_changed(std::optional<std::int32_t> tile);
+    void tool_changed(int tool);
 
 private:
     std::optional<std::int32_t> chosen_;
+    int tool_ = 0;
+    QWidget* tools_ = nullptr;
     QLabel* hint_ = nullptr;
     QWidget* tiles_ = nullptr;
     QGridLayout* grid_ = nullptr;

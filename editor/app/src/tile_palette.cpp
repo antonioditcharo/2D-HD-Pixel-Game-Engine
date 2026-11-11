@@ -3,14 +3,18 @@
 #include "engine/assets/assets.h"
 #include "engine/scene2d/scene2d.h"
 
+#include <QButtonGroup>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
 #include <QPixmap>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <array>
 #include <string>
+#include <utility>
 
 namespace editor {
 
@@ -22,6 +26,32 @@ TilePalette::TilePalette(QWidget* parent) : QWidget(parent) {
     hint_ = new QLabel(tr("Select a tilemap to paint its tiles."), this);
     hint_->setWordWrap(true);
     column->addWidget(hint_);
+    // The tools: one at a time.
+    tools_ = new QWidget(this);
+    auto* row = new QHBoxLayout(tools_);
+    row->setContentsMargins(0, 0, 0, 0);
+    auto* group = new QButtonGroup(this);
+    const std::array<std::pair<QString, QString>, 3> tools{
+        std::pair{tr("Pencil"), tr("Paint cell by cell along the stroke")},
+        std::pair{tr("Rectangle"), tr("Drag out a rectangle: it is painted on release")},
+        std::pair{tr("Fill"), tr("Click a cell: every cell of the same tile joined to it")}};
+    for (int i = 0; i < 3; ++i) {
+        auto* button = new QToolButton(tools_);
+        button->setText(tools.at(static_cast<std::size_t>(i)).first);
+        button->setToolTip(tools.at(static_cast<std::size_t>(i)).second);
+        button->setCheckable(true);
+        button->setChecked(i == 0);
+        button->setObjectName(QStringLiteral("paint_tool:%1").arg(i));
+        group->addButton(button, i);
+        row->addWidget(button);
+    }
+    row->addStretch();
+    connect(group, &QButtonGroup::idClicked, this, [this](int id) {
+        tool_ = id;
+        Q_EMIT tool_changed(id);
+    });
+    tools_->hide();
+    column->addWidget(tools_);
     tiles_ = new QWidget(this);
     grid_ = new QGridLayout(tiles_);
     grid_->setSpacing(2);
@@ -54,8 +84,10 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
         hint_->setText(map == nullptr ? tr("Select a tilemap to paint its tiles.")
                                       : tr("This tilemap has no tileset picture to paint with."));
         hint_->show();
+        tools_->hide();
         return;
     }
+    tools_->show();
     hint_->setText(tr("Left button paints, right button erases. Esc stops."));
     const QImage image = QImage(picture->rgba.data(), static_cast<int>(picture->width),
                                 static_cast<int>(picture->height), QImage::Format_RGBA8888)

@@ -331,6 +331,94 @@ TEST_CASE("Painting tiles: cells change, the map grows, and a stroke is one step
     CHECK(cell(3, 2) == 1);
 }
 
+TEST_CASE("Painting rectangles and fills: whole areas, each one step") {
+    const Sample sample;
+    const auto d = sample.open();
+    const Guid ground = guid_of(*d, "ground");
+    const auto grid = [&] {
+        std::string error;
+        const scene2d::TileGrid* parsed =
+            d->world().get<scene2d::Tilemap>(d->world().find(ground))->grid(error);
+        REQUIRE(parsed != nullptr);
+        return *parsed;
+    };
+    const auto count = [&](std::int32_t tile) {
+        const scene2d::TileGrid g = grid();
+        return std::count(g.cells.begin(), g.cells.end(), tile);
+    };
+    const scene2d::TileGrid original = grid();
+    REQUIRE(original.width == 20);
+    REQUIRE(original.height == 12);
+    const auto paths = count(1);
+    // A rectangle between two points, in either order: 3 by 2 cells of path.
+    REQUIRE(original.at(8, 5) == 0);
+    REQUIRE(d->paint_tile_rect(ground, 10.9, 6.1, 8.2, 5.7, 1));
+    CHECK(d->undo_label() == "Paint a rectangle of ground");
+    for (std::uint32_t x = 8; x <= 10; ++x) {
+        CHECK(grid().at(x, 5) == 1);
+        CHECK(grid().at(x, 6) == 1);
+    }
+    CHECK(grid().at(7, 5) == original.at(7, 5));
+    CHECK(grid().at(11, 6) == original.at(11, 6));
+    CHECK(grid().at(8, 7) == original.at(8, 7));
+    // Two rectangles are two steps, even with no end_merge() between.
+    REQUIRE(d->paint_tile_rect(ground, 0.5, 0.5, 1.5, 0.5, 2));
+    REQUIRE(d->undo());
+    CHECK(grid().at(0, 0) == original.at(0, 0));
+    CHECK(grid().at(9, 6) == 1);
+    // Past the right edge the map grows; the part left of its corner is left out; a
+    // rectangle wholly outside it is refused.
+    REQUIRE(d->paint_tile_rect(ground, -3.0, 11.5, 21.5, 11.5, 2));
+    CHECK(grid().width == 22);
+    CHECK(grid().at(0, 11) == 2);
+    CHECK(grid().at(21, 11) == 2);
+    CHECK(grid().at(21, 0) == -1);
+    CHECK_FALSE(d->paint_tile_rect(ground, -3.0, 1.0, -1.0, 2.0, 2));
+    // Erasing never grows the map.
+    REQUIRE(d->paint_tile_rect(ground, 20.5, 10.5, 40.0, 40.0, -1));
+    CHECK(grid().width == 22);
+    CHECK(grid().height == 12);
+    CHECK(grid().at(21, 11) == -1);
+    CHECK(grid().at(19, 11) == 2);
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    CHECK(grid().cells == original.cells);
+
+    // A fill: a pond of 2 inside a ring of path, then the grass around it.
+    REQUIRE(d->paint_tile_rect(ground, 2.5, 2.5, 6.5, 6.5, 1));
+    REQUIRE(d->paint_tile_rect(ground, 3.5, 3.5, 5.5, 5.5, 0));
+    REQUIRE(d->fill_tiles(ground, 4.5, 4.5, 2));
+    CHECK(d->undo_label() == "Fill ground");
+    for (std::uint32_t y = 3; y <= 5; ++y) {
+        for (std::uint32_t x = 3; x <= 5; ++x) {
+            CHECK(grid().at(x, y) == 2);
+        }
+    }
+    CHECK(grid().at(2, 2) == 1); // the ring holds it in
+    CHECK(grid().at(1, 1) == original.at(1, 1));
+    CHECK(grid().at(7, 7) == original.at(7, 7));
+    // Filling with what is there already changes nothing; outside the map is refused.
+    // (No step is recorded for it: the undos below reach the start in exactly as many
+    // steps as there were changes.)
+    REQUIRE(d->fill_tiles(ground, 4.5, 4.5, 2));
+    CHECK(count(2) == 9);
+    CHECK_FALSE(d->fill_tiles(ground, 25.0, 3.0, 2));
+    CHECK_FALSE(d->fill_tiles(ground, -0.5, 3.0, 2));
+    CHECK_FALSE(d->fill_tiles(guid_of(*d, "hero"), 3.0, 3.0, 2));
+    // Erasing by fill: the pond goes, the ring stays; one undo brings it back.
+    REQUIRE(d->fill_tiles(ground, 3.5, 5.5, -1));
+    CHECK(grid().at(4, 4) == -1);
+    CHECK(grid().at(6, 6) == 1);
+    REQUIRE(d->undo());
+    CHECK(grid().at(4, 4) == 2);
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    CHECK(grid().cells == original.cells);
+    CHECK(count(1) == paths);
+}
+
 TEST_CASE("Saving writes the scene; reopening finds the edits") {
     const Sample sample;
     const Guid lamp_guid = [&] {

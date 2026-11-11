@@ -295,9 +295,75 @@ TEST_CASE("Painting a tilemap from the palette, a stroke at a time") {
     CHECK(cell(3, 2) == 0);
     CHECK(cell(6, 2) == 0);
 
+    // The rectangle tool: dragged from (3.5, 2.5) to (5.5, 4.5), painted on release, 3 by
+    // 3 cells as one undo step.
+    const auto tool = [&](int number) {
+        auto* button =
+            palette->findChild<QToolButton*>(QStringLiteral("paint_tool:%1").arg(number));
+        REQUIRE(button != nullptr);
+        CHECK(button->isVisibleTo(palette));
+        button->click();
+    };
+    const auto start_painting = [&] {
+        path = palette->findChild<QToolButton*>(QStringLiteral("tile:1"));
+        REQUIRE(path != nullptr);
+        if (!view->painting()) {
+            path->click();
+        }
+        REQUIRE(view->painting());
+    };
+    start_painting();
+    tool(1);
+    CHECK(view->paint_tool() == editor::SceneView::PaintTool::Rectangle);
+    mouse(view, QEvent::MouseButtonPress, view->from_map(3.5, 2.5), Qt::LeftButton);
+    mouse(view, QEvent::MouseMove, view->from_map(4.5, 3.5), Qt::LeftButton);
+    CHECK(cell(3, 2) == 0); // nothing yet: on release
+    mouse(view, QEvent::MouseButtonRelease, view->from_map(5.5, 4.5), Qt::LeftButton);
+    for (std::uint32_t y = 2; y <= 4; ++y) {
+        for (std::uint32_t x = 3; x <= 5; ++x) {
+            CHECK(cell(x, y) == 1);
+        }
+    }
+    CHECK(cell(6, 4) == 0);
+    CHECK(e.window.document()->undo_label() == "Paint a rectangle of ground");
+    e.window.undo();
+    CHECK(cell(4, 3) == 0);
+    // The fill tool: a ring of path, then one click inside fills what the ring holds.
+    start_painting();
+    mouse(view, QEvent::MouseButtonPress, view->from_map(3.5, 2.5), Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, view->from_map(5.5, 4.5), Qt::LeftButton);
+    start_painting();
+    auto* stone = palette->findChild<QToolButton*>(QStringLiteral("tile:2"));
+    REQUIRE(stone != nullptr);
+    stone->click();
+    tool(2);
+    mouse(view, QEvent::MouseButtonPress, view->from_map(4.5, 3.5), Qt::RightButton); // a hole
+    mouse(view, QEvent::MouseButtonRelease, view->from_map(4.5, 3.5), Qt::RightButton);
+    CHECK(cell(4, 3) == -1);
+    CHECK(cell(3, 2) == -1); // the right button erases the whole joined area
+    e.window.undo();
+    CHECK(cell(4, 3) == 1);
+    start_painting();
+    stone = palette->findChild<QToolButton*>(QStringLiteral("tile:2"));
+    REQUIRE(stone != nullptr);
+    stone->click();
+    mouse(view, QEvent::MouseButtonPress, view->from_map(4.5, 3.5), Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, view->from_map(4.5, 3.5), Qt::LeftButton);
+    CHECK(cell(3, 2) == 2);
+    CHECK(cell(5, 4) == 2);
+    CHECK(cell(6, 4) == 0); // the grass around is not joined to it
+    CHECK(e.window.document()->undo_label() == "Fill ground");
+    e.window.undo();
+    e.window.undo();
+    CHECK(cell(4, 3) == 0);
+    tool(0);
+
     // Escape stops painting; so does selecting something else.
     path = palette->findChild<QToolButton*>(QStringLiteral("tile:1"));
     REQUIRE(path != nullptr);
+    if (view->painting()) {
+        path->click();
+    }
     path->click();
     CHECK(view->painting());
     QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);

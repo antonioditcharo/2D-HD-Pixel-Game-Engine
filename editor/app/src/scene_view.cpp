@@ -185,6 +185,11 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
     const int s = scale();
     const QPoint o = origin();
     painter.drawImage(QRect(o, image_.size() * s), image_);
+    // A rectangle being dragged out, before it is painted.
+    if (drag_ == Drag::Paint && paint_tool_ == PaintTool::Rectangle) {
+        painter.setPen(QPen(QColor(255, 255, 255), 1, Qt::DashLine));
+        painter.drawRect(QRect(drag_from_, rect_to_).normalized());
+    }
     // The selection's outline: in 3D, around the billboard as the camera sees it.
     if (diorama()) {
         const engine::world::Entity e = document_->world().find(selection_);
@@ -220,7 +225,17 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
         drag_ = Drag::Paint;
         stroke_tile_ = event->button() == Qt::LeftButton ? *paint_tile_ : -1;
         document_->end_merge(); // each stroke is one undo step
-        paint_at(drag_from_);
+        rect_to_ = drag_from_;
+        if (paint_tool_ == PaintTool::Fill) {
+            drag_ = Drag::None; // one click, no stroke
+            const std::optional<QPointF> at = map_point(drag_from_);
+            if (at && document_->fill_tiles(paint_map_, at->x(), at->y(), stroke_tile_)) {
+                Q_EMIT moved();
+                refresh();
+            }
+        } else if (paint_tool_ == PaintTool::Pencil) {
+            paint_at(drag_from_);
+        }
         return;
     }
     if (event->button() == Qt::LeftButton && document_ != nullptr && !image_.isNull()) {
@@ -265,7 +280,12 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
     const double per_pixel = 1.0 / (ppu * scale());
     const QPoint delta = event->position().toPoint() - drag_from_;
     if (drag_ == Drag::Paint) {
-        paint_at(event->position().toPoint());
+        if (paint_tool_ == PaintTool::Rectangle) {
+            rect_to_ = event->position().toPoint(); // painted when the button comes up
+            update();
+        } else {
+            paint_at(event->position().toPoint());
+        }
         return;
     }
     if (drag_ == Drag::Entity) {
@@ -288,7 +308,18 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
     }
 }
 
-void SceneView::mouseReleaseEvent(QMouseEvent* /*event*/) {
+void SceneView::mouseReleaseEvent(QMouseEvent* event) {
+    if (drag_ == Drag::Paint && paint_tool_ == PaintTool::Rectangle && document_ != nullptr) {
+        const std::optional<QPointF> from = map_point(drag_from_);
+        const std::optional<QPointF> to = map_point(event->position().toPoint());
+        if (from && to &&
+            document_->paint_tile_rect(paint_map_, from->x(), from->y(), to->x(), to->y(),
+                                       stroke_tile_)) {
+            Q_EMIT moved();
+            refresh();
+        }
+        update();
+    }
     if ((drag_ == Drag::Entity || drag_ == Drag::Paint) && document_ != nullptr) {
         document_->end_merge();
     }

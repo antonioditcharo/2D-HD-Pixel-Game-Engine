@@ -135,6 +135,15 @@ public:
     /// above or left of its corner are refused. A stroke of painting on one map is one
     /// undo step (end_merge() ends it). Returns false if nothing could be painted there.
     bool paint_tile(engine::Guid tilemap, double x, double y, std::int32_t tile);
+    /// Paints `tile` (-1 erases) into every cell of the rectangle between map points
+    /// (x0, y0) and (x1, y1), as one undo step. The map grows as for paint_tile(); the
+    /// part above or left of its corner is left out, and erasing never grows it.
+    bool paint_tile_rect(engine::Guid tilemap, double x0, double y0, double x1, double y1,
+                         std::int32_t tile);
+    /// Fills with `tile` (-1 erases) the cell at map point (x, y) and every cell joined to
+    /// it by its sides through cells of the same tile, as one undo step. Only inside the
+    /// map as it is: returns false outside it.
+    bool fill_tiles(engine::Guid tilemap, double x, double y, std::int32_t tile);
     /// Creates an entity with a Position at (x, y). Returns its GUID.
     engine::Guid create_entity(std::string_view name, double x, double y);
     /// Places a picture from the assets (its path in assets/, such as "chars/hero.png")

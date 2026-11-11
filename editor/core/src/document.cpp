@@ -358,6 +358,149 @@ bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
     return true;
 }
 
+namespace {
+
+/// The cell of `map` (at `transform`) under map point (x, y), as signed whole numbers;
+/// nothing if the point is not a finite number.
+std::optional<std::array<double, 2>> cell_at(const scene2d::Tilemap& map,
+                                             const scene2d::Transform2D& transform,
+                                             std::uint32_t ppu, double x, double y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        return std::nullopt;
+    }
+    const double units = static_cast<double>(std::max<std::uint32_t>(ppu, 1));
+    const double tile_size =
+        (map.tile_size == 0 ? units : static_cast<double>(map.tile_size)) / units;
+    return std::array<double, 2>{std::floor((x - transform.x) / tile_size),
+                                 std::floor((y - transform.y) / tile_size)};
+}
+
+/// A copy of `from`, at least `width` by `height`, new cells empty.
+scene2d::TileGrid grown(const scene2d::TileGrid& from, std::uint32_t width, std::uint32_t height) {
+    scene2d::TileGrid grid;
+    grid.width = std::max(from.width, width);
+    grid.height = std::max(from.height, height);
+    grid.cells.assign(std::size_t{grid.width} * grid.height, -1);
+    for (std::uint32_t r = 0; r < from.height; ++r) {
+        for (std::uint32_t c = 0; c < from.width; ++c) {
+            grid.cells[(std::size_t{r} * grid.width) + c] = from.at(c, r);
+        }
+    }
+    return grid;
+}
+
+} // namespace
+
+bool Document::paint_tile_rect(Guid tilemap, double x0, double y0, double x1, double y1,
+                               std::int32_t tile) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(tilemap);
+    auto* map = e.is_valid() ? d.world->get<scene2d::Tilemap>(e) : nullptr;
+    const auto* transform = e.is_valid() ? d.world->get<scene2d::Transform2D>(e) : nullptr;
+    if (map == nullptr || transform == nullptr || tile < -1) {
+        return false;
+    }
+    std::string error;
+    const scene2d::TileGrid* parsed = map->grid(error);
+    const auto a =
+        parsed != nullptr ? cell_at(*map, *transform, d.settings.ppu, x0, y0) : std::nullopt;
+    const auto b =
+        parsed != nullptr ? cell_at(*map, *transform, d.settings.ppu, x1, y1) : std::nullopt;
+    if (!a || !b) {
+        return false;
+    }
+    // The part of the rectangle the map can hold: nothing above or left of its corner.
+    const auto side = static_cast<double>(scene2d::max_tilemap_side);
+    const double left = std::max(std::min((*a)[0], (*b)[0]), 0.0);
+    const double top = std::max(std::min((*a)[1], (*b)[1]), 0.0);
+    double right = std::min(std::max((*a)[0], (*b)[0]), side - 1.0);
+    double bottom = std::min(std::max((*a)[1], (*b)[1]), side - 1.0);
+    if (tile < 0) {
+        // Erasing never grows the map.
+        right = std::min(right, static_cast<double>(parsed->width) - 1.0);
+        bottom = std::min(bottom, static_cast<double>(parsed->height) - 1.0);
+    }
+    if (right < left || bottom < top) {
+        return tile < 0 && std::max((*a)[0], (*b)[0]) >= 0.0 && std::max((*a)[1], (*b)[1]) >= 0.0;
+    }
+    const auto c0 = static_cast<std::uint32_t>(left);
+    const auto r0 = static_cast<std::uint32_t>(top);
+    const auto c1 = static_cast<std::uint32_t>(right);
+    const auto r1 = static_cast<std::uint32_t>(bottom);
+    scene2d::TileGrid grid = grown(*parsed, c1 + 1, r1 + 1);
+    bool changed = grid.width != parsed->width || grid.height != parsed->height;
+    for (std::uint32_t r = r0; r <= r1; ++r) {
+        for (std::uint32_t c = c0; c <= c1; ++c) {
+            std::int32_t& cell = grid.cells[(std::size_t{r} * grid.width) + c];
+            changed = changed || cell != tile;
+            cell = tile;
+        }
+    }
+    if (!changed) {
+        return true; // already so
+    }
+    serialize::Json before = d.snapshot();
+    map->tiles = scene2d::format_tiles(grid);
+    d.record("Paint a rectangle of " + d.name_of(tilemap), std::move(before));
+    return true;
+}
+
+bool Document::fill_tiles(Guid tilemap, double x, double y, std::int32_t tile) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(tilemap);
+    auto* map = e.is_valid() ? d.world->get<scene2d::Tilemap>(e) : nullptr;
+    const auto* transform = e.is_valid() ? d.world->get<scene2d::Transform2D>(e) : nullptr;
+    if (map == nullptr || transform == nullptr || tile < -1) {
+        return false;
+    }
+    std::string error;
+    const scene2d::TileGrid* parsed = map->grid(error);
+    const auto at =
+        parsed != nullptr ? cell_at(*map, *transform, d.settings.ppu, x, y) : std::nullopt;
+    // Only inside the map: a fill has edges to stop at there.
+    if (!at || (*at)[0] < 0.0 || (*at)[1] < 0.0 || (*at)[0] >= static_cast<double>(parsed->width) ||
+        (*at)[1] >= static_cast<double>(parsed->height)) {
+        return false;
+    }
+    const auto cx = static_cast<std::uint32_t>((*at)[0]);
+    const auto cy = static_cast<std::uint32_t>((*at)[1]);
+    const std::int32_t old = parsed->at(cx, cy);
+    if (old == tile) {
+        return true; // already so
+    }
+    scene2d::TileGrid grid = grown(*parsed, parsed->width, parsed->height);
+    // Every cell joined to the first by its sides through cells of the same tile.
+    std::vector<std::array<std::uint32_t, 2>> open{{cx, cy}};
+    grid.cells[(std::size_t{cy} * grid.width) + cx] = tile;
+    while (!open.empty()) {
+        const std::array<std::uint32_t, 2> cell = open.back();
+        open.pop_back();
+        const auto visit = [&](std::uint32_t c, std::uint32_t r) {
+            std::int32_t& next = grid.cells[(std::size_t{r} * grid.width) + c];
+            if (next == old) {
+                next = tile;
+                open.push_back({c, r});
+            }
+        };
+        if (cell[0] > 0) {
+            visit(cell[0] - 1, cell[1]);
+        }
+        if (cell[0] + 1 < grid.width) {
+            visit(cell[0] + 1, cell[1]);
+        }
+        if (cell[1] > 0) {
+            visit(cell[0], cell[1] - 1);
+        }
+        if (cell[1] + 1 < grid.height) {
+            visit(cell[0], cell[1] + 1);
+        }
+    }
+    serialize::Json before = d.snapshot();
+    map->tiles = scene2d::format_tiles(grid);
+    d.record("Fill " + d.name_of(tilemap), std::move(before));
+    return true;
+}
+
 Guid Document::create_entity(std::string_view name, double x, double y) {
     Impl& d = *impl_;
     serialize::Json before = d.snapshot();
