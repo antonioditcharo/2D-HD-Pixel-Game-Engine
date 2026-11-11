@@ -853,6 +853,7 @@ struct WorldRenderer::Native {
     SDL_GPUGraphicsPipeline* shadow_pipeline{nullptr};
     std::unique_ptr<Texture> shadow_mask; ///< A soft round blob.
     std::vector<WorldVertex> shadows;
+    std::vector<const Texture*> shadow_shapes; ///< Per shadow; the blob is shadow_mask.
 };
 
 WorldRenderer::WorldRenderer(Device& device, std::unique_ptr<Native> native)
@@ -1054,23 +1055,54 @@ void WorldRenderer::begin(RenderTarget& target, Color clear, const Mat4& view_pr
     native_->vertices.clear();
     native_->textures.clear();
     native_->shadows.clear();
+    native_->shadow_shapes.clear();
 }
+
+namespace {
+
+/// A shadow's corner: its darkness travels in the colour's red (shadow.frag.hlsl).
+WorldVertex shadow_corner(const Vec3& p, float u, float v, float darkness) {
+    const float d = std::isfinite(darkness) ? std::clamp(darkness, 0.0F, 1.0F) : 0.0F;
+    return WorldVertex{p.x,  p.y,  p.z,  u,    v,    d,    d,    d,
+                       1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F};
+}
+
+} // namespace
 
 void WorldRenderer::draw_shadow(const std::array<Vec3, 4>& corners, float darkness) {
     if (native_->target == nullptr || !(darkness > 0.0F)) {
         return;
     }
-    const float d = std::min(darkness, 1.0F);
-    const auto corner = [d](const Vec3& p, float u, float v) {
-        return WorldVertex{p.x,  p.y,  p.z,  u,    v,    d,    d,    d,
-                           1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F};
-    };
-    const WorldVertex tl = corner(corners[0], 0.0F, 0.0F);
-    const WorldVertex tr = corner(corners[1], 1.0F, 0.0F);
-    const WorldVertex br = corner(corners[2], 1.0F, 1.0F);
-    const WorldVertex bl = corner(corners[3], 0.0F, 1.0F);
+    const WorldVertex tl = shadow_corner(corners[0], 0.0F, 0.0F, darkness);
+    const WorldVertex tr = shadow_corner(corners[1], 1.0F, 0.0F, darkness);
+    const WorldVertex br = shadow_corner(corners[2], 1.0F, 1.0F, darkness);
+    const WorldVertex bl = shadow_corner(corners[3], 0.0F, 1.0F, darkness);
     const WorldVertex quad[6] = {tl, tr, bl, tr, br, bl};
     native_->shadows.insert(native_->shadows.end(), std::begin(quad), std::end(quad));
+    native_->shadow_shapes.push_back(nullptr);
+}
+
+void WorldRenderer::draw_shadow(const Texture& shape, const std::array<Vec3, 4>& corners,
+                                Rect source, const std::array<float, 4>& darkness) {
+    if (native_->target == nullptr ||
+        std::none_of(darkness.begin(), darkness.end(), [](float d) { return d > 0.0F; })) {
+        return;
+    }
+    // As draw() maps a source: a hundredth of a texel inside its edges.
+    constexpr float inset = 0.01F;
+    const auto tex_w = static_cast<float>(shape.width());
+    const auto tex_h = static_cast<float>(shape.height());
+    const float u0 = (source.x + inset) / tex_w;
+    const float v0 = (source.y + inset) / tex_h;
+    const float u1 = (source.x + source.w - inset) / tex_w;
+    const float v1 = (source.y + source.h - inset) / tex_h;
+    const WorldVertex tl = shadow_corner(corners[0], u0, v0, darkness[0]);
+    const WorldVertex tr = shadow_corner(corners[1], u1, v0, darkness[1]);
+    const WorldVertex br = shadow_corner(corners[2], u1, v1, darkness[2]);
+    const WorldVertex bl = shadow_corner(corners[3], u0, v1, darkness[3]);
+    const WorldVertex quad[6] = {tl, tr, bl, tr, br, bl};
+    native_->shadows.insert(native_->shadows.end(), std::begin(quad), std::end(quad));
+    native_->shadow_shapes.push_back(&shape);
 }
 
 void WorldRenderer::draw(const Texture& texture, const std::array<Vec3, 4>& corners, Rect source,
@@ -1269,12 +1301,24 @@ bool WorldRenderer::end() {
         }
         if (vertex_count > opaque_count) {
             SDL_BindGPUGraphicsPipeline(pass, n.shadow_pipeline);
-            SDL_GPUTextureSamplerBinding mask{};
-            mask.texture = n.shadow_mask->native().texture;
-            mask.sampler = n.sampler;
-            SDL_BindGPUFragmentSamplers(pass, 0, &mask, 1);
-            SDL_DrawGPUPrimitives(pass, vertex_count - opaque_count, 1, opaque_count, 0);
-            ++stats_.draw_calls;
+            // One draw per run of shadows sharing a shape (the blob, or a sprite's picture).
+            std::size_t from = 0;
+            while (from < n.shadow_shapes.size()) {
+                std::size_t to = from + 1;
+                while (to < n.shadow_shapes.size() &&
+                       n.shadow_shapes[to] == n.shadow_shapes[from]) {
+                    ++to;
+                }
+                const Texture* shape = n.shadow_shapes[from];
+                SDL_GPUTextureSamplerBinding mask{};
+                mask.texture = (shape != nullptr ? shape : n.shadow_mask.get())->native().texture;
+                mask.sampler = n.sampler;
+                SDL_BindGPUFragmentSamplers(pass, 0, &mask, 1);
+                SDL_DrawGPUPrimitives(pass, static_cast<std::uint32_t>((to - from) * 6), 1,
+                                      opaque_count + static_cast<std::uint32_t>(from * 6), 0);
+                ++stats_.draw_calls;
+                from = to;
+            }
         }
     }
     SDL_EndGPURenderPass(pass);

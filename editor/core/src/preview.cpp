@@ -1,10 +1,10 @@
 #include "editor/core/preview.h"
 
+#include "engine/game/runtime.h"
 #include "engine/render/render.h"
 #include "engine/scene2d/scene2d.h"
 
-#include <algorithm>
-#include <cmath>
+#include <cstddef>
 #include <utility>
 
 namespace editor {
@@ -72,12 +72,9 @@ std::optional<engine::assets::Image> Preview::render(Document& document, double 
     render::RenderTarget& target = post ? *p.scene : *p.frame;
     if (settings.style == game::RenderStyle::Diorama) {
         const scene2d::DioramaCamera camera = diorama_camera(settings, x, y);
-        scene2d::DioramaLight light;
-        light.ambient = static_cast<float>(std::clamp(settings.ambient_light, 0.0, 2.0));
-        light.diffuse = static_cast<float>(std::clamp(settings.sun_light, 0.0, 2.0));
-        light.sprite_shadow = static_cast<float>(std::clamp(settings.sprite_shadow, 0.0, 1.0));
         scene2d::draw_diorama(document.world(), *p.textures, *p.world, target, camera,
-                              settings.background, light);
+                              settings.background,
+                              game::diorama_light(settings, game::starting_lighting(settings)));
     } else {
         scene2d::Camera2D camera;
         camera.x = x;

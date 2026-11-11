@@ -789,6 +789,33 @@ std::array<float, 4> lit(float light, render::Color tint) {
 
 } // namespace
 
+render::Vec3 sun_direction(double angle, double height) noexcept {
+    constexpr double to_radians = 3.14159265358979323846 / 180.0;
+    const double a = (std::isfinite(angle) ? angle : default_sun_angle) * to_radians;
+    const double h =
+        std::clamp(std::isfinite(height) ? height : default_sun_height, -90.0, 90.0) * to_radians;
+    // North is up the map, -z in the world; east is +x.
+    return render::Vec3{static_cast<float>(std::sin(a) * std::cos(h)),
+                        static_cast<float>(std::sin(h)),
+                        static_cast<float>(-std::cos(a) * std::cos(h))};
+}
+
+std::optional<std::array<double, 2>> shadow_offset(render::Vec3 sun) noexcept {
+    const render::Vec3 s = unit(sun);
+    // Below about a degree, the shadow would be endless; the sun has set.
+    if (!(s.y > 0.02F)) {
+        return std::nullopt;
+    }
+    double x = -s.x / s.y;
+    double y = -s.z / s.y;
+    const double length = std::hypot(x, y);
+    if (length > max_shadow_length) {
+        x *= max_shadow_length / length;
+        y *= max_shadow_length / length;
+    }
+    return std::array<double, 2>{x, y};
+}
+
 float brightness(render::Vec3 normal, const DioramaLight& light) noexcept {
     const render::Vec3 n = unit(normal);
     const render::Vec3 s = unit(light.sun);
@@ -1100,20 +1127,6 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
             // Upright, facing the camera, with the pivot on the map position.
             const render::Vec3 base{static_cast<float>(transform->x), lift,
                                     static_cast<float>(transform->y)};
-            // A soft shadow at its feet, on the tile it stands on (just inside its row).
-            if (light.sprite_shadow > 0.0F) {
-                if (const std::optional<float> floor =
-                        ground_top(world, transform->x, transform->y - 0.001, camera.ppu)) {
-                    const float half_w = std::max(width * 0.4F, 0.15F);
-                    const float half_d = half_w * 0.5F;
-                    const float y = *floor + 0.004F;
-                    renderer.draw_shadow({render::Vec3{base.x - half_w, y, base.z - half_d},
-                                          render::Vec3{base.x + half_w, y, base.z - half_d},
-                                          render::Vec3{base.x + half_w, y, base.z + half_d},
-                                          render::Vec3{base.x - half_w, y, base.z + half_d}},
-                                         std::min(light.sprite_shadow, 1.0F));
-                }
-            }
             const auto px = static_cast<float>(sprite->pivot_x);
             const auto py = static_cast<float>(sprite->pivot_y);
             const render::Vec3 r = o.right;
@@ -1124,6 +1137,48 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
             const auto at = [&](float along, float up) {
                 return render::Vec3{base.x + (r.x * along), base.y + up, base.z + (r.z * along)};
             };
+            // Its shadow, on the tile it stands on (just inside its row).
+            const std::optional<float> floor =
+                light.sprite_shadow > 0.0F
+                    ? ground_top(world, transform->x, transform->y - 0.001, camera.ppu)
+                    : std::nullopt;
+            const float dark = std::min(light.sprite_shadow, 1.0F);
+            const std::optional<std::array<double, 2>> cast =
+                light.shadows == ShadowShape::Cast ? shadow_offset(light.sun) : std::nullopt;
+            if (floor && cast) {
+                // Its silhouette on the ground, cast away from the sun. A sprite stands for
+                // a solid figure, so its shadow is cast as if the picture turned to face
+                // the sun: as wide as the picture across the shadow, and as long along it
+                // as the sun's height makes the picture's height (shadow_offset()). Seen
+                // with the sun behind the camera, the picture's left stays on the left.
+                const float y = floor.value_or(0.0F) + 0.004F;
+                const auto dx = static_cast<float>((*cast)[0]);
+                const auto dz = static_cast<float>((*cast)[1]);
+                const float reach = std::hypot(dx, dz);
+                // Across the shadow: east when it falls north. Under a noon sun, the
+                // picture's own right.
+                const render::Vec3 across =
+                    reach > 1e-4F ? render::Vec3{-dz / reach, 0.0F, dx / reach} : r;
+                const auto onto_ground = [&](float along, float up) {
+                    const float above = base.y + up - y; // height above the ground
+                    return render::Vec3{base.x + (across.x * along) + (dx * above), y,
+                                        base.z + (across.z * along) + (dz * above)};
+                };
+                renderer.draw_shadow(*texture,
+                                     {onto_ground(left, top), onto_ground(right_edge, top),
+                                      onto_ground(right_edge, bottom), onto_ground(left, bottom)},
+                                     source, {dark * 0.6F, dark * 0.6F, dark, dark});
+            } else if (floor) {
+                // A soft blob at its feet.
+                const float half_w = std::max(width * 0.4F, 0.15F);
+                const float half_d = half_w * 0.5F;
+                const float y = floor.value_or(0.0F) + 0.004F;
+                renderer.draw_shadow({render::Vec3{base.x - half_w, y, base.z - half_d},
+                                      render::Vec3{base.x + half_w, y, base.z - half_d},
+                                      render::Vec3{base.x + half_w, y, base.z + half_d},
+                                      render::Vec3{base.x - half_w, y, base.z + half_d}},
+                                     dark);
+            }
             renderer.draw(
                 *texture,
                 {at(left, top), at(right_edge, top), at(right_edge, bottom), at(left, bottom)},

@@ -334,6 +334,13 @@ public:
     /// middle, fading out to the rim. Shadows are drawn after every quad, and only where
     /// something nearer is not (they are depth-tested, not depth-written).
     void draw_shadow(const std::array<Vec3, 4>& corners, float darkness);
+    /// Queues a shadow shaped like the `source` pixels of `shape`: where they are opaque,
+    /// what is already drawn is darkened. The corners are where the source's top-left,
+    /// top-right, bottom-right and bottom-left go, as draw() takes them, and `darkness`
+    /// (0 to 1) is how dark the shadow is at each, blended between them; a character's
+    /// silhouette cast on the ground by the sun, darkest at its feet.
+    void draw_shadow(const Texture& shape, const std::array<Vec3, 4>& corners, Rect source,
+                     const std::array<float, 4>& darkness);
     /// Sends the frame to the GPU. Returns false, with the device's last_error() set, if it
     /// could not.
     bool end();
@@ -341,7 +348,8 @@ public:
     struct Stats {
         std::size_t quads = 0;
         std::size_t shadows = 0;
-        std::size_t draw_calls = 0; ///< One per run of quads sharing a texture, one for shadows.
+        /// One per run of quads sharing a texture, and one per run of shadows sharing a shape.
+        std::size_t draw_calls = 0;
     };
     [[nodiscard]] Stats last_stats() const noexcept { return stats_; }
 

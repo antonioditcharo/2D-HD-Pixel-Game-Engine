@@ -65,7 +65,8 @@ MyGame/
 | `camera_pitch`, `camera_distance`, `camera_fov` | The Diorama camera, which follows the hero: degrees looking down, tiles away, and vertical field of view | 35 (5 to 85), 12 (1 to 200), 30 (5 to 90) |
 | `camera_clamp` | The camera stops at the map's edges (§3, Drawing) | `true` |
 | `look` | The frame's post-processing: tilt-shift (Diorama style only: it imitates a lens photographing a miniature, so flat Classic 2D ignores it), bloom, grading and vignette ([rendering.md](rendering.md) §8). A group of named settings; unknown ones are reported, values out of range refuse the project | Changes nothing |
-| `sprite_shadow` | How dark the soft shadow at each sprite's feet is in the Diorama style ([scene2d.md](scene2d.md) §7) | 0.35; 0 to 1 |
+| `sprite_shadow`, `shadow_shape` | How dark each sprite's shadow is in the Diorama style, and its shape: `"cast"`, its silhouette laid away from the sun, or `"round"`, a blob at its feet ([scene2d.md](scene2d.md) §7) | 0.35 (0 to 1), `"cast"` |
+| `sun_angle`, `sun_height` | Where the sun is at the start: degrees clockwise from north (up the map), and above the horizon. Logic moves it with the `lighting` object | 215 (0 to 360), 55 (5 to 90) |
 | `ambient_light`, `sun_light` | The Diorama style's light at the start: from everywhere, and from the sun ([scene2d.md](scene2d.md) §7). Logic changes them with the `lighting` object | 0.55, 0.45; each 0 to 2 |
 
 - Problems are reported in plain language with where they are, for example
@@ -141,9 +142,13 @@ where the screen meets the edge of the tilemaps, so nothing beyond them shows
 style, a view deeper than the map keeps its near edge on the map and lets the far side,
 which reads as distance, show the background. The
 **Lighting** object (`lighting`) gives logic *"Set the lighting's ambient light / sunlight
-to [n]"*, so a Brain can make dusk and night, or a Rule darken a cave; Lights then stand
-out ([scene2d.md](scene2d.md) §7). It starts from the project's `ambient_light` and
-`sun_light`, and is saved with the game (§8). With a `look`, the world is drawn into a second target and post-processed into the frame;
+/ sun direction / sun height to [n]"*, so a Brain can make dusk and night, move the sun
+and its shadows through the day, or a Rule darken a cave; Lights then stand out
+([scene2d.md](scene2d.md) §7). It starts from the project's `ambient_light`,
+`sun_light`, `sun_angle` and `sun_height` (`starting_lighting()`), and is saved with the
+game (§8). `diorama_light()` turns it and the project's shadow settings into the light
+a frame is drawn with, bringing anything logic set out of range back into it; the
+editor's preview uses the same function. With a `look`, the world is drawn into a second target and post-processed into the frame;
 the message box is drawn after, so text stays crisp. An open message box is drawn over the world ([ui.md](ui.md) §3). The window shows the image
 pixel-perfect with black bars around it ([rendering.md](rendering.md) §4).
 
@@ -280,7 +285,7 @@ A save (`Runtime::save()`, format `"sparxel.save"` version 1, `plan/03` §10) ho
 | `step` | The step count, so recorded input and timers continue from the same step |
 | `world` | Every entity and component, as a scene with GUIDs ([serialization.md](serialization.md) §5), including hidden state such as an animation's time |
 | `variables` | Every logic asset's variables, by asset and name (`Vm::variables()`) |
-| `lighting` | The `lighting` object's ambient and sun light. Optional: a save without it keeps the current lighting |
+| `lighting` | The `lighting` object's ambient light, sunlight, sun direction and sun height. Optional: a save without it (or without some of them) keeps the current values |
 
 **Loading** (`Runtime::load()`) checks the whole save first, loading its world into a
 scratch world. A save from another game or a newer version, or a broken world, is
@@ -318,7 +323,7 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
 | Look | Read and written exactly; a value out of range, one of the wrong kind and a look that is not a group refuse the project, an unknown name is reported; on the GPU, exposure 2 doubles the world's colours while the message box keeps its exact border; in Classic 2D, even the strongest tilt-shift leaves every pixel as it was |
-| Lighting | The project's `ambient_light` and `sun_light` round-trip and out-of-range values are refused; the `lighting` object starts from them, and a Rule sets both |
+| Lighting | The project's light, sun position and shadow settings round-trip; out-of-range values and an unknown shadow shape are refused; the `lighting` object starts from them, the light drawn with matches them, and a Rule sets all four; values logic sets out of range are brought back into range when drawn; all four are saved and restored |
 | Camera on the map (GPU) | The hero in a map's corner drawn off-centre where the clamped camera puts it, and centred with `camera_clamp` off; the sample village in the Diorama style with no background on any edge of the screen (this fails without the clamp) |
 | Diorama (GPU) | The same project in the Diorama style: the hero drawn as a billboard above the centre, lit as `brightness()` says; the settings round-trip; an unknown style and an out-of-range camera refused |
 | Logic and world | Names and GUIDs resolve; an entity's event reaches Rules written with its name and with its GUID, once each; Rules act through several components; logic survives storage moves |

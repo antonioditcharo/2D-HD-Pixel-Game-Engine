@@ -328,4 +328,28 @@ TEST_CASE("Shadows darken what is drawn, softly, and hide behind nearer things")
     CHECK(pixel(pixels, 16, 9, 6) == blue);                              // nearer: unshadowed
     CHECK(near_colour(pixel(pixels, 16, 6, 9), Color{0, 0, 0, 255}, 1)); // darkness 1
     CHECK(pixel(pixels, 16, 0, 15) == Color{255, 255, 255, 255});
+
+    // Shaped like a picture's opaque pixels: two texels, opaque then clear, over the full
+    // width and the middle 8 rows, darkness 1 along the top fading to 0 along the bottom.
+    const std::vector<std::uint8_t> half{0, 255, 0, 255, 0, 0, 0, 0};
+    const auto shape = device->create_texture(2, 1, half);
+    REQUIRE(shape != nullptr);
+    world->begin(*target, background, camera, eye);
+    world->draw(*white, facing(-8, -8, 8, 8, 0), Rect{0, 0, 1, 1});
+    world->draw_shadow(*shape, facing(-8, -4, 8, 4, 0.01F), Rect{0, 0, 2, 1},
+                       {1.0F, 1.0F, 0.0F, 0.0F});
+    world->draw_shadow(*shape, facing(-8, -8, 8, 8, 0.01F), Rect{0, 0, 2, 1},
+                       {0.0F, 0.0F, 0.0F, 0.0F}); // no darkness anywhere: nothing
+    REQUIRE(world->end());
+    CHECK(world->last_stats().shadows == 1);
+    CHECK(world->last_stats().draw_calls == 2); // the wall, then the shadow
+    pixels = target->read_pixels();
+    // Rows 4 to 11, interpolated from the top: row 4's middle is 1/16 of the way down.
+    CHECK(near_colour(pixel(pixels, 16, 2, 4), Color{16, 16, 16, 255}, 2));
+    CHECK(near_colour(pixel(pixels, 16, 3, 7), Color{112, 112, 112, 255}, 2));
+    CHECK(near_colour(pixel(pixels, 16, 5, 11), Color{239, 239, 239, 255}, 2));
+    // Where the picture is clear, and outside the quad, the wall is untouched.
+    CHECK(pixel(pixels, 16, 12, 7) == Color{255, 255, 255, 255});
+    CHECK(pixel(pixels, 16, 2, 2) == Color{255, 255, 255, 255});
+    CHECK(pixel(pixels, 16, 2, 13) == Color{255, 255, 255, 255});
 }

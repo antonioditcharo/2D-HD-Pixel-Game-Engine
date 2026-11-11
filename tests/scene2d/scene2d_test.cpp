@@ -862,7 +862,7 @@ TEST_CASE("A Light lights the Diorama ground around it, per pixel") {
     CHECK(pixel(draw(), 17, 8, 8) == Color{0, 0, 0, 255});
 }
 
-TEST_CASE("Sprites cast a soft shadow on the tile they stand on") {
+TEST_CASE("Sprites can cast a soft round shadow on the tile they stand on") {
     const Fixture f;
     const auto w = f.make_world();
     // Flat ground 2 x 2 around the origin, and a block 1.5 high from (2, 0).
@@ -904,6 +904,7 @@ TEST_CASE("Sprites cast a soft shadow on the tile they stand on") {
     const auto draw = [&](float shadow) {
         scene2d::DioramaLight light;
         light.sprite_shadow = shadow;
+        light.shadows = scene2d::ShadowShape::Round;
         scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
         return target->read_pixels();
     };
@@ -933,6 +934,161 @@ TEST_CASE("Sprites cast a soft shadow on the tile they stand on") {
     w->get<scene2d::Transform2D>(w->find_named("hero").at(0))->x = 6.0;
     static_cast<void>(draw(0.6F));
     CHECK(renderer->last_stats().shadows == 0);
+}
+
+TEST_CASE("The sun: where it is, and where shadows fall") {
+    const auto near = [](render::Vec3 a, render::Vec3 b) {
+        return std::abs(a.x - b.x) < 1e-5F && std::abs(a.y - b.y) < 1e-5F &&
+               std::abs(a.z - b.z) < 1e-5F;
+    };
+    const auto half = static_cast<float>(std::sqrt(0.5));
+    CHECK(near(scene2d::sun_direction(0.0, 90.0), {0, 1, 0}));         // overhead
+    CHECK(near(scene2d::sun_direction(90.0, 0.0), {1, 0, 0}));         // east, on the horizon
+    CHECK(near(scene2d::sun_direction(180.0, 45.0), {0, half, half})); // south: +z, down the map
+    CHECK(near(scene2d::sun_direction(270.0, 30.0), {-0.8660254F, 0.5F, 0.0F}));
+    // The default: south-west, so shadows fall up and to the right.
+    const scene2d::DioramaLight light;
+    CHECK(light.sun.x < 0.0F);
+    CHECK(light.sun.z > 0.0F);
+
+    // The shadow of a point one tile up: away from the sun, a tile long at 45 degrees.
+    const auto offset = [](double angle, double height) {
+        return scene2d::shadow_offset(scene2d::sun_direction(angle, height))
+            .value_or(std::array<double, 2>{99.0, 99.0});
+    };
+    CHECK(offset(90.0, 45.0)[0] == doctest::Approx(-1.0)); // sun east: shadow west
+    CHECK(offset(90.0, 45.0)[1] == doctest::Approx(0.0).epsilon(1e-6));
+    CHECK(offset(0.0, 45.0)[1] == doctest::Approx(1.0)); // sun north: shadow south
+    CHECK(offset(0.0, 60.0)[1] == doctest::Approx(1.0 / std::tan(60.0 * 3.14159265358979 / 180.0)));
+    // A low sun: as long as max_shadow_length, no longer.
+    CHECK(offset(180.0, 5.0)[1] == doctest::Approx(-scene2d::max_shadow_length));
+    CHECK(std::abs(offset(0.0, 90.0)[0]) < 1e-6); // noon: under the feet
+    CHECK(std::abs(offset(0.0, 90.0)[1]) < 1e-6);
+    // A set sun casts nothing.
+    CHECK_FALSE(scene2d::shadow_offset(scene2d::sun_direction(0.0, -10.0)).has_value());
+    CHECK_FALSE(scene2d::shadow_offset(render::Vec3{1, 0, 0}).has_value());
+}
+
+TEST_CASE("Sprites cast their silhouette on the ground, away from the sun") {
+    Fixture f;
+    // A figure one tile wide and three high (2 x 6 pixels at 2 per tile), standing in the
+    // middle of a flat red ground 8 x 8 tiles.
+    write_image(f.folder.path / "tall.png", 2, 6, std::vector<Color>(12, Color{0, 200, 0, 255}));
+    f.db.refresh();
+    REQUIRE(f.db.find("tall.png") != nullptr);
+    const Guid tall = f.db.find("tall.png")->guid;
+    const auto w = f.make_world();
+    const world::Entity ground = w->create("ground");
+    scene2d::Transform2D* at = w->add<scene2d::Transform2D>(ground);
+    at->x = -4.0;
+    at->y = -4.0;
+    at->layer = -1;
+    scene2d::Tilemap* map = w->add<scene2d::Tilemap>(ground);
+    map->tileset = f.red_image.to_string();
+    const std::string row = "0,0,0,0,0,0,0,0";
+    map->tiles = row;
+    for (int i = 1; i < 8; ++i) {
+        map->tiles += "\n" + row;
+    }
+    Fixture::place(*w, "figure", 0.0, 0.0, tall);
+
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    constexpr std::uint32_t size = 64;
+    const auto target = device->create_render_target(size, size);
+    const auto renderer = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(renderer != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    scene2d::DioramaCamera camera;
+    camera.pitch = 50.0;
+    camera.distance = 14.0;
+    camera.ppu = 2;
+    const auto draw = [&](double angle, double height, scene2d::ShadowShape shape, float dark) {
+        scene2d::DioramaLight light;
+        light.sun = scene2d::sun_direction(angle, height);
+        light.sprite_shadow = dark;
+        light.shadows = shape;
+        scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
+        return target->read_pixels();
+    };
+    // Where the feet are on the image.
+    const std::array<float, 4> clip =
+        scene2d::diorama_view_projection(camera, 1.0F).transform(render::Vec3{0, 0, 0});
+    const double feet_x = (((clip[0] / clip[3]) + 1.0) / 2.0) * size;
+    const double feet_y = ((1.0 - (clip[1] / clip[3])) / 2.0) * size;
+
+    // How the shadow lies: the darkened pixels, their middle relative to the feet (in
+    // pixels, y down), and the most any pixel was darkened (its ratio to the unshadowed).
+    struct Shade {
+        std::size_t count = 0;
+        double x = 0.0;
+        double y = 0.0;
+        double deepest = 1.0;
+    };
+    const auto shade = [&](double angle, double height, scene2d::ShadowShape shape) {
+        // The same sun lights the ground either way: only the shadow differs.
+        const std::vector<std::uint8_t> plain = draw(angle, height, shape, 0.0F);
+        const std::vector<std::uint8_t> shaded = draw(angle, height, shape, 0.5F);
+        Shade s;
+        for (std::uint32_t y = 0; y < size; ++y) {
+            for (std::uint32_t x = 0; x < size; ++x) {
+                const Color a = pixel(plain, size, x, y);
+                const Color b = pixel(shaded, size, x, y);
+                if (a == b) {
+                    continue;
+                }
+                CAPTURE(x);
+                CAPTURE(y);
+                REQUIRE(a.r > 0); // only the red ground is shadowed, not the figure
+                CHECK(b.r < a.r);
+                CHECK(b.g == a.g);
+                ++s.count;
+                s.x += x + 0.5 - feet_x;
+                s.y += y + 0.5 - feet_y;
+                s.deepest = std::min(s.deepest, static_cast<double>(b.r) / a.r);
+            }
+        }
+        if (s.count > 0) {
+            s.x /= static_cast<double>(s.count);
+            s.y /= static_cast<double>(s.count);
+        }
+        return s;
+    };
+
+    using scene2d::ShadowShape;
+    // The sun in the east: the shadow lies to the west, left on the image, three tiles
+    // long; darkest (0.5) at the feet.
+    const Shade west = shade(90.0, 45.0, ShadowShape::Cast);
+    CHECK(renderer->last_stats().shadows == 1);
+    CHECK(west.count > 20);
+    CHECK(west.x < -5.0);
+    CHECK(std::abs(west.y) < std::abs(west.x));
+    CHECK(west.deepest >= 0.48);
+    CHECK(west.deepest <= 0.56);
+    // In the west: to the east, right.
+    const Shade east = shade(270.0, 45.0, ShadowShape::Cast);
+    CHECK(east.count > 20);
+    CHECK(east.x > 5.0);
+    CHECK(std::abs(east.y) < east.x);
+    // In the north: to the south, towards the camera, down the image.
+    const Shade south = shade(0.0, 45.0, ShadowShape::Cast);
+    CHECK(south.count > 20);
+    CHECK(south.y > 3.0);
+    CHECK(std::abs(south.x) < south.y);
+    // A lower sun, a longer shadow.
+    const Shade evening = shade(90.0, 20.0, ShadowShape::Cast);
+    CHECK(evening.count > west.count);
+    CHECK(evening.x < west.x);
+    // At noon the silhouette shrinks to the line under the feet: nothing to see.
+    CHECK(shade(0.0, 90.0, ShadowShape::Cast).count == 0);
+    // The round blob ignores the sun: around the feet.
+    const Shade round = shade(90.0, 45.0, ShadowShape::Round);
+    CHECK(round.count > 0);
+    CHECK(std::abs(round.x) < 2.0);
+    CHECK(std::abs(round.y) < 3.0);
 }
 
 TEST_CASE("Diorama rays go through the image to the ground") {

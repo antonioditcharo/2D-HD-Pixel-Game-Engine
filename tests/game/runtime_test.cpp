@@ -166,7 +166,10 @@ struct Project {
                         {ir::do_action(21, "game", "save", {whole(2)}),
                          // Dusk falls: the lighting object, as a day-night Brain would use it.
                          ir::set(49, "lighting", "ambient", ir::literal(reflect::Value{0.25})),
-                         ir::set(50, "lighting", "sun", ir::literal(reflect::Value{0.1}))},
+                         ir::set(50, "lighting", "sun", ir::literal(reflect::Value{0.1})),
+                         // and the sun goes down in the west.
+                         ir::set(57, "lighting", "sun_angle", ir::literal(reflect::Value{260.0})),
+                         ir::set(58, "lighting", "sun_height", ir::literal(reflect::Value{10.0}))},
                         {}});
         rules.rules.push_back(logic::Rule{logic::BlockId{22},
                                           "input",
@@ -344,6 +347,9 @@ TEST_CASE("Project settings are read, checked and written back") {
     diorama.ambient_light = 0.2;
     diorama.sun_light = 1.5;
     diorama.sprite_shadow = 0.8;
+    diorama.sun_angle = 300.0;
+    diorama.sun_height = 20.0;
+    diorama.shadow_shape = scene2d::ShadowShape::Round;
     write_json(folder.path / game::project_file, game::project_to_json(diorama));
     issues.clear();
     const game::ProjectSettings again =
@@ -357,6 +363,9 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(again.ambient_light == 0.2);
     CHECK(again.sun_light == 1.5);
     CHECK(again.sprite_shadow == 0.8);
+    CHECK(again.sun_angle == 300.0);
+    CHECK(again.sun_height == 20.0);
+    CHECK(again.shadow_shape == scene2d::ShadowShape::Round);
 
     // Out-of-range values and a wrong style refuse the project; unknown entries do not.
     serialize::Json json = game::project_to_json(settings);
@@ -366,6 +375,8 @@ TEST_CASE("Project settings are read, checked and written back") {
     json["camera_pitch"] = 90;
     json["camera_clamp"] = "yes";
     json["sun_light"] = 3;
+    json["sun_height"] = 0;
+    json["shadow_shape"] = "square";
     json["shiny"] = true;
     write_json(folder.path / game::project_file, json);
     issues.clear();
@@ -378,7 +389,8 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(paths == std::vector<std::string>{
                        "project.sparxel.json/ppu", "project.sparxel.json/background",
                        "project.sparxel.json/shiny", "project.sparxel.json/camera_pitch",
-                       "project.sparxel.json/sun_light", "project.sparxel.json/camera_clamp",
+                       "project.sparxel.json/sun_light", "project.sparxel.json/sun_height",
+                       "project.sparxel.json/shadow_shape", "project.sparxel.json/camera_clamp",
                        "project.sparxel.json/render_style"});
 
     json = game::project_to_json(settings);
@@ -1372,26 +1384,57 @@ TEST_CASE("Lighting starts from the project and logic changes it") {
     REQUIRE(issues.empty());
     settings.ambient_light = 0.4;
     settings.sun_light = 0.9;
+    settings.sun_angle = 100.0;
+    settings.sun_height = 40.0;
+    settings.sprite_shadow = 0.6;
+    settings.shadow_shape = scene2d::ShadowShape::Round;
     write_json(project.folder.path / game::project_file, game::project_to_json(settings));
     input::Recording replay;
     replay.record(1, key(input::Key::X), true); // Cancel: its Rule sets dusk
     const auto runtime = project.open(no_graphics(&replay));
     CHECK(runtime->lighting().ambient == 0.4);
     CHECK(runtime->lighting().sun == 0.9);
+    CHECK(runtime->lighting().sun_angle == 100.0);
+    CHECK(runtime->lighting().sun_height == 40.0);
+    // What the game draws with: the lighting, and the project's shadows.
+    scene2d::DioramaLight light = game::diorama_light(settings, runtime->lighting());
+    CHECK(light.ambient == doctest::Approx(0.4));
+    CHECK(light.diffuse == doctest::Approx(0.9));
+    const render::Vec3 sun = scene2d::sun_direction(100.0, 40.0);
+    CHECK(light.sun.x == doctest::Approx(sun.x));
+    CHECK(light.sun.y == doctest::Approx(sun.y));
+    CHECK(light.sun.z == doctest::Approx(sun.z));
+    CHECK(light.sprite_shadow == doctest::Approx(0.6));
+    CHECK(light.shadows == scene2d::ShadowShape::Round);
     runtime->step();
     runtime->step();
     CHECK(runtime->lighting().ambient == 0.25);
     CHECK(runtime->lighting().sun == 0.1);
+    CHECK(runtime->lighting().sun_angle == 260.0);
+    CHECK(runtime->lighting().sun_height == 10.0);
+
+    // Values logic could set out of range, or not numbers, are brought back into range.
+    game::LightingObject wild;
+    wild.ambient = std::nan("");
+    wild.sun = 9.0;
+    wild.sun_height = -50.0;
+    light = game::diorama_light(settings, wild);
+    CHECK(light.ambient == doctest::Approx(0.55));
+    CHECK(light.diffuse == doctest::Approx(2.0));
+    CHECK(light.sun.y == doctest::Approx(std::sin(5.0 * 3.14159265358979 / 180.0)));
 
     // Saved with the game, and restored; a save without it (made before lighting was
     // saved) keeps the current lighting.
     serialize::Json saved = runtime->save();
     CHECK(saved["lighting"]["ambient"] == 0.25);
+    CHECK(saved["lighting"]["sun_angle"] == 260.0);
     const auto other = project.open(no_graphics(nullptr));
     std::vector<serialize::Issue> load_issues;
     REQUIRE(other->load(saved, load_issues));
     CHECK(other->lighting().ambient == 0.25);
     CHECK(other->lighting().sun == 0.1);
+    CHECK(other->lighting().sun_angle == 260.0);
+    CHECK(other->lighting().sun_height == 10.0);
     saved.erase("lighting");
     const auto older = project.open(no_graphics(nullptr));
     REQUIRE(older->load(saved, load_issues));

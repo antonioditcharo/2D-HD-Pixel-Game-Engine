@@ -3,8 +3,8 @@
 > **Status: v0.2, Spike R under way.** A GPU device on the SDL3 GPU API, textures,
 > offscreen render targets with readback, a batched sprite renderer, and a 3D world
 > renderer with a depth buffer, alpha cutout, per-quad lighting colour and distance fog,
-> with shaders compiled offline from HLSL. Tested pixel by pixel on a software GPU. Shadows,
-> normal-mapped lighting, depth of field and bloom come next (§8).
+> with shaders compiled offline from HLSL, point lights, shadow decals shaped by a blob or
+> by any picture, and post-processing. Tested pixel by pixel on a software GPU.
 >
 > Code: [`engine/render/include/engine/render/render.h`](../../engine/render/include/engine/render/render.h),
 > [`src/render.cpp`](../../engine/render/src/render.cpp) and the shaders in
@@ -160,6 +160,12 @@ world->end();
   ones. Tested: exactly half as bright at the middle with darkness 0.5, a soft rim, the
   corners of its square untouched, hidden behind a nearer quad, and darkness 0 drawing
   nothing.
+- **Shaped shadows:** `draw_shadow(shape, corners, source, darkness)` takes its shape from
+  the alpha of a picture's `source` pixels, and a darkness for each corner, blended
+  between them: a character's silhouette cast on the ground by the sun (scene2d §7).
+  Tested on a picture half opaque and half clear, dark 1 along the top fading to 0 at
+  the bottom: the exact grey in three rows, the clear half and the rest untouched.
+  Shadows sharing a shape are drawn together, one draw call per run.
 - **Batching:** one draw call per run of quads sharing a texture, as for sprites.
 - Translucent quads (blended, sorted back to front) are not supported yet: every texel is
   either fully drawn or cut out.
@@ -200,7 +206,7 @@ Towards the reference scene of Spike R (`plan/08` Phase 0, `plan/04` §4):
 
 1. **Frame pacing in windows:** vsync choice and frame-time measurement.
 2. **Translucency:** sorted, blended quads for glass, water and fading sprites.
-3. **Shadows** from the sun and from point lights, and normal-mapped sprites
+3. **Shadows** from blocks and from point lights, and normal-mapped sprites
    (`plan/04` §5 and §7).
 4. **More of the Look** (`plan/04` §8): LUT colour grading, physical depth of field for
    cutscenes, volumetric light, and Looks that blend by zone and time of day.

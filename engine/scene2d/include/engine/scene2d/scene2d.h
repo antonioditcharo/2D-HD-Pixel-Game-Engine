@@ -253,16 +253,40 @@ struct DioramaCamera {
     std::uint32_t ppu = 16; ///< Pixels per tile, to size sprites and tiles.
 };
 
+/// Where the sun is by default: in the south-west (behind the default camera, a little to
+/// its left), 55 degrees above the horizon. Shadows fall up the screen and to the right.
+constexpr double default_sun_angle = 215.0;
+constexpr double default_sun_height = 55.0;
+
+/// The direction towards the sun, a unit vector, from where it is: `angle` degrees
+/// clockwise from north (up the map: 90 is east, 180 south) and `height` degrees above the
+/// horizon (90 is straight overhead).
+[[nodiscard]] render::Vec3 sun_direction(double angle, double height) noexcept;
+
+/// The shape of the shadow each sprite casts in the Diorama style.
+enum class ShadowShape : std::uint8_t {
+    Cast,  ///< Its own silhouette, laid on the ground away from the sun.
+    Round, ///< A soft round blob under its feet, whatever the sun.
+};
+
 /// The light of a diorama: every face is lit by `ambient` plus `diffuse` times how much it
 /// faces the sun.
 struct DioramaLight {
-    render::Vec3 sun{-0.4F, 1.0F, 0.6F}; ///< Towards the sun; need not be normalised.
+    /// Towards the sun; need not be normalised.
+    render::Vec3 sun = sun_direction(default_sun_angle, default_sun_height);
     float ambient = 0.55F;
     float diffuse = 0.45F;
-    /// How dark the soft shadow under each sprite is, 0 (none) to 1. Shadows lie on the
-    /// top of the highest tile under the sprite's feet; with no tile there, none is drawn.
+    /// How dark each sprite's shadow is, 0 (none) to 1. Shadows lie on the top of the
+    /// highest tile under the sprite's feet; with no tile there, none is drawn.
     float sprite_shadow = 0.35F;
+    ShadowShape shadows = ShadowShape::Cast;
 };
+
+/// How far the shadow of a point one tile up reaches across the ground, as (x, y) on the
+/// map, with the sun in direction `sun`: away from the sun, longer as it gets lower, and
+/// at most max_shadow_length. Nothing with the sun at or below the horizon.
+[[nodiscard]] std::optional<std::array<double, 2>> shadow_offset(render::Vec3 sun) noexcept;
+constexpr double max_shadow_length = 3.0;
 
 /// The top of the highest visible tile under map point (x, y), in tiles above the
 /// ground: a block's height, or about 0 for flat maps. Nothing if no tile is there.

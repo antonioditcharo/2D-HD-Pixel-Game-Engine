@@ -108,6 +108,20 @@ void register_lighting_types(reflect::Registry& registry) {
         .step(0.05)
         .display_name("Sunlight")
         .tooltip("How strong the sun (or the moon) is.");
+    lighting.property<&LightingObject::sun_angle>("sun_angle")
+        .range(0.0, 360.0)
+        .step(5.0)
+        .unit(reflect::Unit::Degrees)
+        .display_name("Sun direction")
+        .tooltip("Where the sun is, clockwise from north (up the map): 90 is east, 180 "
+                 "south, 270 west. Shadows fall the other way.");
+    lighting.property<&LightingObject::sun_height>("sun_height")
+        .range(5.0, 90.0)
+        .step(5.0)
+        .unit(reflect::Unit::Degrees)
+        .display_name("Sun height")
+        .tooltip("How high the sun is above the horizon: low for long morning and evening "
+                 "shadows, 90 for noon.");
 }
 
 } // namespace engine::game

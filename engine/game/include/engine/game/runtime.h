@@ -67,8 +67,15 @@ struct ProjectSettings {
     /// Logic changes them with the "lighting" object.
     double ambient_light = 0.55;
     double sun_light = 0.45;
-    /// How dark the soft shadow under each sprite is in the Diorama style, 0 (none) to 1.
+    /// Where the sun is at the start: degrees clockwise from north (0 to 360) and above
+    /// the horizon (5 to 90). Logic moves it with the "lighting" object.
+    double sun_angle = scene2d::default_sun_angle;
+    double sun_height = scene2d::default_sun_height;
+    /// How dark each sprite's shadow is in the Diorama style, 0 (none) to 1, and its
+    /// shape: its silhouette cast away from the sun, or a round blob under its feet. In
+    /// the project file, "sprite_shadow" and "shadow_shape" ("cast" or "round").
     double sprite_shadow = 0.35;
+    scene2d::ShadowShape shadow_shape = scene2d::ShadowShape::Cast;
     /// Post-processing for the finished frame: tilt-shift, bloom, grading, vignette. The
     /// default changes nothing. In the project file, the group "look".
     render::Look look;
@@ -83,6 +90,13 @@ struct ProjectSettings {
 [[nodiscard]] std::optional<ProjectSettings> read_project(const std::filesystem::path& root,
                                                           std::vector<serialize::Issue>& issues);
 [[nodiscard]] serialize::Json project_to_json(const ProjectSettings& settings);
+
+/// The lighting a game starts with: the project's.
+[[nodiscard]] LightingObject starting_lighting(const ProjectSettings& settings);
+/// The Diorama light the game draws with, from the lighting now and the project's shadows,
+/// every value clamped to its range. The editor's preview uses it too.
+[[nodiscard]] scene2d::DioramaLight diorama_light(const ProjectSettings& settings,
+                                                  const LightingObject& lighting);
 
 /// Registers every type the runtime uses: Classic 2D components, input, and behaviours.
 void register_types(reflect::Registry& registry);

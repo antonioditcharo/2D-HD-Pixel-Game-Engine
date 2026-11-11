@@ -39,10 +39,42 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 18> known_project_keys{
-    "format",     "version",      "name",          "start_scene", "ppu",          "width",
-    "height",     "background",   "render_style",  "gravity",     "camera_pitch", "camera_distance",
-    "camera_fov", "camera_clamp", "ambient_light", "sun_light",   "look",         "sprite_shadow"};
+constexpr std::array<std::string_view, 21> known_project_keys{
+    "format",       "version",         "name",       "start_scene",  "ppu",
+    "width",        "height",          "background", "render_style", "gravity",
+    "camera_pitch", "camera_distance", "camera_fov", "camera_clamp", "ambient_light",
+    "sun_light",    "sun_angle",       "sun_height", "look",         "sprite_shadow",
+    "shadow_shape"};
+
+} // namespace
+
+LightingObject starting_lighting(const ProjectSettings& settings) {
+    LightingObject lighting;
+    lighting.ambient = settings.ambient_light;
+    lighting.sun = settings.sun_light;
+    lighting.sun_angle = settings.sun_angle;
+    lighting.sun_height = settings.sun_height;
+    return lighting;
+}
+
+scene2d::DioramaLight diorama_light(const ProjectSettings& settings,
+                                    const LightingObject& lighting) {
+    // Logic can set anything, so every value is checked before it lights a frame.
+    const auto within = [](double value, double fallback, double min, double max) {
+        return std::clamp(std::isfinite(value) ? value : fallback, min, max);
+    };
+    scene2d::DioramaLight light;
+    light.ambient = static_cast<float>(within(lighting.ambient, 0.55, 0.0, 2.0));
+    light.diffuse = static_cast<float>(within(lighting.sun, 0.45, 0.0, 2.0));
+    light.sun = scene2d::sun_direction(
+        within(lighting.sun_angle, scene2d::default_sun_angle, -720.0, 720.0),
+        within(lighting.sun_height, scene2d::default_sun_height, 5.0, 90.0));
+    light.sprite_shadow = static_cast<float>(within(settings.sprite_shadow, 0.35, 0.0, 1.0));
+    light.shadows = settings.shadow_shape;
+    return light;
+}
+
+namespace {
 
 /// The look a project's frames get: tilt-shift imitates a lens photographing a miniature,
 /// so it belongs to the Diorama style; flat Classic 2D keeps the rest of the look.
@@ -273,7 +305,21 @@ std::optional<ProjectSettings> read_project(const fs::path& root,
     number("camera_fov", settings.camera_fov, 5.0, 90.0);
     number("ambient_light", settings.ambient_light, 0.0, 2.0);
     number("sun_light", settings.sun_light, 0.0, 2.0);
+    number("sun_angle", settings.sun_angle, 0.0, 360.0);
+    number("sun_height", settings.sun_height, 5.0, 90.0);
     number("sprite_shadow", settings.sprite_shadow, 0.0, 1.0);
+    if (const auto shape = doc.find("shadow_shape"); shape != doc.end()) {
+        if (shape->is_string() && shape->get<std::string>() == "cast") {
+            settings.shadow_shape = scene2d::ShadowShape::Cast;
+        } else if (shape->is_string() && shape->get<std::string>() == "round") {
+            settings.shadow_shape = scene2d::ShadowShape::Round;
+        } else {
+            issues.push_back(serialize::Issue{
+                file + "/shadow_shape",
+                "The shadow shape must be \"cast\" (away from the sun) or \"round\"."});
+            ok = false;
+        }
+    }
     if (const auto look = doc.find("look"); look != doc.end()) {
         if (!look->is_object()) {
             issues.push_back(
@@ -367,7 +413,10 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["camera_clamp"] = settings.camera_clamp;
     json["ambient_light"] = settings.ambient_light;
     json["sun_light"] = settings.sun_light;
+    json["sun_angle"] = settings.sun_angle;
+    json["sun_height"] = settings.sun_height;
     json["sprite_shadow"] = settings.sprite_shadow;
+    json["shadow_shape"] = settings.shadow_shape == scene2d::ShadowShape::Round ? "round" : "cast";
     serialize::Json look = serialize::Json::object();
     look["tilt_shift"] = settings.look.tilt_shift;
     for (const LookNumber& number : look_numbers) {
@@ -534,8 +583,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         issues.push_back(
             serialize::Issue{"", "The audio object could not be made available to logic."});
     }
-    r.lighting.ambient = r.settings.ambient_light;
-    r.lighting.sun = r.settings.sun_light;
+    r.lighting = starting_lighting(r.settings);
     if (!r.vm->bind("lighting", reflect::ObjectRef::of(r.lighting))) {
         issues.push_back(
             serialize::Issue{"", "The lighting object could not be made available to logic."});
@@ -824,14 +872,8 @@ bool Runtime::draw() {
     if (r.settings.style == RenderStyle::Diorama) {
         orbit.x = camera.x;
         orbit.y = camera.y;
-        scene2d::DioramaLight light;
-        light.ambient = static_cast<float>(
-            std::clamp(std::isfinite(r.lighting.ambient) ? r.lighting.ambient : 0.55, 0.0, 2.0));
-        light.diffuse = static_cast<float>(
-            std::clamp(std::isfinite(r.lighting.sun) ? r.lighting.sun : 0.45, 0.0, 2.0));
-        light.sprite_shadow = static_cast<float>(std::clamp(r.settings.sprite_shadow, 0.0, 1.0));
         scene2d::draw_diorama(*r.world, *r.textures, *r.world_renderer, world_target, orbit,
-                              r.settings.background, light);
+                              r.settings.background, diorama_light(r.settings, r.lighting));
     } else {
         scene2d::draw_world(*r.world, *r.textures, *r.sprites, world_target, camera,
                             r.settings.background);
@@ -960,7 +1002,10 @@ serialize::Json Runtime::save() const {
         variables[script] = std::move(values);
     }
     json["variables"] = std::move(variables);
-    json["lighting"] = serialize::Json{{"ambient", r.lighting.ambient}, {"sun", r.lighting.sun}};
+    json["lighting"] = serialize::Json{{"ambient", r.lighting.ambient},
+                                       {"sun", r.lighting.sun},
+                                       {"sun_angle", r.lighting.sun_angle},
+                                       {"sun_height", r.lighting.sun_height}};
     return json;
 }
 
@@ -1066,13 +1111,20 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
     // The lighting, if the save has it (saves made before it was saved do not).
     if (const auto lighting = json.find("lighting");
         lighting != json.end() && lighting->is_object()) {
-        for (const auto& [key, target] :
-             {std::pair<const char*, double*>{"ambient", &r.lighting.ambient},
-              std::pair<const char*, double*>{"sun", &r.lighting.sun}}) {
-            const auto value = lighting->find(key);
+        struct Entry {
+            const char* key;
+            double* target;
+            double min;
+            double max;
+        };
+        for (const Entry& entry : {Entry{"ambient", &r.lighting.ambient, 0.0, 2.0},
+                                   Entry{"sun", &r.lighting.sun, 0.0, 2.0},
+                                   Entry{"sun_angle", &r.lighting.sun_angle, 0.0, 360.0},
+                                   Entry{"sun_height", &r.lighting.sun_height, 5.0, 90.0}}) {
+            const auto value = lighting->find(entry.key);
             if (value != lighting->end() && value->is_number() &&
                 std::isfinite(value->get<double>())) {
-                *target = std::clamp(value->get<double>(), 0.0, 2.0);
+                *entry.target = std::clamp(value->get<double>(), entry.min, entry.max);
             }
         }
     }
