@@ -1,5 +1,7 @@
-// World pixel shader: the texel times the vertex colour plus the point lights, with alpha
-// cut out so pixel art keeps hard edges and sorts by depth, then linear distance fog.
+// World pixel shader: the texel times the vertex colour plus the point lights, then linear
+// distance fog. Opaque quads cut alpha out, so pixel art keeps hard edges and sorts by
+// depth; see-through quads (the blended pipeline sets fog_range.w) keep the texel's alpha
+// times the colour's, to blend over what is behind them.
 // Textures and samplers are in (t, space2) and (s, space2), uniforms in (b, space3), as SDL
 // GPU requires.
 
@@ -11,7 +13,8 @@ SamplerState world_sampler : register(s0, space2);
 cbuffer Frame : register(b0, space3)
 {
     float4 fog_color;  // rgb
-    float4 fog_range;  // x: start distance, y: 1 / (end - start), z: 1 if fog is on
+    float4 fog_range;  // x: start distance, y: 1 / (end - start), z: 1 if fog is on,
+                       // w: 1 for see-through quads
     float4 light_count; // x
     float4 light_position[MAX_POINT_LIGHTS]; // xyz: where, w: radius
     float4 light_color[MAX_POINT_LIGHTS];    // rgb
@@ -30,7 +33,9 @@ struct Input
 float4 main(Input input) : SV_Target0
 {
     const float4 texel = world_texture.Sample(world_sampler, input.uv);
-    if (texel.a < 0.5)
+    const bool blended = fog_range.w > 0.5;
+    const float alpha = blended ? texel.a * input.color.a : 1.0;
+    if ((blended && alpha < 0.002) || (!blended && texel.a < 0.5))
     {
         discard;
     }
@@ -65,5 +70,5 @@ float4 main(Input input) : SV_Target0
         const float amount = saturate((input.distance - fog_range.x) * fog_range.y);
         rgb = lerp(rgb, fog_color.rgb, amount);
     }
-    return float4(rgb, 1.0);
+    return float4(rgb, alpha);
 }

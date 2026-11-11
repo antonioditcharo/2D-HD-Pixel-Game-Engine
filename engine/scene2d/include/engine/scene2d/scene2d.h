@@ -111,6 +111,12 @@ struct Tilemap {
     /// In the Diorama style, how tall each tile stands, in tiles: 0 is flat ground; above,
     /// every tile is a block with the tile's picture on its top and sides.
     double height = 0.0;
+    /// How solid the tiles look, 0 (invisible) to 1: below 1 they are see-through, for
+    /// water over a riverbed or glass blocks; what is behind shows through, blended.
+    double opacity = 1.0;
+
+    /// The alpha the tiles are drawn with, 0 to 255, from `opacity`.
+    [[nodiscard]] std::uint8_t alpha() const noexcept;
 
     /// The parsed tiles, kept until `tiles` changes. Null, with `error` set, if the text
     /// is not valid.

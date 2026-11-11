@@ -41,7 +41,7 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
 | `Texture` | RGBA8 pixels uploaded to the GPU |
 | `RenderTarget` | An offscreen image to draw into; `read_pixels()` copies it back |
 | `SpriteRenderer` | Draws textured, tinted rectangles in batches |
-| `WorldRenderer` | Draws textured quads in 3D with a depth buffer, alpha cutout, lighting colour, point lights per pixel and fog (§7) |
+| `WorldRenderer` | Draws textured quads in 3D with a depth buffer, alpha cutout, see-through quads blended farthest first, lighting colour, point lights per pixel, shadow decals and fog (§7) |
 
 ## 3. Sprites
 
@@ -167,8 +167,18 @@ world->end();
   the bottom: the exact grey in three rows, the clear half and the rest untouched.
   Shadows sharing a shape are drawn together, one draw call per run.
 - **Batching:** one draw call per run of quads sharing a texture, as for sprites.
-- Translucent quads (blended, sorted back to front) are not supported yet: every texel is
-  either fully drawn or cut out.
+- **See-through quads** (glass, water, fading characters): a quad whose colour's alpha is
+  below 1, or whose texture has partly see-through pixels (`Texture::translucent()`,
+  found when it is made), is drawn after the opaque quads and the shadows, by a third
+  pipeline that blends it over what is behind it, farthest first (by its middle's
+  distance from the eye; equally far, in the order given). It is depth-tested but not
+  depth-written, so it never hides what is behind it, and the frame stays opaque. The
+  same pixel shader serves both, in a blended mode that keeps the texel's alpha times
+  the colour's instead of cutting it out. Opaque quads are cut out at alpha one half, as
+  before. Fully clear quads are not drawn. Tested: two half see-through quads given
+  nearest first still blend farthest first to the exact colour; one over a solid quad
+  given after it but lying behind it; a picture with a half-alpha texel blends on its
+  own; `translucent()` true only for partial alpha; the counts in `Stats`.
 
 ## 8. Post-processing: the Look
 
@@ -205,7 +215,7 @@ the same size.
 Towards the reference scene of Spike R (`plan/08` Phase 0, `plan/04` §4):
 
 1. **Frame pacing in windows:** vsync choice and frame-time measurement.
-2. **Translucency:** sorted, blended quads for glass, water and fading sprites.
+2. **Water that moves:** scrolling and rippling surfaces, and reflections (`plan/04` §5).
 3. **Shadows** from blocks and from point lights, and normal-mapped sprites
    (`plan/04` §5 and §7).
 4. **More of the Look** (`plan/04` §8): LUT colour grading, physical depth of field for

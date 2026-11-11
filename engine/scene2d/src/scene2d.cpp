@@ -119,6 +119,9 @@ void register_types(reflect::Registry& registry) {
         .tooltip("In the Diorama style, how tall each tile stands: 0 is flat ground.");
     tilemap.property<&Tilemap::solid>("solid").tooltip(
         "Every tile of this map blocks movement. Paint walls on their own map.");
+    tilemap.property<&Tilemap::opacity>("opacity").range(0.0, 1.0).step(0.05).tooltip(
+        "How solid the tiles look: lower for water over a riverbed, or glass, so "
+        "what is behind shows through.");
 
     auto light =
         registry.add_type<Light>("light").display_name("Light").category("Visuals").tooltip(
@@ -244,6 +247,11 @@ std::string format_tiles(const TileGrid& grid) {
         }
     }
     return text;
+}
+
+std::uint8_t Tilemap::alpha() const noexcept {
+    const double o = std::isfinite(opacity) ? std::clamp(opacity, 0.0, 1.0) : 1.0;
+    return static_cast<std::uint8_t>(std::lround(o * 255.0));
 }
 
 const TileGrid* Tilemap::grid(std::string& error) const {
@@ -694,7 +702,7 @@ DrawStats draw_world(const world::World& world, TextureCache& textures,
                                 static_cast<float>(size), static_cast<float>(size)};
                             item.destination =
                                 to_screen(left + (x * tile), top + (y * tile), tile, tile);
-                            item.tint = render::Color{255, 255, 255, 255};
+                            item.tint = render::Color{255, 255, 255, tilemap->alpha()};
                             items.push_back(item);
                         }
                     }
@@ -1047,6 +1055,7 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                 const float height = std::isfinite(tilemap->height)
                                          ? static_cast<float>(std::max(tilemap->height, 0.0))
                                          : 0.0F;
+                const render::Color tint{255, 255, 255, tilemap->alpha()};
                 const auto x0 = static_cast<float>(transform->x);
                 const auto z0 = static_cast<float>(transform->y);
                 const auto filled = [&](std::int64_t x, std::int64_t y) {
@@ -1076,8 +1085,7 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                             *texture,
                             {render::Vec3{left, top, north}, render::Vec3{right, top, north},
                              render::Vec3{right, top, south}, render::Vec3{left, top, south}},
-                            source, lit(top_light, render::Color{255, 255, 255, 255}),
-                            surface(render::Vec3{0, 1, 0}, 0.0F));
+                            source, lit(top_light, tint), surface(render::Vec3{0, 1, 0}, 0.0F));
                         ++stats.drawn;
                         if (height <= 0.0F) {
                             continue;
@@ -1085,12 +1093,11 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                         // Side faces, only where no neighbouring block hides them.
                         const auto side = [&](render::Vec3 a, render::Vec3 b, float light_level,
                                               render::Vec3 normal) {
-                            renderer.draw(
-                                *texture,
-                                {render::Vec3{a.x, top, a.z}, render::Vec3{b.x, top, b.z},
-                                 render::Vec3{b.x, lift, b.z}, render::Vec3{a.x, lift, a.z}},
-                                source, lit(light_level, render::Color{255, 255, 255, 255}),
-                                surface(normal, 0.0F));
+                            renderer.draw(*texture,
+                                          {render::Vec3{a.x, top, a.z}, render::Vec3{b.x, top, b.z},
+                                           render::Vec3{b.x, lift, b.z},
+                                           render::Vec3{a.x, lift, a.z}},
+                                          source, lit(light_level, tint), surface(normal, 0.0F));
                             ++stats.drawn;
                         };
                         const auto gx = static_cast<std::int64_t>(x);

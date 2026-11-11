@@ -1091,6 +1091,91 @@ TEST_CASE("Sprites cast their silhouette on the ground, away from the sun") {
     CHECK(std::abs(round.y) < 3.0);
 }
 
+TEST_CASE("See-through maps: water over a riverbed, in both styles") {
+    scene2d::Tilemap probe;
+    CHECK(probe.alpha() == 255);
+    probe.opacity = 0.5;
+    CHECK(probe.alpha() == 128);
+    probe.opacity = -1.0;
+    CHECK(probe.alpha() == 0);
+    probe.opacity = 2.0;
+    CHECK(probe.alpha() == 255);
+    probe.opacity = std::nan("");
+    CHECK(probe.alpha() == 255);
+
+    const Fixture f;
+    const auto w = f.make_world();
+    // A red riverbed, and blue water over it a layer up, each 2 x 2 tiles from (-1, -1).
+    const auto map = [&](std::string_view name, Guid image, std::int32_t layer) {
+        const world::Entity e = w->create(name);
+        scene2d::Transform2D* at = w->add<scene2d::Transform2D>(e);
+        at->x = -1.0;
+        at->y = -1.0;
+        at->layer = layer;
+        scene2d::Tilemap* tiles = w->add<scene2d::Tilemap>(e);
+        tiles->tileset = image.to_string();
+        tiles->tiles = "0,0\n0,0";
+        return tiles;
+    };
+    static_cast<void>(map("riverbed", f.red_image, 0));
+    scene2d::Tilemap* water = map("water", f.blue_image, 1);
+    water->opacity = 0.5;
+    const auto close = [](Color a, Color b) {
+        return std::abs(a.r - b.r) <= 2 && std::abs(a.g - b.g) <= 2 && std::abs(a.b - b.b) <= 2 &&
+               a.a == 255 && b.a == 255;
+    };
+
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    scene2d::TextureCache textures(*device, f.db);
+
+    // Classic 2D: half of each, 2 pixels per tile filling a 4 x 4 target.
+    const auto flat_target = device->create_render_target(4, 4);
+    const auto sprites = render::SpriteRenderer::create(*device);
+    REQUIRE(flat_target != nullptr);
+    REQUIRE(sprites != nullptr);
+    scene2d::draw_world(*w, textures, *sprites, *flat_target, scene2d::Camera2D{0.0, 0.0, 2, 1},
+                        f.background);
+    const Color flat = pixel(flat_target->read_pixels(), 4, 1, 1);
+    CAPTURE(flat.r);
+    CAPTURE(flat.b);
+    CHECK(close(flat, Color{127, 0, 128, 255}));
+
+    // Diorama: the lit riverbed and the lit water, blended by the water's opacity.
+    const auto target = device->create_render_target(17, 17);
+    const auto renderer = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(renderer != nullptr);
+    scene2d::DioramaCamera camera;
+    camera.pitch = 45.0;
+    camera.distance = 4.0;
+    camera.ppu = 2;
+    const auto middle = [&] {
+        scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, {});
+        return pixel(target->read_pixels(), 17, 8, 8);
+    };
+    const Color blended = middle();
+    CHECK(renderer->last_stats().translucent == 4);
+    water->opacity = 1.0;
+    const Color solid_water = middle();
+    CHECK(renderer->last_stats().translucent == 0);
+    water->opacity = 0.0;
+    const Color riverbed = middle(); // fully clear water: not drawn at all
+    CHECK(renderer->last_stats().translucent == 0);
+    const double a = 128.0 / 255.0;
+    const auto mix = [a](std::uint8_t under, std::uint8_t over) {
+        return static_cast<std::uint8_t>(std::lround((under * (1.0 - a)) + (over * a)));
+    };
+    CAPTURE(blended.r);
+    CAPTURE(blended.b);
+    CHECK(riverbed.r > 0);
+    CHECK(solid_water.b > 0);
+    CHECK(close(blended, Color{mix(riverbed.r, solid_water.r), mix(riverbed.g, solid_water.g),
+                               mix(riverbed.b, solid_water.b), 255}));
+}
+
 TEST_CASE("Diorama rays go through the image to the ground") {
     scene2d::DioramaCamera camera;
     camera.x = 4.0;

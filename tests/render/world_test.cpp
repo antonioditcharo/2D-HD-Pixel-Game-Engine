@@ -353,3 +353,57 @@ TEST_CASE("Shadows darken what is drawn, softly, and hide behind nearer things")
     CHECK(pixel(pixels, 16, 2, 2) == Color{255, 255, 255, 255});
     CHECK(pixel(pixels, 16, 2, 13) == Color{255, 255, 255, 255});
 }
+
+TEST_CASE("See-through quads blend over what is behind them, farthest first") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const auto target = device->create_render_target(16, 16);
+    const auto world = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(world != nullptr);
+    const auto white = solid(*device, Color{255, 255, 255, 255});
+    const auto red_texture = solid(*device, red);
+    const auto blue_texture = solid(*device, blue);
+    const auto green_texture = solid(*device, Color{0, 255, 0, 255});
+    CHECK_FALSE(white->translucent());
+    // A picture with a half see-through texel is translucent; one only fully clear or
+    // fully solid is not.
+    const auto glass = solid(*device, Color{0, 0, 255, 128});
+    CHECK(glass->translucent());
+    const std::vector<std::uint8_t> holed{0, 255, 0, 255, 255, 255, 255, 0};
+    CHECK_FALSE(device->create_texture(2, 1, holed)->translucent());
+
+    const Mat4 camera = Mat4::orthographic(-8, 8, -8, 8, 1, 20) *
+                        Mat4::look_at(Vec3{0, 0, 10}, Vec3{0, 0, 0}, Vec3{0, 1, 0});
+    const Vec3 eye{0, 0, 10};
+    const Rect whole{0, 0, 1, 1};
+    const std::array<float, 4> half{1.0F, 1.0F, 1.0F, 0.5F};
+    world->begin(*target, background, camera, eye);
+    world->draw(*white, facing(-8, -8, 8, 8, 0), whole);
+    // Left half: blue nearer (z 2) given before red (z 1), both half see-through. Drawn
+    // farthest first, red goes over the wall, then blue over that.
+    world->draw(*blue_texture, facing(-8, -8, 0, 8, 2), whole, half);
+    world->draw(*red_texture, facing(-8, -8, 0, 8, 1), whole, half);
+    // Right half, top: half red over a solid green quad given after it but behind it.
+    world->draw(*red_texture, facing(0, 0, 8, 8, 1), whole, half);
+    world->draw(*green_texture, facing(0, 0, 8, 8, 0.5F), whole);
+    // Right half, bottom: a picture half see-through, at full colour.
+    world->draw(*glass, facing(0, -8, 8, 0, 1), whole);
+    // Fully clear: nothing.
+    world->draw(*red_texture, facing(-8, -8, 8, 8, 3), whole, {1.0F, 1.0F, 1.0F, 0.0F});
+    REQUIRE(world->end());
+    CHECK(world->last_stats().quads == 6);
+    CHECK(world->last_stats().translucent == 4);
+    const std::vector<std::uint8_t> pixels = target->read_pixels();
+    // White, then red at half (255, 128, 128), then blue at half.
+    CHECK(near_colour(pixel(pixels, 16, 3, 8), Color{128, 64, 191, 255}, 2));
+    // Red at half over the green quad, whichever was given first.
+    CHECK(near_colour(pixel(pixels, 16, 12, 4), Color{128, 128, 0, 255}, 2));
+    // Blue at 128 / 255 over white.
+    CHECK(near_colour(pixel(pixels, 16, 12, 12), Color{127, 127, 255, 255}, 2));
+    // The frame stays opaque wherever it blended.
+    CHECK(pixel(pixels, 16, 3, 8).a == 255);
+    CHECK(pixel(pixels, 16, 12, 12).a == 255);
+}

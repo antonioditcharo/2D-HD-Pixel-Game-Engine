@@ -57,6 +57,9 @@ public:
 
     [[nodiscard]] std::uint32_t width() const noexcept { return width_; }
     [[nodiscard]] std::uint32_t height() const noexcept { return height_; }
+    /// True if some pixel is partly see-through (alpha between 0 and 255), such as glass
+    /// or water painted that way. The world renderer blends such pictures (§7).
+    [[nodiscard]] bool translucent() const noexcept { return translucent_; }
 
     struct Native;
     [[nodiscard]] const Native& native() const noexcept { return *native_; }
@@ -68,6 +71,7 @@ private:
     std::unique_ptr<Native> native_;
     std::uint32_t width_ = 0;
     std::uint32_t height_ = 0;
+    bool translucent_ = false;
 };
 
 /// An offscreen image that can be drawn into and read back.
@@ -327,6 +331,10 @@ public:
     /// positions of the source's top-left, top-right, bottom-right and bottom-left.
     /// `color` multiplies the texels (ambient and sun light times tint); point lights add
     /// to it as `surface` says, per pixel.
+    ///
+    /// A quad whose colour's alpha is below 1, or whose texture is translucent(), is
+    /// see-through: drawn after everything else, blended over what is behind it, farthest
+    /// first. Otherwise texels are either drawn or cut out (alpha below a half).
     void draw(const Texture& texture, const std::array<Vec3, 4>& corners, Rect source,
               std::array<float, 4> color = {1.0F, 1.0F, 1.0F, 1.0F}, const Surface& surface = {});
     /// Queues a soft round shadow over the quad with these corners (as draw() takes
@@ -347,6 +355,7 @@ public:
 
     struct Stats {
         std::size_t quads = 0;
+        std::size_t translucent = 0; ///< Of `quads`, those blended.
         std::size_t shadows = 0;
         /// One per run of quads sharing a texture, and one per run of shadows sharing a shape.
         std::size_t draw_calls = 0;

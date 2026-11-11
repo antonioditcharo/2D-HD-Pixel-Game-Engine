@@ -295,7 +295,14 @@ std::unique_ptr<Texture> Device::create_texture(std::uint32_t width, std::uint32
     auto native = std::make_unique<Texture::Native>();
     native->device = native_->device;
     native->texture = texture;
-    return std::unique_ptr<Texture>(new Texture(std::move(native), width, height));
+    auto made = std::unique_ptr<Texture>(new Texture(std::move(native), width, height));
+    for (std::size_t i = 3; i < rgba.size(); i += 4) {
+        if (rgba[i] != 0 && rgba[i] != 255) {
+            made->translucent_ = true;
+            break;
+        }
+    }
+    return made;
 }
 
 std::unique_ptr<RenderTarget> Device::create_render_target(std::uint32_t width,
@@ -854,6 +861,15 @@ struct WorldRenderer::Native {
     std::unique_ptr<Texture> shadow_mask; ///< A soft round blob.
     std::vector<WorldVertex> shadows;
     std::vector<const Texture*> shadow_shapes; ///< Per shadow; the blob is shadow_mask.
+    // See-through quads, drawn last, blended, farthest first (world.frag.hlsl in its
+    // blended mode).
+    SDL_GPUGraphicsPipeline* blend_pipeline{nullptr};
+    struct Translucent {
+        std::array<WorldVertex, 6> vertices;
+        const Texture* texture;
+        float distance; ///< Squared, from the eye to the quad's middle.
+    };
+    std::vector<Translucent> translucent;
 };
 
 WorldRenderer::WorldRenderer(Device& device, std::unique_ptr<Native> native)
@@ -868,6 +884,9 @@ WorldRenderer::~WorldRenderer() {
     SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->pipeline);
     if (native_->shadow_pipeline != nullptr) {
         SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->shadow_pipeline);
+    }
+    if (native_->blend_pipeline != nullptr) {
+        SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->blend_pipeline);
     }
 }
 
@@ -916,6 +935,7 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
 
     SDL_GPUGraphicsPipeline* pipeline = nullptr;
     SDL_GPUGraphicsPipeline* shadow_pipeline = nullptr;
+    SDL_GPUGraphicsPipeline* blend_pipeline = nullptr;
     if (vertex_shader == nullptr || fragment_shader == nullptr) {
         device.last_error_ = sdl_error("Creating the world shaders failed");
     } else {
@@ -976,9 +996,29 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
             shadow_pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &shadow);
         }
         release(gpu, shadow_shader);
-        if (shadow_pipeline == nullptr && pipeline != nullptr) {
+        // See-through quads: the same shaders, blended over what is behind, tested
+        // against depth but not written, so they never hide what is drawn after them.
+        if (pipeline != nullptr && shadow_pipeline != nullptr) {
+            SDL_GPUColorTargetDescription over = color;
+            over.blend_state.enable_blend = true;
+            over.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+            over.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+            over.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+            over.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+            over.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+            over.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+            SDL_GPUGraphicsPipelineCreateInfo blend = info;
+            blend.target_info.color_target_descriptions = &over;
+            blend.depth_stencil_state.enable_depth_write = false;
+            blend_pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &blend);
+        }
+        if ((shadow_pipeline == nullptr || blend_pipeline == nullptr) && pipeline != nullptr) {
             SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
             pipeline = nullptr;
+            if (shadow_pipeline != nullptr) {
+                SDL_ReleaseGPUGraphicsPipeline(gpu, shadow_pipeline);
+                shadow_pipeline = nullptr;
+            }
         }
     }
     if (pipeline == nullptr && vertex_shader != nullptr && fragment_shader != nullptr) {
@@ -1020,6 +1060,7 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
         }
         SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
         SDL_ReleaseGPUGraphicsPipeline(gpu, shadow_pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(gpu, blend_pipeline);
         return nullptr;
     }
 
@@ -1027,6 +1068,7 @@ std::unique_ptr<WorldRenderer> WorldRenderer::create(Device& device) {
     native->device = gpu;
     native->pipeline = pipeline;
     native->shadow_pipeline = shadow_pipeline;
+    native->blend_pipeline = blend_pipeline;
     native->shadow_mask = std::move(shadow_mask);
     native->sampler = sampler;
     native->depth_format = depth_format;
@@ -1056,6 +1098,7 @@ void WorldRenderer::begin(RenderTarget& target, Color clear, const Mat4& view_pr
     native_->textures.clear();
     native_->shadows.clear();
     native_->shadow_shapes.clear();
+    native_->translucent.clear();
 }
 
 namespace {
@@ -1142,6 +1185,21 @@ void WorldRenderer::draw(const Texture& texture, const std::array<Vec3, 4>& corn
     const WorldVertex tr = corner(corners[1], u1, v0);
     const WorldVertex br = corner(corners[2], u1, v1);
     const WorldVertex bl = corner(corners[3], u0, v1);
+    if (color[3] < 0.999F || texture.translucent()) {
+        if (!(color[3] > 0.0F)) {
+            return; // fully clear: nothing to draw
+        }
+        const Vec3 middle{(corners[0].x + corners[2].x) / 2.0F,
+                          (corners[0].y + corners[2].y) / 2.0F,
+                          (corners[0].z + corners[2].z) / 2.0F};
+        const Vec3 eye = native_->eye;
+        const float dx = middle.x - eye.x;
+        const float dy = middle.y - eye.y;
+        const float dz = middle.z - eye.z;
+        native_->translucent.push_back(Native::Translucent{
+            {tl, tr, bl, tr, br, bl}, &texture, (dx * dx) + (dy * dy) + (dz * dz)});
+        return;
+    }
     const WorldVertex quad[6] = {tl, tr, bl, tr, br, bl};
     native_->vertices.insert(native_->vertices.end(), std::begin(quad), std::end(quad));
     native_->textures.push_back(&texture);
@@ -1178,9 +1236,18 @@ bool WorldRenderer::end() {
         }
     }
 
-    // Shadows go after the quads in the same buffer.
+    // Shadows go after the quads in the same buffer, then the see-through quads,
+    // farthest first (in the order drawn where equally far).
     const auto opaque_count = static_cast<std::uint32_t>(n.vertices.size());
     n.vertices.insert(n.vertices.end(), n.shadows.begin(), n.shadows.end());
+    const auto shadowed_count = static_cast<std::uint32_t>(n.vertices.size());
+    std::stable_sort(n.translucent.begin(), n.translucent.end(),
+                     [](const Native::Translucent& a, const Native::Translucent& b) {
+                         return a.distance > b.distance;
+                     });
+    for (const Native::Translucent& quad : n.translucent) {
+        n.vertices.insert(n.vertices.end(), quad.vertices.begin(), quad.vertices.end());
+    }
     const auto vertex_count = static_cast<std::uint32_t>(n.vertices.size());
     const std::uint32_t bytes = vertex_count * static_cast<std::uint32_t>(sizeof(WorldVertex));
     SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(n.device);
@@ -1299,7 +1366,7 @@ bool WorldRenderer::end() {
             ++stats_.draw_calls;
             first = last;
         }
-        if (vertex_count > opaque_count) {
+        if (shadowed_count > opaque_count) {
             SDL_BindGPUGraphicsPipeline(pass, n.shadow_pipeline);
             // One draw per run of shadows sharing a shape (the blob, or a sprite's picture).
             std::size_t from = 0;
@@ -1320,6 +1387,27 @@ bool WorldRenderer::end() {
                 from = to;
             }
         }
+        if (vertex_count > shadowed_count) {
+            SDL_BindGPUGraphicsPipeline(pass, n.blend_pipeline);
+            frame[7] = 1.0F; // the pixel shader's blended mode
+            SDL_PushGPUFragmentUniformData(commands, 0, frame.data(), sizeof(frame));
+            std::size_t from = 0;
+            while (from < n.translucent.size()) {
+                std::size_t to = from + 1;
+                while (to < n.translucent.size() &&
+                       n.translucent[to].texture == n.translucent[from].texture) {
+                    ++to;
+                }
+                SDL_GPUTextureSamplerBinding sampler{};
+                sampler.texture = n.translucent[from].texture->native().texture;
+                sampler.sampler = n.sampler;
+                SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
+                SDL_DrawGPUPrimitives(pass, static_cast<std::uint32_t>((to - from) * 6), 1,
+                                      shadowed_count + static_cast<std::uint32_t>(from * 6), 0);
+                ++stats_.draw_calls;
+                from = to;
+            }
+        }
     }
     SDL_EndGPURenderPass(pass);
     const bool submitted = submit_paced(device_.native(), commands);
@@ -1328,7 +1416,8 @@ bool WorldRenderer::end() {
         device_.last_error_ = sdl_error("Submitting the frame failed");
         return false;
     }
-    stats_.quads = n.textures.size();
+    stats_.quads = n.textures.size() + n.translucent.size();
+    stats_.translucent = n.translucent.size();
     stats_.shadows = n.shadows.size() / 6;
     return true;
 }
