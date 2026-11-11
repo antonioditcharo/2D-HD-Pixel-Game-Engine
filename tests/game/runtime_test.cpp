@@ -835,6 +835,33 @@ TEST_CASE("Rules play music and sounds from assets") {
     game::AudioObject silent;
     silent.play_sound("sfx/chime.wav");
     CHECK(silent.take_problems().empty());
+
+    // Sounds where someone is, heard from the player (the hero, at the origin). The door
+    // is 5 tiles to the west: 1 - 5/16 as loud, panned 5/8 of the way to the left.
+    mixer->stop_music();
+    while (mixer->playing_sounds() > 0) {
+        static_cast<void>(left(4800));
+    }
+    game::AudioObject placed(mixer, &db, &runtime->world());
+    placed.play_sound_at("sfx/chime.wav", "door");
+    std::vector<float> stereo(std::size_t{480} * 2);
+    REQUIRE(mixer->render(stereo));
+    CHECK(stereo[200] == doctest::Approx(0.25 * 0.6875).epsilon(0.001));
+    CHECK(stereo[201] == doctest::Approx(0.25 * 0.6875 * 0.375).epsilon(0.001));
+    // Out of hearing: nothing plays. Nobody by that name: a problem.
+    while (mixer->playing_sounds() > 0) {
+        static_cast<void>(left(4800));
+    }
+    placed.play_sound_at("sfx/chime.wav", "torch"); // 100 tiles away
+    CHECK(mixer->playing_sounds() == 0);
+    placed.play_sound_at("sfx/chime.wav", "nobody");
+    const std::vector<std::string> where = placed.take_problems();
+    REQUIRE(where.size() == 1);
+    CHECK(where[0] == "There is no one called nobody to play a sound at.");
+    // Music is streamed: 0.5, on the music bus turned down to half above.
+    placed.play_music("music/theme.wav", 0.0);
+    CHECK(mixer->music() == theme->guid.to_string());
+    CHECK(left(480)[100] == doctest::Approx(0.25).epsilon(0.001));
 }
 
 TEST_CASE("Problems are reported with the file they are in") {

@@ -58,13 +58,20 @@ struct Voice {
         if (ref_ready) {
             ma_audio_buffer_ref_uninit(&ref);
         }
+        if (decoder_ready) {
+            ma_decoder_uninit(&decoder);
+        }
     }
 
     std::string key;
     std::shared_ptr<const Pcm> pcm; ///< Kept alive while the voice plays.
     ma_audio_buffer_ref ref{};
+    /// A streamed sound: its own decoder through the file's bytes, kept alive with it.
+    std::shared_ptr<const std::vector<std::uint8_t>> file;
+    ma_decoder decoder{};
     ma_sound sound{};
     bool ref_ready = false;
+    bool decoder_ready = false;
     bool sound_ready = false;
 };
 
@@ -93,23 +100,40 @@ struct AudioEngine::Impl {
     /// A voice for `key` on `group`, ready to start; null with `error` set.
     std::unique_ptr<Voice> voice(std::string_view key, ma_sound_group* group) {
         const auto found = decoded.find(key);
-        if (found == decoded.end()) {
+        const auto streamed = streams.find(key);
+        if (found == decoded.end() && streamed == streams.end()) {
             error = "There is no loaded sound " + std::string(key) + ".";
             return nullptr;
         }
         auto made = std::make_unique<Voice>();
         made->key = std::string(key);
-        made->pcm = found->second;
-        ma_result result = ma_audio_buffer_ref_init(
-            ma_format_f32, channels, made->pcm->samples.data(), made->pcm->frames, &made->ref);
-        if (result != MA_SUCCESS) {
-            error = describe("Preparing a sound failed", result);
-            return nullptr;
+        ma_data_source* source = nullptr;
+        if (found != decoded.end()) {
+            made->pcm = found->second;
+            const ma_result result = ma_audio_buffer_ref_init(
+                ma_format_f32, channels, made->pcm->samples.data(), made->pcm->frames, &made->ref);
+            if (result != MA_SUCCESS) {
+                error = describe("Preparing a sound failed", result);
+                return nullptr;
+            }
+            made->ref_ready = true;
+            made->ref.sampleRate = sample_rate;
+            source = &made->ref;
+        } else {
+            made->file = streamed->second;
+            const ma_decoder_config config =
+                ma_decoder_config_init(ma_format_f32, channels, sample_rate);
+            const ma_result result = ma_decoder_init_memory(made->file->data(), made->file->size(),
+                                                            &config, &made->decoder);
+            if (result != MA_SUCCESS) {
+                error = describe("Preparing a sound failed", result);
+                return nullptr;
+            }
+            made->decoder_ready = true;
+            source = &made->decoder;
         }
-        made->ref_ready = true;
-        made->ref.sampleRate = sample_rate;
-        result = ma_sound_init_from_data_source(
-            &engine, &made->ref, MA_SOUND_FLAG_NO_SPATIALIZATION, group, &made->sound);
+        const ma_result result = ma_sound_init_from_data_source(
+            &engine, source, MA_SOUND_FLAG_NO_SPATIALIZATION, group, &made->sound);
         if (result != MA_SUCCESS) {
             error = describe("Preparing a sound failed", result);
             return nullptr;
@@ -140,6 +164,7 @@ struct AudioEngine::Impl {
     float music_volume = 1.0F;
     float sound_volume = 1.0F;
     std::map<std::string, std::shared_ptr<const Pcm>, std::less<>> decoded;
+    std::map<std::string, std::shared_ptr<const std::vector<std::uint8_t>>, std::less<>> streams;
     std::vector<std::unique_ptr<Voice>> sounds;
     std::unique_ptr<Voice> music;
     std::string music_key; ///< music's key, or empty: kept beside it for music().
@@ -235,8 +260,32 @@ bool AudioEngine::load(std::string_view key, std::vector<std::uint8_t> bytes) {
     return true;
 }
 
+bool AudioEngine::load_stream(std::string_view key, std::vector<std::uint8_t> bytes) {
+    Impl& a = *impl_;
+    // Read it through once: a stream that fails half-way would fail while playing.
+    const ma_decoder_config config =
+        ma_decoder_config_init(ma_format_f32, a.channels, a.sample_rate);
+    ma_decoder decoder;
+    if (ma_decoder_init_memory(bytes.data(), bytes.size(), &config, &decoder) != MA_SUCCESS) {
+        a.error =
+            std::string(key) + " is not a sound miniaudio can read (WAV, Ogg Vorbis, FLAC or MP3).";
+        return false;
+    }
+    ma_uint64 frames = 0;
+    const bool counted = ma_decoder_get_length_in_pcm_frames(&decoder, &frames) == MA_SUCCESS;
+    ma_decoder_uninit(&decoder);
+    if (!counted || frames == 0) {
+        a.error = std::string(key) + " has no sound in it.";
+        return false;
+    }
+    unload(key);
+    a.streams.emplace(std::string(key),
+                      std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes)));
+    return true;
+}
+
 bool AudioEngine::is_loaded(std::string_view key) const {
-    return impl_->decoded.contains(key);
+    return impl_->decoded.contains(key) || impl_->streams.contains(key);
 }
 
 void AudioEngine::unload(std::string_view key) {
@@ -250,9 +299,12 @@ void AudioEngine::unload(std::string_view key) {
     if (const auto found = a.decoded.find(key); found != a.decoded.end()) {
         a.decoded.erase(found);
     }
+    if (const auto found = a.streams.find(key); found != a.streams.end()) {
+        a.streams.erase(found);
+    }
 }
 
-bool AudioEngine::play_sound(std::string_view key, double volume, double pitch) {
+bool AudioEngine::play_sound(std::string_view key, double volume, double pitch, double pan) {
     Impl& a = *impl_;
     a.collect();
     std::unique_ptr<Voice> voice = a.voice(key, &a.sound_group);
@@ -263,6 +315,8 @@ bool AudioEngine::play_sound(std::string_view key, double volume, double pitch) 
                         std::isfinite(volume) ? static_cast<float>(std::max(volume, 0.0)) : 0.0F);
     ma_sound_set_pitch(&voice->sound,
                        std::isfinite(pitch) && pitch > 0.0 ? static_cast<float>(pitch) : 1.0F);
+    ma_sound_set_pan(&voice->sound,
+                     std::isfinite(pan) ? static_cast<float>(std::clamp(pan, -1.0, 1.0)) : 0.0F);
     if (ma_sound_start(&voice->sound) != MA_SUCCESS) {
         a.error = "Starting a sound failed.";
         return false;

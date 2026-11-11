@@ -10,6 +10,7 @@
 #include "engine/assets/assets.h"
 #include "engine/audio/audio.h"
 #include "engine/foundation/reflect.h"
+#include "engine/world/world.h"
 
 #include <cstdint>
 #include <string>
@@ -21,10 +22,19 @@ class AudioObject {
 public:
     AudioObject() = default;
     /// Without an engine (sound turned off, or no audio device), every action does nothing.
-    AudioObject(audio::AudioEngine* engine, const assets::AssetDatabase* assets)
-        : engine_(engine), assets_(assets) {}
+    /// With a world, sounds can be played where someone is, heard from the player.
+    AudioObject(audio::AudioEngine* engine, const assets::AssetDatabase* assets,
+                const world::World* world = nullptr)
+        : engine_(engine), assets_(assets), world_(world) {}
 
     void play_sound(const std::string& sound);
+    /// Plays a sound where `where` (an entity's name) is: quieter the further it is from
+    /// the player, silent hearing_range tiles away, and from the side it is on.
+    void play_sound_at(const std::string& sound, const std::string& where);
+    /// How far sounds carry, in tiles, and how far to one side a sound is fully on that
+    /// side's speaker.
+    static constexpr double hearing_range = 16.0;
+    static constexpr double full_pan = 8.0;
     void play_music(const std::string& music, double fade_seconds);
     void stop_music(double fade_seconds);
     /// 0 to 100.
@@ -37,12 +47,14 @@ public:
     [[nodiscard]] std::vector<std::string> take_problems();
 
 private:
-    /// The engine key of a sound named by GUID or path, loading it if needed; empty after
-    /// recording a problem.
-    std::string prepare(const std::string& sound);
+    /// The engine key of a sound named by GUID or path, loading it if needed (decoded
+    /// whole, or `stream`ed for music, whichever use comes first); empty after recording a
+    /// problem.
+    std::string prepare(const std::string& sound, bool stream = false);
 
     audio::AudioEngine* engine_{nullptr};
     const assets::AssetDatabase* assets_{nullptr};
+    const world::World* world_{nullptr};
     std::vector<std::string> problems_;
 };
 

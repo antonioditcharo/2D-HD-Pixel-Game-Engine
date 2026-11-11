@@ -6,6 +6,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -175,6 +176,85 @@ TEST_CASE("Ogg Vorbis sounds decode and play") {
     // Then it ends: silence, and no voice left.
     CHECK(flat(out, rate * 11 / 20, rate, 0.0F));
     CHECK(engine->playing_sounds() == 0);
+}
+
+TEST_CASE("Streamed music plays as decoded music does, from the file's bytes") {
+    const auto engine = make_engine();
+    // A tenth of a second at 0.5, looping: twenty times over two seconds, with no gap.
+    REQUIRE(engine->load_stream("theme", wav(4800, 16384)));
+    CHECK(engine->is_loaded("theme"));
+    REQUIRE(engine->play_music("theme"));
+    CHECK(flat(mix(*engine, rate * 2), 0, std::size_t{rate} * 2, 0.5F));
+    // Crossfading to decoded music, and back to the stream: both kinds mix alike.
+    REQUIRE(engine->load("battle", wav(4800, 8192)));
+    REQUIRE(engine->play_music("battle", 1.0));
+    std::vector<float> out = mix(*engine, rate * 2);
+    CHECK(std::abs(out[rate / 2] - (0.25F + 0.125F)) < 0.01F);
+    CHECK(flat(out, rate + 10, out.size(), 0.25F));
+    engine->stop_music();
+    CHECK(flat(mix(*engine, 480), 0, 480, 0.0F));
+    // A stream can be a sound too, and played twice at once: each voice decodes its own.
+    REQUIRE(engine->play_sound("theme"));
+    REQUIRE(engine->play_sound("theme"));
+    CHECK(flat(mix(*engine, 2400), 0, 2400, 1.0F));
+    // Unloading stops it; bad bytes and silence are refused.
+    engine->unload("theme");
+    CHECK_FALSE(engine->is_loaded("theme"));
+    CHECK(engine->playing_sounds() == 0);
+    const std::vector<std::uint8_t> junk{'n', 'o', 'p', 'e'};
+    CHECK_FALSE(engine->load_stream("junk", junk));
+    CHECK(engine->last_error() ==
+          "junk is not a sound miniaudio can read (WAV, Ogg Vorbis, FLAC or MP3).");
+    CHECK_FALSE(engine->load_stream("silent", wav(0, 0)));
+    CHECK(engine->last_error() == "silent has no sound in it.");
+
+    // An Ogg Vorbis stream: the same tone as decoded (see "Ogg Vorbis sounds...").
+    std::ifstream file(SPARXEL_AUDIO_TEST_DATA "/tone-440hz.ogg", std::ios::binary);
+    REQUIRE(file);
+    const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)),
+                                          std::istreambuf_iterator<char>());
+    REQUIRE(engine->load_stream("tone", bytes));
+    REQUIRE(engine->play_sound("tone"));
+    out = mix(*engine, rate / 2);
+    double squares = 0.0;
+    const std::size_t from = rate / 20; // the middle 0.4 s, as for the decoded tone
+    const std::size_t to = std::size_t{rate} * 9 / 20;
+    for (std::size_t i = from; i < to; ++i) {
+        squares += double{out[i]} * out[i];
+    }
+    const double rms = std::sqrt(squares / static_cast<double>(to - from));
+    CHECK(rms == doctest::Approx(0.5 / std::sqrt(2.0)).epsilon(0.03));
+}
+
+TEST_CASE("Panning moves a sound between the speakers") {
+    const auto engine = make_engine();
+    REQUIRE(engine->load("beep", wav(4800, 16384))); // 0.5 in both channels
+    const auto stereo = [&](double pan) {
+        REQUIRE(engine->play_sound("beep", 1.0, 1.0, pan));
+        std::vector<float> out(std::size_t{480} * 2, -9.0F);
+        REQUIRE(engine->render(out));
+        engine->unload("beep");
+        REQUIRE(engine->load("beep", wav(4800, 16384)));
+        constexpr std::size_t middle = 200; // a frame mid-way
+        return std::array<float, 2>{out[middle * 2], out[(middle * 2) + 1]};
+    };
+    const std::array<float, 2> centre = stereo(0.0);
+    CHECK(centre[0] == doctest::Approx(0.5));
+    CHECK(centre[1] == doctest::Approx(0.5));
+    // Balance: towards one side, the other side gets quieter; at the end, silent.
+    const std::array<float, 2> left = stereo(-1.0);
+    CHECK(left[0] == doctest::Approx(0.5));
+    CHECK(left[1] == doctest::Approx(0.0));
+    const std::array<float, 2> right_half = stereo(0.5);
+    CHECK(right_half[0] == doctest::Approx(0.25));
+    CHECK(right_half[1] == doctest::Approx(0.5));
+    // Out of range is clamped; not a number is the middle.
+    const std::array<float, 2> far = stereo(9.0);
+    CHECK(far[0] == doctest::Approx(0.0));
+    CHECK(far[1] == doctest::Approx(0.5));
+    const std::array<float, 2> nan = stereo(std::nan(""));
+    CHECK(nan[0] == doctest::Approx(0.5));
+    CHECK(nan[1] == doctest::Approx(0.5));
 }
 
 TEST_CASE("Bad sounds are refused, and unloading stops a sound") {

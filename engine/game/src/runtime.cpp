@@ -581,7 +581,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
             issues.push_back(serialize::Issue{"", "No sound: " + error});
         }
     }
-    r.audio_object = AudioObject(r.audio_engine.get(), &r.assets);
+    r.audio_object = AudioObject(r.audio_engine.get(), &r.assets, r.world.get());
     if (!r.vm->bind("audio", reflect::ObjectRef::of(r.audio_object))) {
         issues.push_back(
             serialize::Issue{"", "The audio object could not be made available to logic."});
@@ -828,19 +828,12 @@ bool Runtime::draw() {
     if (r.device == nullptr) {
         return false;
     }
-    // The camera follows the first enabled Top-down Mover, else looks at the origin.
+    // The camera follows the player (the first Top-down Mover), else looks at the origin.
     scene2d::Camera2D camera;
     camera.ppu = r.settings.ppu;
-    if (const reflect::TypeInfo* mover_type = r.registry.find_type<TopDownMover>()) {
-        bool found = false;
-        r.world->each(*mover_type, [&](world::Entity entity, reflect::ObjectRef) {
-            const scene2d::Transform2D* transform = r.world->get<scene2d::Transform2D>(entity);
-            if (!found && transform != nullptr) {
-                camera.x = transform->x;
-                camera.y = transform->y;
-                found = true;
-            }
-        });
+    if (const std::optional<std::array<double, 2>> player = player_position(*r.world)) {
+        camera.x = (*player)[0];
+        camera.y = (*player)[1];
     }
     const double aspect = static_cast<double>(r.target->width()) /
                           static_cast<double>(std::max<std::uint32_t>(r.target->height(), 1));

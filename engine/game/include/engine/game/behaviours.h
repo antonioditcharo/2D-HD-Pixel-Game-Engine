@@ -14,8 +14,10 @@
 #include "engine/scene2d/scene2d.h"
 #include "engine/world/world.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -121,6 +123,10 @@ inline constexpr double interact_reach = 0.5;
 [[nodiscard]] scene2d::Box feet_box(double x, double y, double width, double height) noexcept;
 /// The box a mover at (x, y) occupies.
 [[nodiscard]] scene2d::Box hitbox(const TopDownMover& mover, double x, double y) noexcept;
+
+/// Where the player is: the first Top-down Mover's position. The camera follows it, and
+/// sounds are heard from it. Nothing if there is none.
+[[nodiscard]] std::optional<std::array<double, 2>> player_position(const world::World& world);
 
 /// Registers the behaviours and the "facing" choice list. Needs scene2d's types.
 void register_behaviours(reflect::Registry& registry);

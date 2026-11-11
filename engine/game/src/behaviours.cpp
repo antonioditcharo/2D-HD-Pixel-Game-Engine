@@ -194,6 +194,21 @@ void register_behaviours(reflect::Registry& registry) {
         .tooltip("Happens when it starts touching something: another body or a wall.");
 }
 
+std::optional<std::array<double, 2>> player_position(const world::World& world) {
+    const reflect::TypeInfo* mover_type = world.registry().find_type<TopDownMover>();
+    if (mover_type == nullptr) {
+        return std::nullopt;
+    }
+    std::optional<std::array<double, 2>> found;
+    world.each(*mover_type, [&](world::Entity entity, reflect::ObjectRef) {
+        const scene2d::Transform2D* transform = world.get<scene2d::Transform2D>(entity);
+        if (!found && transform != nullptr) {
+            found = std::array<double, 2>{transform->x, transform->y};
+        }
+    });
+    return found;
+}
+
 bool register_behaviour_components(world::World& world) {
     const bool mover = world.register_component<TopDownMover>();
     const bool walk = world.register_component<WalkAnimation>();

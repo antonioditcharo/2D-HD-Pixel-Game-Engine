@@ -43,13 +43,20 @@ public:
     /// such as its asset GUID. A key already loaded is replaced (for hot reload); sounds
     /// playing from the old data stop. False, with last_error(), if the bytes cannot be decoded.
     bool load(std::string_view key, std::vector<std::uint8_t> bytes);
+    /// Keeps a sound's file bytes under `key` to be decoded as it plays, for long music:
+    /// only the file is held in memory, not the decoded sound. Each voice playing it
+    /// decodes its own way through, looping by seeking back. False, with last_error(), if
+    /// the bytes are not a sound. A key already loaded either way is replaced.
+    bool load_stream(std::string_view key, std::vector<std::uint8_t> bytes);
     [[nodiscard]] bool is_loaded(std::string_view key) const;
     /// Forgets a sound, stopping it wherever it plays.
     void unload(std::string_view key);
 
     /// Plays a loaded sound once on the Sounds bus. Volume 1 is as recorded; pitch 1 is the
-    /// recorded speed (2 is an octave up and twice as fast).
-    bool play_sound(std::string_view key, double volume = 1.0, double pitch = 1.0);
+    /// recorded speed (2 is an octave up and twice as fast); pan -1 is the left speaker
+    /// only, 0 both, 1 the right only.
+    bool play_sound(std::string_view key, double volume = 1.0, double pitch = 1.0,
+                    double pan = 0.0);
     /// Plays a loaded sound as music on the Music bus, looping. The music playing before
     /// fades out over `fade_seconds` while this one fades in (0 cuts). Playing the music
     /// already playing does nothing.

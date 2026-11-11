@@ -1,8 +1,9 @@
 # Audio
 
-> **Status: v0.2.** Sound effects and looping music from WAV, Ogg Vorbis, FLAC and MP3
+> **Status: v0.3.** Sound effects and looping music from WAV, Ogg Vorbis, FLAC and MP3
 > assets, mixed into Music and Sounds buses under a master volume, with fades and
-> crossfades, and no-code actions to play them. Tested by mixing headless and checking the samples.
+> crossfades; music streamed as it plays; sounds placed in the world, panned and quieter
+> with distance; and no-code actions to play them. Tested by mixing headless and checking the samples.
 >
 > Code: [`engine/audio/include/engine/audio/audio.h`](../../engine/audio/include/engine/audio/audio.h),
 > [`src/audio.cpp`](../../engine/audio/src/audio.cpp), and the logic object in
@@ -32,7 +33,8 @@ audio->set_volume(audio::Bus::Music, 0.5);
 | Call | What it does |
 |---|---|
 | `load(key, bytes)` / `unload(key)` | Decodes a sound into memory under a key (the runtime uses the asset GUID). Loading a key again replaces it, for hot reload; unloading stops it wherever it plays |
-| `play_sound(key, volume, pitch)` | Plays once on the Sounds bus. Pitch 2 is an octave up and twice as fast |
+| `load_stream(key, bytes)` | Keeps only the file's bytes, to be decoded as it plays: for long music, whose decoded form would fill memory. Each voice has its own decoder, so a stream can play twice at once and loop |
+| `play_sound(key, volume, pitch, pan)` | Plays once on the Sounds bus. Pitch 2 is an octave up and twice as fast; pan -1 is the left speaker only, 1 the right only (balance: the other side gets quieter) |
 | `play_music(key, fade)` | Loops on the Music bus. The music before fades out over the same time as this fades in. Playing the music already playing does nothing, so a Rule can ask for the town music every time the player enters |
 | `stop_music(fade)` | Fades out, or stops at once with 0 |
 | `set_volume(bus, v)`, `set_master_volume(v)` | 0 to 1, clamped. Sound volume, bus volume and master volume multiply |
@@ -48,6 +50,10 @@ audio->set_volume(audio::Bus::Music, 0.5);
   implementation is included at the very end of the file, because it defines short
   macros that must not reach Sparxel's code.
   miniaudio's resource manager, and its loading threads, are compiled out.
+- **Streaming:** a streamed key is read through once when loaded (a file that fails
+  half-way would fail while playing), then each voice decodes it with its own miniaudio
+  decoder over the shared bytes, looping by seeking back. Decoded and streamed voices
+  mix alike, so music can crossfade from one kind to the other.
 - **Limits for hostile files:** bytes that are not a sound, or decode to nothing, are
   refused with a message; a sound longer than 30 minutes is refused rather than filling
   memory.
@@ -72,12 +78,15 @@ Logic uses the **Audio** object (`audio`):
 | Action | Text |
 |---|---|
 | `play_sound(sound)` | *Play sound {sound}* |
+| `play_sound_at(sound, where)` | *Play sound {sound} at {where}*: where someone is, heard from the player (the first Top-down Mover, which the camera follows): 1 − distance / 16 as loud (silent 16 tiles away) and panned by how far to the side, fully at 8 tiles |
 | `play_music(music, fade)` | *Play music {music}, fading over {fade} seconds* |
 | `stop_music(fade)` | *Stop the music, fading over {fade} seconds* |
 | `set_music_volume(percent)`, `set_sound_volume(percent)` | *Set the music volume to {percent}%*, 0 to 100 |
 
 - Sounds are named by **asset GUID** (what the editor writes) or by **path** in `assets/`
-  (for logic written by hand). Each is read and decoded the first time it plays.
+  (for logic written by hand). Each is read the first time it plays: sound effects are
+  decoded whole, music is streamed. A file is loaded once, the way it is first used, and
+  plays either way after that.
 - A sound that does not exist or cannot be decoded is reported in `Runtime::problems()`,
   in plain language with its path; the game goes on.
 - `AudioObject::apply(changes)` forgets sounds whose files changed, so they are read again
@@ -92,13 +101,14 @@ All mix headless and read the samples, so they run anywhere, with no sound card:
 | Sounds | A 0.1 s sound plays once at exactly its level; volume, bus and master volume multiply; two sounds add; pitch 2 ends in half the time |
 | Music | Loops without a gap; playing it again does not restart it; the bus volume; stopping; a one-second fade in (silent, half, full); a crossfade (old full, both half, new alone); a fade out |
 | Ogg Vorbis | Half a second of a 440 Hz tone at 0.5 ([`tests/audio/data/`](../../tests/audio/data/), made with ffmpeg and libvorbis) decodes and plays: over its middle 0.4 s the RMS level is that of a sine of 0.5 (to 3%), the peak 0.5 (to 5%), and there are 176 cycles; then silence, with no voice left |
+| Streaming | A streamed tenth of a second loops twenty times over two seconds with no gap, at exactly its level; crossfades with decoded music to the same samples as two decoded ones; plays twice at once as a sound; unloading stops it; junk and silence refused; a streamed Ogg tone has the decoded one's loudness |
+| Panning | Centre, all left, half right, clamped beyond 1 and the middle for not-a-number, each channel exactly as balance says |
 | Bad sounds | Junk bytes, nothing, and a sound with no samples refused with messages; playing unknown keys refused; unloading stops a playing sound and the music; loading a key again replaces it |
-| In a game | A Rule on game start plays the theme by path; Interact's Rule plays a chime over it (0.5 + 0.25); missing and unreadable sounds reported; volumes in percent clamped; no engine, no problems |
+| In a game | A Rule on game start plays the theme by path; Interact's Rule plays a chime over it (0.5 + 0.25); missing and unreadable sounds reported; volumes in percent clamped; no engine, no problems. A chime at the door 5 tiles west of the hero: left 0.25 × 0.6875, right that × 0.375; out of hearing, nothing; nobody by that name, a problem; music streamed |
 
 ## 6. Next increments
 
-1. **Streaming** long music from disk instead of decoding it all, once memory use matters.
-2. **Snapshots and ducking:** lowering the music while a character speaks.
-3. **Positional sound** for the Diorama style: sounds placed in the world, quieter with
-   distance.
-4. **Footstep surfaces**, **zones** and **adaptive music** (ADR-009).
+1. **Snapshots and ducking:** lowering the music while a character speaks.
+2. **Sound sources** as a component: ambient loops (a river, a fire) placed in the scene,
+   following as the player moves, rather than one-shot sounds.
+3. **Footstep surfaces**, **zones** and **adaptive music** (ADR-009).
