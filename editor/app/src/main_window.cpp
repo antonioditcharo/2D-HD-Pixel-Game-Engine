@@ -23,9 +23,9 @@
 #include <utility>
 #include <vector>
 
-#include "editor/core/logic_text.h"
 #include "editor/exporter/exporter.h"
 #include "inspector.h"
+#include "logic_panel.h"
 #include "scene_view.h"
 #include "tile_palette.h"
 
@@ -118,11 +118,7 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     addDockWidget(Qt::RightDockWidgetArea, inspector_dock);
 
     // Right, beside the inspector: the project's logic, as plain language.
-    logic_ = new QTreeWidget(this);
-    logic_->setObjectName(QStringLiteral("logic"));
-    logic_->setHeaderHidden(true);
-    logic_->setAccessibleName(tr("Logic"));
-    logic_->setWordWrap(true);
+    logic_ = new LogicPanel(this);
     auto* logic_dock = new QDockWidget(tr("Logic"), this);
     logic_dock->setObjectName(QStringLiteral("logic_dock"));
     logic_dock->setWidget(logic_);
@@ -157,6 +153,8 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     connect(view_, &SceneView::selected, this, [this](engine::Guid guid) { select(guid); });
     connect(view_, &SceneView::moved, this, [this] { changed(false); });
     connect(view_, &SceneView::problem, this, &MainWindow::report);
+    connect(logic_, &LogicPanel::edited, this, [this] { update_title_and_actions(); });
+    connect(logic_, &LogicPanel::refused, this, &MainWindow::report);
     connect(view_, &SceneView::placed, this, [this](engine::Guid guid) {
         changed(true);
         select(guid);
@@ -214,7 +212,7 @@ bool MainWindow::open_project(const fs::path& folder) {
     const QString assets = path_text(folder / "assets");
     asset_tree_->setRootIndex(asset_model_->setRootPath(assets));
     rebuild_outliner();
-    rebuild_logic();
+    logic_->set_document(document_.get());
     update_title_and_actions();
     if (!issues.empty()) {
         report(tr("Opened, with notes:\n%1").arg(issues_text(issues)));
@@ -270,37 +268,14 @@ void MainWindow::rebuild_outliner() {
     outliner_->expandAll();
 }
 
-void MainWindow::rebuild_logic() {
-    logic_->clear();
-    if (document_ == nullptr) {
-        return;
-    }
-    std::vector<engine::serialize::Issue> issues;
-    for (const LogicFile& file : logic_files(*document_, issues)) {
-        auto* top = new QTreeWidgetItem(QStringList{text_of(file.path)});
-        logic_->addTopLevelItem(top);
-        // Each line nests under the last line one level up.
-        std::vector<QTreeWidgetItem*> parents{top};
-        for (const LogicLine& line : describe(file.asset, *document_)) {
-            const auto depth = static_cast<std::size_t>(line.depth);
-            parents.resize(std::min(parents.size(), depth + 1));
-            auto* item = new QTreeWidgetItem(QStringList{text_of(line.text)});
-            item->setData(0, Qt::UserRole,
-                          QVariant::fromValue(static_cast<qulonglong>(line.block.value)));
-            parents.back()->addChild(item);
-            parents.push_back(item);
-        }
-    }
-    for (const engine::serialize::Issue& issue : issues) {
-        logic_->addTopLevelItem(new QTreeWidgetItem(
-            QStringList{text_of(issue.path) + QStringLiteral(": ") + text_of(issue.message)}));
-    }
-    logic_->expandAll();
+QTreeWidget* MainWindow::logic_view() const noexcept {
+    return logic_->tree();
 }
 
 void MainWindow::changed(bool structure) {
     if (structure) {
         rebuild_outliner();
+        logic_->rebuild(); // names and components decide what the logic can do
     }
     view_->refresh();
     update_title_and_actions();
@@ -356,6 +331,7 @@ void MainWindow::undo() {
         rebuild_outliner();
         select(document_->world().find(selection_).is_valid() ? selection_ : engine::Guid{});
         view_->refresh();
+        logic_->rebuild();
     }
 }
 
@@ -364,6 +340,7 @@ void MainWindow::redo() {
         rebuild_outliner();
         select(document_->world().find(selection_).is_valid() ? selection_ : engine::Guid{});
         view_->refresh();
+        logic_->rebuild();
     }
 }
 

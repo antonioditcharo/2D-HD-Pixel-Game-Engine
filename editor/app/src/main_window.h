@@ -19,6 +19,8 @@ class QFileSystemModel;
 
 namespace editor {
 
+class LogicPanel;
+
 class Inspector;
 class SceneView;
 class TilePalette;
@@ -46,7 +48,8 @@ public:
     [[nodiscard]] QTreeWidget* outliner() const noexcept { return outliner_; }
     [[nodiscard]] Inspector* inspector() const noexcept { return inspector_; }
     [[nodiscard]] TilePalette* tile_palette() const noexcept { return palette_; }
-    [[nodiscard]] QTreeWidget* logic_view() const noexcept { return logic_; }
+    [[nodiscard]] QTreeWidget* logic_view() const noexcept;
+    [[nodiscard]] LogicPanel* logic_panel() const noexcept { return logic_; }
 
     // The commands, for menus, tool buttons and tests.
     bool save();
@@ -68,7 +71,6 @@ private:
     /// After an edit: `structure` rebuilds the lists, not only the scene.
     void changed(bool structure);
     void rebuild_outliner();
-    void rebuild_logic();
     void update_title_and_actions();
     void report(const QString& message);
 
@@ -81,7 +83,7 @@ private:
     QFileSystemModel* asset_model_ = nullptr;
     Inspector* inspector_ = nullptr;
     TilePalette* palette_ = nullptr;
-    QTreeWidget* logic_ = nullptr;
+    LogicPanel* logic_ = nullptr;
     QAction* save_ = nullptr;
     QAction* undo_ = nullptr;
     QAction* redo_ = nullptr;

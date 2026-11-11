@@ -4,9 +4,9 @@
 // every reflected type, and the scene being edited, with undo and redo. It has no user
 // interface, so it is tested on its own; the Qt application (editor/app) shows it.
 //
-// Undo works by snapshots: each edit records the scene before and after it, as the JSON
-// the scene file holds, and undoing loads the earlier one. Entities are found again by
-// GUID, which survives that. Consecutive changes to one property of one entity (typing
+// Undo works by snapshots: each edit records the scene and the logic files before and
+// after it, as the JSON their files hold, and undoing loads the earlier one. Entities are found
+// again by GUID, which survives that. Consecutive changes to one property of one entity (typing
 // into a field, dragging) merge into a single step.
 //
 // See docs/dev/editor.md.
@@ -15,6 +15,8 @@
 #include "engine/foundation/guid.h"
 #include "engine/foundation/reflect.h"
 #include "engine/game/runtime.h"
+#include "engine/logic/compiler.h"
+#include "engine/logic/ir.h"
 #include "engine/scene2d/scene2d.h"
 #include "engine/serialize/json.h"
 #include "engine/world/world.h"
@@ -28,6 +30,35 @@
 #include <vector>
 
 namespace editor {
+
+/// A logic asset of the project, and where it is.
+struct LogicFile {
+    std::string path; ///< Relative to assets/.
+    engine::logic::LogicAsset asset;
+};
+
+/// A value written into a logic step that can be changed in place: the text a character
+/// says, how many seconds to wait, the sound to play.
+struct LogicSlot {
+    std::size_t argument = 0; ///< Which of the step's arguments it is.
+    std::string label;        ///< "Seconds", or the parameter's display name.
+    engine::reflect::ValueKind kind = engine::reflect::ValueKind::Text;
+    engine::reflect::Value value;
+    engine::reflect::NumericLimits limits;
+    const engine::reflect::ChoiceInfo* choice{nullptr}; ///< For a choice.
+};
+
+/// An action a new step can do: `member` of `object`, reading as `text`.
+struct LogicAction {
+    std::string object;
+    std::string member;
+    std::string text; ///< As the block reads, for example "Say {text}".
+};
+
+/// The objects a game gives its logic besides its entities, each bound by the runtime to
+/// the registered type of the same name.
+inline constexpr std::array<std::string_view, 5> game_objects{"audio", "dialogue", "game", "input",
+                                                              "lighting"};
 
 class Document {
 public:
@@ -83,6 +114,39 @@ public:
     bool rename(engine::Guid entity, std::string_view name);
     bool add_component(engine::Guid entity, const engine::reflect::TypeInfo& component);
     bool remove_component(engine::Guid entity, const engine::reflect::TypeInfo& component);
+
+    // ----- Logic. Its edits are steps of the same undo, and saved with the scene. -----
+
+    /// The project's logic files, sorted by path, with any edits.
+    [[nodiscard]] const std::vector<LogicFile>& logic() const noexcept;
+    /// Problems reading logic files when the project was opened; those files are left out.
+    [[nodiscard]] const std::vector<engine::serialize::Issue>& logic_issues() const noexcept;
+    /// The values written into `step` of the logic file at `path` that can be changed in
+    /// place. Empty if there are none, or no such step.
+    [[nodiscard]] std::vector<LogicSlot> logic_slots(std::string_view path,
+                                                     engine::logic::BlockId step) const;
+    /// Changes one of those values. Returns false, changing nothing, with `error` in plain
+    /// language, if the value is of the wrong kind or out of range. Changes to the same
+    /// value merge into one step, as typing does.
+    bool set_logic_slot(std::string_view path, engine::logic::BlockId step, std::size_t argument,
+                        const engine::reflect::Value& value, std::string& error);
+    /// Every action a step can do: those of the game's objects and of the scene's named
+    /// entities' components, by object, then as they read.
+    [[nodiscard]] std::vector<LogicAction> logic_actions() const;
+    /// Adds a step doing `action`, its values set to the parameters' defaults: after the
+    /// step `after`, or first under the Rule, Sequence or Brain state `after`. Returns
+    /// the new step's block id, or an invalid one with `error`.
+    engine::logic::BlockId add_logic_step(std::string_view path, engine::logic::BlockId after,
+                                          const LogicAction& action, std::string& error);
+    /// Deletes a step, with any steps inside it.
+    bool remove_logic_step(std::string_view path, engine::logic::BlockId step);
+    /// Moves a step one place up (-1) or down (+1) among its neighbours.
+    bool move_logic_step(std::string_view path, engine::logic::BlockId step, int by);
+    /// True if `block` is a step of the logic file (one that can be deleted or moved).
+    [[nodiscard]] bool is_logic_step(std::string_view path, engine::logic::BlockId block) const;
+    /// What stops the logic file at `path` from running, checked by the compiler against
+    /// the registry and the scene, each problem on its block. Empty if it compiles.
+    [[nodiscard]] std::vector<engine::logic::Diagnostic> check_logic(std::string_view path) const;
 
     [[nodiscard]] bool can_undo() const noexcept;
     [[nodiscard]] bool can_redo() const noexcept;

@@ -2,7 +2,8 @@
 
 > **Status: v0.1.** `sparxel-editor` opens a project folder, draws its scene as the game
 > draws it, lists its entities and assets, and edits every component through an inspector
-> generated from the reflection registry. It has undo and redo, saving, Play and Export.
+> generated from the reflection registry, paints maps, places pictures, and edits logic as
+> plain language. It has undo and redo, saving, Play and Export.
 > It is built on Qt 6 Widgets (ADR-005), and tested on Qt's offscreen platform in CI on
 > Windows and Linux.
 >
@@ -32,7 +33,7 @@ sparxel-editor samples/hello
 | **Assets** (left) | The project's `assets/` folder: pictures, sounds, scenes and logic. **Drag a picture into the scene** to place it where it is dropped (in either style): a new entity named after the file, with a Position at the nearest pixel and a Sprite showing the picture, selected, as one undo step. Other files, and files from outside `assets/`, are refused with a message |
 | **Tiles** (left) | With a tilemap selected, its tileset's tiles and an eraser. Choosing one puts the scene in **paint mode** (in either style; in 3D the cell is where the cursor meets the ground): the left button paints the tile into the cell under the cursor, the right button erases, the middle button still moves the camera. Each stroke is one undo step; painting past the map's right or bottom edge grows it. Choosing the tile again, Escape, or selecting something else stops painting |
 | **Inspector** (right) | The selected entity's name, and a group for each component with a field for each property: a tick box for yes/no, number fields with the property's range, step and unit, a list for choices, and a list of the project's pictures for an image or tileset. Read-only properties are shown but cannot be changed; *Show advanced settings* adds the advanced ones. Each group can be removed, and *Add a component…* lists those the entity does not have |
-| **Logic** (right, beside the inspector) | Every logic file of the project, its Rules, Sequences and Brains as plain language: *When [who] interacts with it (elder)*, then its steps (*Say “…” (dialogue)*, *Wait until not a message is open (dialogue)*, *If the answer chosen (dialogue) = 1:*), nested as they run. Read-only for now |
+| **Logic** (right, beside the inspector) | Every logic file of the project, its Rules, Sequences and Brains as plain language: *When [who] interacts with it (elder)*, then its steps (*Say “…” (dialogue)*, *Wait until not a message is open (dialogue)*, *If the answer chosen (dialogue) = 1:*), nested as they run. **Editing:** selecting a step shows the values written into it (the words said, the seconds waited, a property's new value) as fields of their kind, with their ranges and choices, and typing changes the line as you type. **Add step** lists every action of the game's objects and the scene's entities, by object, and adds it after the selected step, or first under a selected Rule, Sequence or Brain state; **Delete**, **Up** and **Down** act on the selected step. Below, the compiler says whether the file runs, or its first problem. Logic edits are steps of the same Undo as the scene's, and Save writes the files that changed |
 | **Commands** | Open, Save (Ctrl+S), Undo and Redo (with what they will undo, for example *Undo Change Speed of hero*), New entity (where the camera looks), Delete, **Play** (F5: saves, then starts `sparxel-player` on the project) and **Export** (saves, asks for an empty folder, then exports: [export.md](export.md)) |
 
 The title shows a star while there are unsaved changes, and closing asks whether to save
@@ -62,6 +63,16 @@ them.
   and operators as symbols. Members are found on the game's objects by name, and on
   entities through their components, so a new component's blocks read well with no
   editor change. Every line keeps its block id, for highlighting and explaining later.
+- **Editing logic** (`Document::logic_slots()`, `set_logic_slot()`, `add_logic_step()`,
+  `remove_logic_step()`, `move_logic_step()`): the Document holds the logic files, and
+  its undo snapshots hold them beside the scene, so one Undo history covers both and
+  Save writes each file that changed. A value's kind, range and choices come from the
+  block's reflected parameter or property, and a value that does not fit is refused in
+  plain language; typing into one value merges into one step. A new step's values start
+  at the parameters' defaults, and it gets a block id no block of the file uses.
+  `check_logic()` runs the real compiler against the registry and the scene (the game's
+  objects by name, entities through their components, as the game resolves them), so
+  renaming an entity a Rule names shows at once.
 - **Picking in 3D** (`editor::pick_diorama`) projects each billboard's corners through the
   game's camera (`diorama_camera()`, which the preview uses too, so they always agree) and
   takes the nearest that covers the point; else the map where the ray from the eye
@@ -89,15 +100,17 @@ them.
 | Picking in 3D | Through the sample's Diorama camera: the hero's billboard rectangle lies below the middle of the screen; its middle picks the hero, beside it the ground; the elder; the wall along the bottom edge; nothing in the sky |
 | Logic as language | The sample's logic file found and read in full, line for line (its three Rules with their steps, the If and Otherwise, and the weather Brain's states, steps and timed transitions); every line traced to a block; conditions, all-of, not, waits, repeats, runs, Otherwise, event values and an unknown object read sensibly |
 | Placing pictures | `place_picture()`: the hero's picture at (3.03, 4.94) becomes an entity "hero" at (3, 79/16) with a Sprite showing it, labelled *Place hero*, undone in one step; a sound, a missing picture and a point that is not a number are refused with messages, recording nothing |
+| Editing logic | The elder's greeting: one value, its text, changed in place (two edits typed, one step); a number is refused for it. A Brain state's ambient light: its range from the registry refuses 3, takes 1. The actions offered, sorted by object. A chime added after the greeting with its default value, compiling; moved up; the first step not moved higher; deleted. A step under a Rule's header goes first; under a Brain, refused; an unknown object refused. Renaming the elder makes the compiler report its Rule; undoing everything returns the logic exactly; redo; saving writes the file and reopening reads the edit |
 | Saving | The scene file is written; reopening finds the edit; saving keeps the history |
 | Picking | The hero's exact picture bounds; the hero, the elder, the ground and the walls (drawn after the ground) at points, and nothing outside the map |
 | Preview (GPU) | The sample drawn at 320 × 180 with the hero's robe and the wall's stone at exact pixels, and the hero moved 2 tiles after an edit |
-| The application | Opening the sample: title, list and a 320 × 180 scene. Selecting in the list fills the inspector; a number field edits the world; undo puts it and the field back; renaming in the inspector renames in the list; field labels are never squeezed out of sight. Clicking the hero in the scene selects it; dragging moves it 2 tiles right and 1 down to the nearest pixel, as one undo step; clicking the ground selects it. Painting: the ground's palette has its three tiles and an eraser; a left-button stroke paints a path four tiles long without changing the selection; a right-button click erases; each undoes on its own; Escape and selecting something else stop painting. In the Diorama style: clicking the hero's billboard selects it; dragging it by its feet moves it along the ground to within a picture pixel of where the cursor points, as one undo step; painting puts the tile in the cell under the cursor. A new entity gets a Light from *Add a component…*; saving writes it; deleting and exporting (which saves first) work; exporting over a project is refused. Dragging from the assets: the list's own drag data dropped on the scene (Qt's drag-enter and drop events) places the elder's picture at the map point under the drop, selected and listed, as one undo step; a sound and a file outside `assets/` are refused with a message in the status bar |
+| The application | Opening the sample: title, list and a 320 × 180 scene. Selecting in the list fills the inspector; a number field edits the world; undo puts it and the field back; renaming in the inspector renames in the list; field labels are never squeezed out of sight. Clicking the hero in the scene selects it; dragging moves it 2 tiles right and 1 down to the nearest pixel, as one undo step; clicking the ground selects it. Painting: the ground's palette has its three tiles and an eraser; a left-button stroke paints a path four tiles long without changing the selection; a right-button click erases; each undoes on its own; Escape and selecting something else stop painting. In the Diorama style: clicking the hero's billboard selects it; dragging it by its feet moves it along the ground to within a picture pixel of where the cursor points, as one undo step; painting puts the tile in the cell under the cursor. A new entity gets a Light from *Add a component…*; saving writes it; deleting and exporting (which saves first) work; exporting over a project is refused. Dragging from the assets: the list's own drag data dropped on the scene (Qt's drag-enter and drop events) places the elder's picture at the map point under the drop, selected and listed, as one undo step; a sound and a file outside `assets/` are refused with a message in the status bar. The Logic view: selecting the elder's greeting shows its text in a field and "runs: no problems"; typing changes the line as you type, marks the project changed and is one undo step; Delete is enabled for steps only; Add step's menu adds a chime after the greeting, selected; Up moves it before; Delete removes it; Undo goes back through it all; renaming the elder shows the file does not run |
 
 ## 5. Next increments
 
-1. **Editing logic** in the Logic view: blocks picked from the reflected lists,
-   values typed in place, and steps dragged, all compiled and checked as you go.
+1. **Logic, further:** new Rules, Sequences and Brain states; conditions and events
+   picked from the reflected lists; values from properties and variables, not only
+   typed; steps dragged; and problems shown on their lines.
 2. **Rectangle and fill tools** for painting, and placing other kinds of assets by
    dragging (a sound as an ambient source, a scene as a door to it).
 3. **Move gizmos** and multiple selection.

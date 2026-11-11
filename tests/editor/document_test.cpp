@@ -8,11 +8,14 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <variant>
 #include <vector>
 
 #include "editor/core/document.h"
@@ -447,6 +450,155 @@ TEST_CASE("Logic reads as plain language") {
                                             "  Wait 0.5 seconds",
                                             "  Repeat 2 times:", "    Run intro and wait for it",
                                             "  dance (nobody)", "  Otherwise:", "    Log [who]"});
+}
+
+namespace {
+
+constexpr std::string_view sample_logic = "logic/main.drules";
+
+/// The logic file's lines as the editor shows them.
+std::vector<editor::LogicLine> lines_of(const editor::Document& d) {
+    REQUIRE(d.logic().size() == 1);
+    return editor::describe(d.logic()[0].asset, d);
+}
+
+/// The block shown by the line reading `text` (exactly).
+engine::logic::BlockId block_of(const editor::Document& d, std::string_view text) {
+    for (const editor::LogicLine& line : lines_of(d)) {
+        if (line.text == text) {
+            return line.block;
+        }
+    }
+    FAIL("no line reads: " << text);
+    return {};
+}
+
+/// The index of the line reading `text`, or -1.
+int line_index(const editor::Document& d, std::string_view text) {
+    const std::vector<editor::LogicLine> lines = lines_of(d);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].text == text) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+} // namespace
+
+TEST_CASE("Logic is edited in place, a step at a time, in the scene's undo") {
+    const Sample sample;
+    const auto d = sample.open();
+    REQUIRE(d->logic_issues().empty());
+    const engine::logic::LogicAsset original = d->logic().at(0).asset;
+    CHECK(d->check_logic(sample_logic).empty()); // the sample compiles
+    std::string error;
+
+    // The text the elder says: one value, its text, changed in place. Typing merges.
+    const std::string welcome = "Say “Elder: Welcome, traveller. The road east leads home.” "
+                                "(dialogue)";
+    const engine::logic::BlockId say = block_of(*d, welcome);
+    std::vector<editor::LogicSlot> slots = d->logic_slots(sample_logic, say);
+    REQUIRE(slots.size() == 1);
+    CHECK(slots[0].label == "Text");
+    CHECK(slots[0].kind == reflect::ValueKind::Text);
+    CHECK(std::get<std::string>(slots[0].value) ==
+          "Elder: Welcome, traveller. The road east leads home.");
+    REQUIRE(
+        d->set_logic_slot(sample_logic, say, 0, reflect::Value{std::string("Elder: Hel")}, error));
+    REQUIRE(d->set_logic_slot(sample_logic, say, 0, reflect::Value{std::string("Elder: Hello.")},
+                              error));
+    CHECK(line_index(*d, "Say “Elder: Hello.” (dialogue)") >= 0);
+    CHECK(d->undo_label() == "Change Text in logic/main.drules");
+    CHECK(d->dirty());
+    // A value of the wrong kind is refused, changing nothing.
+    CHECK_FALSE(d->set_logic_slot(sample_logic, say, 0, reflect::Value{std::int64_t{3}}, error));
+    CHECK(error == "Text must be text.");
+    CHECK_FALSE(d->set_logic_slot(sample_logic, say, 1, reflect::Value{std::string("x")}, error));
+
+    // A property set by a Brain state: its kind and range come from the registry.
+    d->end_merge();
+    const engine::logic::BlockId dusk = block_of(*d, "Set ambient light of lighting to 0.25");
+    slots = d->logic_slots(sample_logic, dusk);
+    REQUIRE(slots.size() == 1);
+    CHECK(slots[0].label == "Ambient light");
+    CHECK(slots[0].kind == reflect::ValueKind::Float);
+    CHECK_FALSE(d->set_logic_slot(sample_logic, dusk, 0, reflect::Value{3.0}, error));
+    CHECK(error == "Ambient light must be a number from 0 to 2.");
+    REQUIRE(d->set_logic_slot(sample_logic, dusk, 0, reflect::Value{std::int64_t{1}}, error));
+    CHECK(line_index(*d, "Set ambient light of lighting to 1") >= 0);
+    // Lines that are not steps with values have none.
+    CHECK(d->logic_slots(sample_logic, block_of(*d, "Brain weather")).empty());
+
+    // The actions a step can do: the game's objects' and the scene's entities'.
+    const std::vector<editor::LogicAction> actions = d->logic_actions();
+    const auto action = [&](std::string_view object, std::string_view member) {
+        const auto found = std::find_if(actions.begin(), actions.end(), [&](const auto& a) {
+            return a.object == object && a.member == member;
+        });
+        REQUIRE(found != actions.end());
+        return *found;
+    };
+    CHECK(action("audio", "play_sound").text == "Play sound {sound}");
+    CHECK(action("dialogue", "say").object == "dialogue");
+    CHECK(std::is_sorted(actions.begin(), actions.end(),
+                         [](const auto& a, const auto& b) { return a.object < b.object; }));
+
+    // Adding a step after the elder's greeting: a chime, its value the default, compiling.
+    d->end_merge();
+    const engine::logic::BlockId chime =
+        d->add_logic_step(sample_logic, say, action("audio", "play_sound"), error);
+    REQUIRE(chime.is_valid());
+    CHECK(d->undo_label() == "Add Play sound step");
+    const int greeting = line_index(*d, "Say “Elder: Hello.” (dialogue)");
+    CHECK(line_index(*d, "Play sound “” (audio)") == greeting + 1);
+    CHECK(d->is_logic_step(sample_logic, chime));
+    CHECK(d->check_logic(sample_logic).empty());
+    // Moved up, before the greeting; the first step cannot go higher.
+    REQUIRE(d->move_logic_step(sample_logic, chime, -1));
+    CHECK(line_index(*d, "Play sound “” (audio)") == greeting);
+    CHECK_FALSE(d->move_logic_step(sample_logic, chime, -1));
+    CHECK(d->undo_label() == "Move a step up");
+    // Deleted.
+    REQUIRE(d->remove_logic_step(sample_logic, chime));
+    CHECK(line_index(*d, "Play sound “” (audio)") == -1);
+    CHECK_FALSE(d->is_logic_step(sample_logic, chime));
+
+    // Under a Rule's header, a step goes first; under a Brain, it cannot go.
+    const engine::logic::BlockId gate = block_of(*d, "When [who] walks in (gate)");
+    REQUIRE(d->add_logic_step(sample_logic, gate, action("audio", "play_sound"), error).is_valid());
+    CHECK(line_index(*d, "Play sound “” (audio)") ==
+          line_index(*d, "When [who] walks in (gate)") + 1);
+    CHECK_FALSE(d->add_logic_step(sample_logic, block_of(*d, "Brain weather"),
+                                  action("audio", "play_sound"), error)
+                    .is_valid());
+    CHECK(error == "Steps go under a Rule, a Sequence or a Brain state, or after another step.");
+    CHECK_FALSE(
+        d->add_logic_step(sample_logic, gate, editor::LogicAction{"nobody", "say", ""}, error)
+            .is_valid());
+
+    // The compiler checks it against the scene: renaming the elder leaves its Rule
+    // naming nobody.
+    const Guid elder = guid_of(*d, "elder");
+    REQUIRE(d->rename(elder, "sage"));
+    CHECK_FALSE(d->check_logic(sample_logic).empty());
+    REQUIRE(d->undo());
+    CHECK(d->check_logic(sample_logic).empty());
+
+    // Undoing everything brings the logic back exactly, and redo goes forward again.
+    while (d->can_undo()) {
+        REQUIRE(d->undo());
+    }
+    CHECK(d->logic().at(0).asset == original);
+    CHECK_FALSE(d->dirty());
+    REQUIRE(d->redo());
+    CHECK(line_index(*d, "Say “Elder: Hello.” (dialogue)") >= 0);
+
+    // Saving writes the logic file; reopening reads the edit back.
+    REQUIRE(d->save(error));
+    CHECK_FALSE(d->dirty());
+    const auto again = sample.open();
+    CHECK(line_index(*again, "Say “Elder: Hello.” (dialogue)") >= 0);
 }
 
 TEST_CASE("Picking in the Diorama style goes through the camera") {

@@ -3,7 +3,8 @@
 // No-code logic as plain language (plan/05 §3): every Rule, Sequence and Brain of a logic
 // asset as indented lines, such as "When elder: when it is talked to" and "Say “Hi.”".
 // Each line reads from the blocks' own reflected texts, so a new action reads well as
-// soon as it is registered. The editor's Logic view shows these; editing comes later.
+// soon as it is registered. The editor's Logic view shows these, and edits them through
+// the Document.
 //
 // See docs/dev/editor.md.
 
@@ -22,14 +23,9 @@ struct LogicLine {
     engine::logic::BlockId block; ///< The block it shows, to highlight and explain it.
 };
 
-/// A logic asset read from the project, and where it is.
-struct LogicFile {
-    std::string path; ///< Relative to assets/.
-    engine::logic::LogicAsset asset;
-};
-
 /// Every logic asset of `document`'s project (.drules and .dsequence files), sorted by
-/// path. Files that cannot be read are reported in `issues` and left out.
+/// path, as the document holds them now (with any edits). Files that could not be read
+/// when it was opened are reported in `issues` and left out.
 [[nodiscard]] std::vector<LogicFile> logic_files(Document& document,
                                                  std::vector<engine::serialize::Issue>& issues);
 

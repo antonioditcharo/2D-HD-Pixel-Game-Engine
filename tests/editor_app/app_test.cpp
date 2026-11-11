@@ -18,8 +18,10 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QStatusBar>
 #include <QToolButton>
 #include <QTreeView>
@@ -30,6 +32,7 @@
 #include <string>
 
 #include "inspector.h"
+#include "logic_panel.h"
 #include "main_window.h"
 #include "scene_view.h"
 #include "tile_palette.h"
@@ -434,4 +437,90 @@ TEST_CASE("Pictures are dragged from the assets into the scene") {
     drop(outside, view->from_map(6.5, 8.0));
     CHECK(e.window.statusBar()->currentMessage() ==
           QStringLiteral("Only files from the project's assets can be placed."));
+}
+
+TEST_CASE("The Logic view edits logic: values typed in place, steps added, moved, deleted") {
+    Editor e;
+    editor::LogicPanel* panel = e.window.logic_panel();
+    QTreeWidget* tree = e.window.logic_view();
+    const auto item = [&](const QString& text) -> QTreeWidgetItem* {
+        for (QTreeWidgetItemIterator it(tree); *it != nullptr; ++it) {
+            if ((*it)->text(0) == text) {
+                return *it;
+            }
+        }
+        return nullptr;
+    };
+    const QString welcome =
+        QStringLiteral("Say “Elder: Welcome, traveller. The road east leads home.” (dialogue)");
+    QTreeWidgetItem* say = item(welcome);
+    REQUIRE(say != nullptr);
+    auto* problems = panel->findChild<QLabel*>(QStringLiteral("logic_problems"));
+    REQUIRE(problems != nullptr);
+
+    // Selecting the step shows its text in a field; typing changes the line as you type.
+    tree->setCurrentItem(say);
+    QApplication::processEvents();
+    CHECK(problems->text() == QStringLiteral("logic/main.drules runs: no problems."));
+    auto* text = panel->findChild<QLineEdit*>(QStringLiteral("logic_slot:0"));
+    REQUIRE(text != nullptr);
+    CHECK(text->text() == QStringLiteral("Elder: Welcome, traveller. The road east leads home."));
+    text->setFocus();
+    text->selectAll();
+    QKeyEvent typed(QEvent::KeyPress, Qt::Key_H, Qt::NoModifier, QStringLiteral("Elder: Hi."));
+    QApplication::sendEvent(text, &typed);
+    QApplication::processEvents();
+    CHECK(say->text(0) == QStringLiteral("Say “Elder: Hi.” (dialogue)"));
+    CHECK(e.window.document()->undo_label() == "Change Text in logic/main.drules");
+    CHECK(e.window.windowTitle() == QStringLiteral("Hello Sparxel * — Sparxel Editor"));
+    // The lines below are buttons' business: only steps can be deleted or moved.
+    auto* remove = panel->findChild<QPushButton*>(QStringLiteral("logic_delete"));
+    auto* up = panel->findChild<QPushButton*>(QStringLiteral("logic_up"));
+    REQUIRE(remove != nullptr);
+    REQUIRE(up != nullptr);
+    CHECK(remove->isEnabled());
+    tree->setCurrentItem(item(QStringLiteral("Brain weather")));
+    CHECK_FALSE(remove->isEnabled());
+
+    // Adding a step after the greeting, from the Add step menu: a chime, selected.
+    tree->setCurrentItem(item(QStringLiteral("Say “Elder: Hi.” (dialogue)")));
+    auto* add = panel->findChild<QToolButton*>(QStringLiteral("logic_add"));
+    REQUIRE(add != nullptr);
+    Q_EMIT add->menu()->aboutToShow(); // fills it, as opening it does
+    auto* chime = add->menu()->findChild<QAction*>(QStringLiteral("action:audio/play_sound"));
+    REQUIRE(chime != nullptr);
+    chime->trigger();
+    QApplication::processEvents();
+    QTreeWidgetItem* added = tree->currentItem();
+    REQUIRE(added != nullptr);
+    CHECK(added->text(0) == QStringLiteral("Play sound “” (audio)"));
+    QTreeWidgetItem* parent = added->parent();
+    REQUIRE(parent != nullptr);
+    const int at = parent->indexOfChild(added);
+    CHECK(parent->child(at - 1)->text(0) == QStringLiteral("Say “Elder: Hi.” (dialogue)"));
+    // Moved up, it stays selected, now before the greeting.
+    up->click();
+    QApplication::processEvents();
+    REQUIRE(tree->currentItem() != nullptr);
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Play sound “” (audio)"));
+    CHECK(tree->currentItem()->parent()->child(at)->text(0) ==
+          QStringLiteral("Say “Elder: Hi.” (dialogue)"));
+    // Deleted.
+    remove->click();
+    QApplication::processEvents();
+    CHECK(item(QStringLiteral("Play sound “” (audio)")) == nullptr);
+
+    // Undo goes back through it all, with the scene's undo, to the elder's words.
+    while (e.window.document()->can_undo()) {
+        e.window.undo();
+    }
+    QApplication::processEvents();
+    CHECK(item(welcome) != nullptr);
+    CHECK(item(QStringLiteral("Say “Elder: Hi.” (dialogue)")) == nullptr);
+
+    // A rename that leaves the elder's Rule naming nobody is caught as you go.
+    tree->setCurrentItem(item(welcome));
+    REQUIRE(e.window.document()->rename(e.guid("elder"), "sage"));
+    panel->rebuild();
+    CHECK(problems->text().startsWith(QStringLiteral("logic/main.drules does not run")));
 }

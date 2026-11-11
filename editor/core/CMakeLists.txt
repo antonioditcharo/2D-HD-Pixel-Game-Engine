@@ -3,6 +3,7 @@
 
 add_library(editor_core STATIC
     src/document.cpp
+    src/logic_edit.cpp
     src/logic_text.cpp
     src/preview.cpp
 )

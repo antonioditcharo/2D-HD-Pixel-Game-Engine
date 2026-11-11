@@ -4,6 +4,8 @@
 add_library(editor_app STATIC
     src/inspector.cpp
     src/inspector.h
+    src/logic_panel.cpp
+    src/logic_panel.h
     src/main_window.cpp
     src/main_window.h
     src/scene_view.cpp

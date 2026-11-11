@@ -237,40 +237,8 @@ private:
 } // namespace
 
 std::vector<LogicFile> logic_files(Document& document, std::vector<serialize::Issue>& issues) {
-    std::vector<LogicFile> files;
-    for (const engine::assets::AssetRecord& record : document.assets().assets()) {
-        const std::string& path = record.path;
-        const auto ends_with = [&path](std::string_view end) {
-            return path.size() >= end.size() &&
-                   path.compare(path.size() - end.size(), end.size(), end) == 0;
-        };
-        if (!ends_with(".drules") && !ends_with(".dsequence")) {
-            continue;
-        }
-        const std::optional<std::vector<std::uint8_t>> bytes = document.assets().read(record.guid);
-        std::vector<serialize::Issue> found;
-        const std::optional<serialize::Json> json =
-            bytes ? serialize::parse(
-                        std::string_view(reinterpret_cast<const char*>(bytes->data()), // NOLINT
-                                         bytes->size()),
-                        found)
-                  : std::nullopt;
-        serialize::LogicLoad loaded =
-            json ? serialize::logic_from_json(*json) : serialize::LogicLoad{};
-        found.insert(found.end(), loaded.issues.begin(), loaded.issues.end());
-        for (serialize::Issue& issue : found) {
-            issue.path = "assets/" + path + issue.path;
-            issues.push_back(std::move(issue));
-        }
-        if (std::optional<logic::LogicAsset> asset = std::move(loaded.asset); asset.has_value()) {
-            files.push_back(LogicFile{path, std::move(*asset)});
-        } else if (found.empty()) {
-            issues.push_back(serialize::Issue{"assets/" + path, "This logic could not be read."});
-        }
-    }
-    std::sort(files.begin(), files.end(),
-              [](const LogicFile& a, const LogicFile& b) { return a.path < b.path; });
-    return files;
+    issues.insert(issues.end(), document.logic_issues().begin(), document.logic_issues().end());
+    return document.logic();
 }
 
 std::vector<LogicLine> describe(const logic::LogicAsset& asset, const Document& document) {

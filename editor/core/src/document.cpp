@@ -12,6 +12,8 @@
 #include <limits>
 #include <utility>
 
+#include "document_impl.h"
+
 namespace editor {
 
 namespace fs = std::filesystem;
@@ -25,16 +27,6 @@ using serialize::Issue;
 
 namespace {
 
-/// One step of undo: the scene before and after it.
-struct Step {
-    std::string label;
-    serialize::Json before;
-    serialize::Json after;
-    // What a merged step changes: the next change to the same property extends it.
-    Guid entity;
-    std::string property; ///< "component/property"; empty if the step does not merge.
-};
-
 /// Every entity under `entity`, depth first, `entity` included.
 void collect(const world::World& w, world::Entity entity, std::vector<world::Entity>& out) {
     out.push_back(entity);
@@ -43,59 +35,113 @@ void collect(const world::World& w, world::Entity entity, std::vector<world::Ent
     }
 }
 
+/// Every logic asset in `assets` (.drules and .dsequence files), sorted by path; the
+/// problems of those that cannot be read go to `issues`.
+std::vector<LogicFile> read_logic_files(engine::assets::AssetDatabase& assets,
+                                        std::vector<Issue>& issues) {
+    std::vector<LogicFile> files;
+    for (const engine::assets::AssetRecord& record : assets.assets()) {
+        const std::string& path = record.path;
+        if (!path.ends_with(".drules") && !path.ends_with(".dsequence")) {
+            continue;
+        }
+        const std::optional<std::vector<std::uint8_t>> bytes = assets.read(record.guid);
+        std::vector<Issue> found;
+        const std::optional<serialize::Json> json =
+            bytes ? serialize::parse(
+                        std::string_view(reinterpret_cast<const char*>(bytes->data()), // NOLINT
+                                         bytes->size()),
+                        found)
+                  : std::nullopt;
+        serialize::LogicLoad loaded =
+            json ? serialize::logic_from_json(*json) : serialize::LogicLoad{};
+        found.insert(found.end(), loaded.issues.begin(), loaded.issues.end());
+        for (Issue& issue : found) {
+            issue.path = "assets/" + path + issue.path;
+            issues.push_back(std::move(issue));
+        }
+        if (std::optional<engine::logic::LogicAsset> asset = std::move(loaded.asset);
+            asset.has_value()) {
+            files.push_back(LogicFile{path, std::move(*asset)});
+        } else if (found.empty()) {
+            issues.push_back(Issue{"assets/" + path, "This logic could not be read."});
+        }
+    }
+    std::sort(files.begin(), files.end(),
+              [](const LogicFile& a, const LogicFile& b) { return a.path < b.path; });
+    return files;
+}
+
 } // namespace
 
-struct Document::Impl {
-    fs::path folder;
-    game::ProjectSettings settings;
-    reflect::Registry registry;
-    std::unique_ptr<engine::assets::AssetDatabase> assets;
-    std::unique_ptr<world::World> world;
-    std::string scene_path;
-    std::vector<Step> undo;
-    std::vector<Step> redo;
-    bool merging = false;
-    /// The scene as last saved, to know whether it changed.
-    serialize::Json saved;
+// ---------------------------------------------------------------------------------------
+// The state behind undo
+// ---------------------------------------------------------------------------------------
 
-    [[nodiscard]] serialize::Json snapshot() const { return serialize::scene_to_json(*world); }
-
-    /// Replaces the world with `scene`.
-    void restore(const serialize::Json& scene) {
-        for (const world::Entity root : world->roots()) {
-            world->destroy(root);
-        }
-        static_cast<void>(serialize::scene_from_json(scene, *world));
+serialize::Json Document::Impl::snapshot() const {
+    serialize::Json files = serialize::Json::object();
+    for (const LogicFile& file : logic) {
+        files[file.path] = serialize::logic_to_json(file.asset);
     }
+    return serialize::Json{{"scene", serialize::scene_to_json(*world)},
+                           {"logic", std::move(files)}};
+}
 
-    /// Records an edit made since `before`. Merges into the last step if it changes the
-    /// same property of the same entity and merging has not been ended.
-    void record(std::string label, serialize::Json before, Guid entity = Guid{},
-                const std::string& property = {}) {
-        serialize::Json after = snapshot();
-        if (after == before) {
-            return; // nothing changed
-        }
-        redo.clear();
-        if (merging && !property.empty() && !undo.empty() && undo.back().entity == entity &&
-            undo.back().property == property) {
-            undo.back().after = std::move(after);
-            return;
-        }
-        undo.push_back(
-            Step{std::move(label), std::move(before), std::move(after), entity, property});
-        merging = !property.empty();
+void Document::Impl::restore(const serialize::Json& state) {
+    for (const world::Entity root : world->roots()) {
+        world->destroy(root);
     }
-
-    [[nodiscard]] world::Entity find(Guid guid) const { return world->find(guid); }
-
-    /// "hero", or "an entity" when it has no name.
-    [[nodiscard]] std::string name_of(Guid guid) const {
-        const world::Entity entity = find(guid);
-        const std::string_view name = entity.is_valid() ? world->name(entity) : "";
-        return name.empty() ? std::string("an entity") : std::string(name);
+    static_cast<void>(serialize::scene_from_json(state.at("scene"), *world));
+    const serialize::Json& files = state.at("logic");
+    for (LogicFile& file : logic) {
+        if (const auto found = files.find(file.path); found != files.end()) {
+            serialize::LogicLoad loaded = serialize::logic_from_json(*found);
+            if (loaded.asset.has_value()) {
+                file.asset = std::move(*loaded.asset);
+            }
+        }
     }
-};
+}
+
+void Document::Impl::record(std::string label, serialize::Json before, Guid entity,
+                            const std::string& property) {
+    serialize::Json after = snapshot();
+    if (after == before) {
+        return; // nothing changed
+    }
+    redo.clear();
+    if (merging && !property.empty() && !undo.empty() && undo.back().entity == entity &&
+        undo.back().property == property) {
+        undo.back().after = std::move(after);
+        return;
+    }
+    undo.push_back(Step{std::move(label), std::move(before), std::move(after), entity, property});
+    merging = !property.empty();
+}
+
+std::string Document::Impl::name_of(Guid guid) const {
+    const world::Entity entity = find(guid);
+    const std::string_view name = entity.is_valid() ? world->name(entity) : "";
+    return name.empty() ? std::string("an entity") : std::string(name);
+}
+
+LogicFile* Document::Impl::logic_file(std::string_view path) {
+    for (LogicFile& file : logic) {
+        if (file.path == path) {
+            return &file;
+        }
+    }
+    return nullptr;
+}
+
+const LogicFile* Document::Impl::logic_file(std::string_view path) const {
+    for (const LogicFile& file : logic) {
+        if (file.path == path) {
+            return &file;
+        }
+    }
+    return nullptr;
+}
 
 Document::Document(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 Document::~Document() = default;
@@ -144,8 +190,17 @@ std::unique_ptr<Document> Document::open(const fs::path& folder, std::vector<Iss
     if (loaded.entities.empty() && !loaded.issues.empty()) {
         return nullptr;
     }
+    impl->logic = read_logic_files(*impl->assets, impl->logic_issues);
     impl->saved = impl->snapshot();
     return std::unique_ptr<Document>(new Document(std::move(impl)));
+}
+
+const std::vector<LogicFile>& Document::logic() const noexcept {
+    return impl_->logic;
+}
+
+const std::vector<Issue>& Document::logic_issues() const noexcept {
+    return impl_->logic_issues;
 }
 
 const fs::path& Document::folder() const noexcept {
@@ -434,12 +489,25 @@ bool Document::dirty() const noexcept {
 
 bool Document::save(std::string& error) {
     Impl& d = *impl_;
-    serialize::Json scene = d.snapshot();
-    if (!game::write_file_atomically(d.folder / "assets" / d.scene_path, serialize::to_text(scene),
-                                     error)) {
+    serialize::Json state = d.snapshot();
+    if (!game::write_file_atomically(d.folder / "assets" / d.scene_path,
+                                     serialize::to_text(state.at("scene")), error)) {
         return false;
     }
-    d.saved = std::move(scene);
+    d.saved["scene"] = state.at("scene");
+    // The logic files that changed since they were last saved.
+    for (const auto& [path, json] : state.at("logic").items()) {
+        serialize::Json& saved_file = d.saved["logic"][path];
+        if (json == saved_file) {
+            continue;
+        }
+        if (!game::write_file_atomically(d.folder / "assets" / path, serialize::to_text(json),
+                                         error)) {
+            error.insert(0, "assets/" + path + ": ");
+            return false;
+        }
+        saved_file = json;
+    }
     d.merging = false;
     return true;
 }
