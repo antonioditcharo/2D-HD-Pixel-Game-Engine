@@ -1030,7 +1030,7 @@ TEST_CASE("In the Diorama style: click through the camera, drag along the ground
 }
 
 TEST_CASE("Pictures are dragged from the assets into the scene") {
-    const Editor e;
+    Editor e;
     auto* tree = e.window.findChild<QTreeView*>(QStringLiteral("assets"));
     REQUIRE(tree != nullptr);
     auto* model = qobject_cast<QFileSystemModel*>(tree->model());
@@ -1096,6 +1096,25 @@ TEST_CASE("Pictures are dragged from the assets into the scene") {
     }
     CHECK(listed_sound);
     REQUIRE(e.window.document()->undo());
+
+    // A scene dropped there becomes a door to it: selected, and its Rule, in a new
+    // logic/doors.drules, shown in the Logic view. One undo takes it all away.
+    const std::unique_ptr<QMimeData> road = drag_data(e.sample.path / "assets/maps/road.dscene");
+    drop(*road, view->from_map(6.5, 8.0));
+    CHECK(e.window.document()->undo_label() == "Place a door to road");
+    CHECK(e.window.selection() == e.guid("door_to_road"));
+    const auto shows_doors = [&] {
+        QTreeWidget* logic = e.window.logic_view();
+        for (int i = 0; i < logic->topLevelItemCount(); ++i) {
+            if (logic->topLevelItem(i)->text(0) == QStringLiteral("logic/doors.drules")) {
+                return logic->topLevelItem(i)->childCount() == 1;
+            }
+        }
+        return false;
+    };
+    CHECK(shows_doors());
+    e.window.undo();
+    CHECK_FALSE(shows_doors());
 
     // Other kinds of file are not placed; the status bar says why.
     const std::unique_ptr<QMimeData> rules = drag_data(e.sample.path / "assets/logic/main.drules");

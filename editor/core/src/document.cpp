@@ -19,6 +19,7 @@ namespace editor {
 
 namespace fs = std::filesystem;
 namespace game = engine::game;
+namespace logic = engine::logic;
 namespace reflect = engine::reflect;
 namespace scene2d = engine::scene2d;
 namespace serialize = engine::serialize;
@@ -515,6 +516,71 @@ bool Document::move_entities(const std::vector<std::pair<Guid, std::array<double
     d.record("Move " + std::to_string(moves.size()) + " entities", std::move(before), Guid{},
              "transform_2d/position:" + group);
     return true;
+}
+
+Guid Document::place_door(std::string_view scene, double x, double y, std::string& error) {
+    Impl& d = *impl_;
+    const std::vector<std::string> all = scenes();
+    if (std::find(all.begin(), all.end(), scene) == all.end()) {
+        error = "There is no scene " + std::string(scene) + " in this project.";
+        return Guid{};
+    }
+    if (scene == d.scene_path) {
+        error = "That is the scene open here: a door leads to another one.";
+        return Guid{};
+    }
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        error = "That is not a place on the map.";
+        return Guid{};
+    }
+    // A name logic can use: door_to_ and the scene's name, letters, digits and _ only.
+    const std::string stem = std::filesystem::path(scene).stem().string();
+    std::string base = "door_to_";
+    for (const char c : stem) {
+        const auto u = static_cast<unsigned char>(c);
+        base += std::isalnum(u) != 0 ? static_cast<char>(std::tolower(u)) : '_';
+    }
+    std::string name = base;
+    for (int n = 2; !d.world->find_named(name).empty(); ++n) {
+        name = base + "_" + std::to_string(n);
+    }
+    // Made of ordinary edits, then folded into one step; undone at once if one fails.
+    end_merge();
+    const std::size_t steps = d.undo.size();
+    const std::vector<Step> redo = d.redo;
+    serialize::Json before = d.snapshot();
+    const auto fail = [&] {
+        d.restore(before);
+        d.undo.resize(steps);
+        d.redo = redo;
+        d.merging = false;
+        return Guid{};
+    };
+    const double units = static_cast<double>(std::max<std::uint32_t>(d.settings.ppu, 1));
+    const Guid door =
+        create_entity(name, std::round(x * units) / units, std::round(y * units) / units);
+    const reflect::TypeInfo* trigger = d.registry.find_type<game::Trigger>();
+    if (!door.is_valid() || trigger == nullptr || !add_component(door, *trigger)) {
+        error = "The door could not be made.";
+        return fail();
+    }
+    const std::string doors = "logic/doors.drules";
+    if (d.logic_file(doors) == nullptr && !create_logic_file(doors, error)) {
+        return fail();
+    }
+    const logic::BlockId rule = add_logic_rule(doors, LogicEvent{name, "entered", {}}, error);
+    const logic::BlockId go =
+        rule.is_valid() ? add_logic_step(doors, rule, LogicAction{"game", "go_to_scene", {}}, error)
+                        : logic::BlockId{};
+    if (!go.is_valid() ||
+        !set_logic_slot(doors, go, 0, reflect::Value{std::string(scene)}, error)) {
+        return fail();
+    }
+    d.undo.resize(steps);
+    d.undo.push_back(Step{"Place a door to " + stem, std::move(before), d.snapshot(), {}, {}});
+    d.redo.clear();
+    d.merging = false;
+    return door;
 }
 
 bool Document::turn_sprite(Guid entity, double degrees) {

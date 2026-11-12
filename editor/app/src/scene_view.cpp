@@ -652,7 +652,10 @@ void SceneView::dropEvent(QDropEvent* event) {
             continue;
         }
         std::string error;
-        const engine::Guid placed_entity = document_->place_asset(path, at->x(), at->y(), error);
+        // A scene becomes a door to it; anything else is placed as itself.
+        const engine::Guid placed_entity =
+            path.ends_with(".dscene") ? document_->place_door(path, at->x(), at->y(), error)
+                                      : document_->place_asset(path, at->x(), at->y(), error);
         if (!placed_entity.is_valid()) {
             Q_EMIT problem(QString::fromStdString(error));
             continue;

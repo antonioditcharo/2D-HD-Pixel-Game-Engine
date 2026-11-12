@@ -845,6 +845,89 @@ TEST_CASE("Picking finds what is drawn on top at a point") {
     CHECK(name_at(10.9, 8.5) == "hero");
 }
 
+TEST_CASE("A scene placed in another as a door to it, which the game walks through") {
+    const Sample sample;
+    const auto d = sample.open();
+    REQUIRE(d->scene_path() == "maps/village.dscene");
+    const std::size_t before = d->entities().size();
+    std::string error;
+    // Where the hero stands, so the game walks in at once.
+    const Guid door = d->place_door("maps/road.dscene", 10.01, 9.0, error);
+    INFO(error);
+    REQUIRE(door.is_valid());
+    CHECK(d->undo_label() == "Place a door to road");
+    CHECK(d->entities().size() == before + 1);
+    const world::Entity e = d->world().find(door);
+    CHECK(d->world().name(e) == "door_to_road");
+    CHECK(d->world().get<game::Trigger>(e) != nullptr);
+    CHECK(d->world().get<scene2d::Transform2D>(e)->x == 10.0); // to the nearest pixel
+    const std::string doors = "logic/doors.drules";
+    const auto doors_file = [&]() -> const engine::logic::LogicAsset* {
+        for (const editor::LogicFile& file : d->logic()) {
+            if (file.path == doors) {
+                return &file.asset;
+            }
+        }
+        return nullptr;
+    };
+    const auto lines = [&] {
+        std::vector<std::string> found;
+        for (const editor::LogicLine& line : editor::describe(*doors_file(), *d)) {
+            found.push_back(line.text);
+        }
+        return found;
+    };
+    REQUIRE(doors_file() != nullptr);
+    CHECK(lines() == std::vector<std::string>{"When [who] walks in (door_to_road)",
+                                              "Go to scene “maps/road.dscene” (game)"});
+    CHECK(d->check_logic(doors).empty());
+    // A second door to the same scene: numbered, its Rule in the same file.
+    const Guid second = d->place_door("maps/road.dscene", 3.0, 3.0, error);
+    REQUIRE(second.is_valid());
+    CHECK(d->world().name(d->world().find(second)) == "door_to_road_2");
+    CHECK(doors_file()->rules.size() == 2);
+    // Refused, changing nothing: the scene open here, one that is not there, no place.
+    CHECK_FALSE(d->place_door("maps/village.dscene", 3.0, 3.0, error).is_valid());
+    CHECK(error == "That is the scene open here: a door leads to another one.");
+    CHECK_FALSE(d->place_door("maps/nowhere.dscene", 3.0, 3.0, error).is_valid());
+    CHECK(error == "There is no scene maps/nowhere.dscene in this project.");
+    CHECK_FALSE(
+        d->place_door("maps/road.dscene", std::numeric_limits<double>::quiet_NaN(), 3.0, error)
+            .is_valid());
+    CHECK(d->entities().size() == before + 2);
+    CHECK(d->undo_label() == "Place a door to road");
+    // One undo takes the second door and its Rule; another the first, and the file.
+    REQUIRE(d->undo());
+    CHECK(d->entities().size() == before + 1);
+    CHECK(doors_file()->rules.size() == 1);
+    REQUIRE(d->undo());
+    CHECK(d->entities().size() == before);
+    CHECK(doors_file() == nullptr);
+    REQUIRE(d->redo());
+    REQUIRE(d->save(error));
+    CHECK(fs::exists(sample.path / "assets" / "logic" / "doors.drules"));
+
+    // Played: the hero stands in the door, so the game fades out to the road and in again.
+    game::RuntimeOptions options;
+    options.graphics = false;
+    options.audio = game::AudioMode::Headless;
+    options.save_folder = sample.path / "saves";
+    std::vector<serialize::Issue> issues;
+    const std::unique_ptr<game::Runtime> runtime =
+        game::Runtime::open(sample.path, options, issues);
+    for (const serialize::Issue& issue : issues) {
+        CAPTURE(issue.path);
+        CAPTURE(issue.message);
+        CHECK(false);
+    }
+    REQUIRE(runtime != nullptr);
+    CHECK(runtime->scene() == "maps/village.dscene");
+    for (int i = 0; i < 120 && runtime->scene() != "maps/road.dscene"; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->scene() == "maps/road.dscene");
+}
+
 TEST_CASE("Turning and scaling a sprite, each a step of undo that a drag merges") {
     const Sample sample;
     const auto d = sample.open();

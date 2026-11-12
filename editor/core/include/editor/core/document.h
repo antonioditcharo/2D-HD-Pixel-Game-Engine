@@ -179,6 +179,15 @@ public:
     /// FLAC or MP3), a Sound Source repeating it there. One undo step. Returns its GUID,
     /// or an invalid one, with `error` in plain language, if the asset is neither.
     engine::Guid place_asset(std::string_view asset_path, double x, double y, std::string& error);
+    /// Places a door to another of the project's scenes (its path in assets/, such as
+    /// "maps/cave.dscene") at map point (x, y), snapped to whole pixels: an entity
+    /// "door_to_cave" (numbered if the name is taken) with a Trigger Area, and in
+    /// logic/doors.drules (made if missing) a Rule "When [who] walks in (door_to_cave)"
+    /// that goes to that scene. All one undo step ("Place a door to cave"). Returns the
+    /// door's GUID, or an invalid one, with `error` in plain language, for a scene that is
+    /// not one of the project's, the scene open here, or a point that is not a number;
+    /// then nothing changes.
+    engine::Guid place_door(std::string_view scene, double x, double y, std::string& error);
     bool delete_entity(engine::Guid entity);
     /// Deletes several entities as one step of undo ("Delete 3 entities"). Ones already
     /// gone (with a parent deleted before them) are passed over. False if none existed.
