@@ -145,16 +145,15 @@ private:
         Turn,
         Stretch
     } drag_ = Drag::None;
-    /// For a drag by the turning or scaling handle: each selected picture's rotation and
-    /// scales when it began (the one grabbed first), and its pivot on this widget.
-    struct Shape {
-        engine::Guid entity;
-        double rotation = 0.0;
-        double scale_x = 1.0;
-        double scale_y = 1.0;
-    };
-    std::vector<Shape> shaped_;
+    /// For a drag by the turning or scaling handle: each selected picture's position,
+    /// rotation and scales when it began (the one grabbed first); the middle of their
+    /// positions on the map, which a group turns and scales about; and that point (the
+    /// grabbed one's position, for one picture) on this widget.
+    std::vector<Document::SpriteShape> shaped_;
+    QPointF middle_;
     QPointF pivot_;
+    /// A map coordinate to the nearest whole pixel of the pictures, as moves are.
+    [[nodiscard]] double on_pixel(double v) const;
     /// The pictures (entities with a Position and a Sprite) whose drawn rectangles touch
     /// `band`, a rectangle of this widget, in the scene's order.
     [[nodiscard]] std::vector<engine::Guid> pictures_in(QRect band) const;

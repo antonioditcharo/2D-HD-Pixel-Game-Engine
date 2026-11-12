@@ -519,44 +519,65 @@ TEST_CASE("Several pictures turned and scaled together by the handles") {
         return *e.window.document()->world().get<scene2d::Sprite>(
             e.window.document()->world().find(who));
     };
-    // The hero's knob, a quarter turn round its feet with snapping on: the hero turns to 90
-    // degrees and the elder as much, from 30 to 120. One step.
+    const auto at = [&](Guid who) {
+        return *e.window.document()->world().get<scene2d::Transform2D>(
+            e.window.document()->world().find(who));
+    };
+    // The hero's knob dragged a quarter turn round the pair's middle, (8, 7), with snapping
+    // on: they swing round it, the hero from (10, 9) to (6, 9) and the elder from (6, 5) to
+    // (10, 5), and each picture turns as much, the hero to 90 degrees and the elder from 30
+    // to 120. One step.
     view->set_snap(true);
     REQUIRE(view->handles().has_value());
     const editor::SceneView::Handles shaping =
         view->handles().value_or(editor::SceneView::Handles{});
-    const QPointF feet(shaping.origin);
-    const QPointF up = QPointF(shaping.turn.center()) - feet;
-    const double radius = std::hypot(up.x(), up.y());
+    const std::optional<QPoint> middle_point = view->on_screen(8.0, 7.0);
+    REQUIRE(middle_point.has_value());
+    const QPointF middle(middle_point.value_or(QPoint{}));
+    const QPointF knob = QPointF(shaping.turn.center()) - middle;
     mouse(view, QEvent::MouseButtonPress, shaping.turn.center(), Qt::LeftButton);
     QPoint round_to;
     for (int i = 1; i <= 6; ++i) {
-        const double angle = (3.14159265358979 / 2.0) * i / 6.0;
-        round_to = (feet + QPointF(std::sin(angle), -std::cos(angle)) * radius).toPoint();
+        const double angle = (3.14159265358979 / 2.0) * i / 6.0; // clockwise, y down
+        const QPointF turned((knob.x() * std::cos(angle)) - (knob.y() * std::sin(angle)),
+                             (knob.x() * std::sin(angle)) + (knob.y() * std::cos(angle)));
+        round_to = (middle + turned).toPoint();
         mouse(view, QEvent::MouseMove, round_to, Qt::LeftButton);
     }
     mouse(view, QEvent::MouseButtonRelease, round_to, Qt::LeftButton);
     CHECK(sprite(hero).rotation == 90.0);
     CHECK(sprite(elder).rotation == 120.0);
+    CHECK(at(hero).x == 6.0);
+    CHECK(at(hero).y == 9.0);
+    CHECK(at(elder).x == 10.0);
+    CHECK(at(elder).y == 5.0);
     CHECK(e.window.document()->undo_label() == "Turn 2 entities");
     CHECK(e.window.selected() == std::vector<Guid>{hero, elder}); // still both
-    // Its square, twice as far: both doubled.
+    // The hero's square, dragged twice as far from the middle: both doubled, and twice as
+    // far from it, the hero at (4, 11) and the elder at (12, 3).
     REQUIRE(view->handles().has_value());
     const QPoint corner = view->handles().value_or(editor::SceneView::Handles{}).stretch.center();
-    const QPoint far = shaping.origin + ((corner - shaping.origin) * 2);
+    const QPointF far = middle + ((QPointF(corner) - middle) * 2.0);
     mouse(view, QEvent::MouseButtonPress, corner, Qt::LeftButton);
     for (int i = 1; i <= 4; ++i) {
-        mouse(view, QEvent::MouseMove, corner + ((far - corner) * i) / 4, Qt::LeftButton);
+        mouse(view, QEvent::MouseMove,
+              (QPointF(corner) + ((far - QPointF(corner)) * i / 4.0)).toPoint(), Qt::LeftButton);
     }
-    mouse(view, QEvent::MouseButtonRelease, far, Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, far.toPoint(), Qt::LeftButton);
     CHECK(sprite(hero).scale_x == 2.0);
     CHECK(sprite(elder).scale_y == 2.0);
+    CHECK(at(hero).x == 4.0);
+    CHECK(at(hero).y == 11.0);
+    CHECK(at(elder).x == 12.0);
+    CHECK(at(elder).y == 3.0);
     CHECK(e.window.document()->undo_label() == "Scale 2 entities");
     e.window.undo();
     e.window.undo();
     CHECK(sprite(hero).rotation == 0.0);
     CHECK(sprite(elder).rotation == 30.0);
     CHECK(sprite(elder).scale_x == 1.0);
+    CHECK(at(hero).x == 10.0);
+    CHECK(at(elder).y == 5.0);
     view->set_snap(false);
 }
 

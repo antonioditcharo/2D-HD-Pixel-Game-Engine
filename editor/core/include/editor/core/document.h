@@ -205,12 +205,22 @@ public:
     /// -16 to 16. Scales of the same entity merge into one step. False, changing nothing,
     /// without a Sprite or for numbers that are not finite.
     bool scale_sprite(engine::Guid entity, double scale_x, double scale_y);
-    /// turn_sprite() for several entities at once, each to its own angle ("Turn 2
-    /// entities"); refused, changing nothing, if any lacks a Sprite or has no number.
-    bool turn_sprites(const std::vector<std::pair<engine::Guid, double>>& to);
-    /// scale_sprite() for several entities at once, each to its own {across, down}
-    /// ("Scale 2 entities"); all or none, as turn_sprites().
-    bool scale_sprites(const std::vector<std::pair<engine::Guid, std::array<double, 2>>>& to);
+    /// Where an entity stands and how its Sprite is turned and scaled, for shape_sprites().
+    struct SpriteShape {
+        engine::Guid entity;
+        double x = 0.0;
+        double y = 0.0;
+        double rotation = 0.0;
+        double scale_x = 1.0;
+        double scale_y = 1.0;
+    };
+    /// Sets several entities' Positions and their Sprites' rotations and scales at once:
+    /// a group turned (`turning`, "Turn 2 entities") or scaled ("Scale 2 entities") about
+    /// its middle. Angles are kept between -180 and 180 and scales within -16 to 16, as
+    /// turn_sprite() and scale_sprite() keep them. Changes to the same group merge into one
+    /// step, as a drag does. Refused, changing nothing, if any of them lacks a Position or
+    /// a Sprite or has a number that is not finite, or for none.
+    bool shape_sprites(const std::vector<SpriteShape>& to, bool turning);
     bool rename(engine::Guid entity, std::string_view name);
     /// Names several entities after `base`, numbered in their order: "tree_1", "tree_2",
     /// ..., skipping names other entities have, so logic can tell each apart. One step

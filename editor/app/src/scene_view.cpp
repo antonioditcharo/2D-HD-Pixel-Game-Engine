@@ -280,6 +280,12 @@ bool SceneView::set_snap_divisions(int divisions) noexcept {
     return true;
 }
 
+double SceneView::on_pixel(double v) const {
+    const double ppu =
+        document_ != nullptr ? static_cast<double>(std::max(1U, document_->settings().ppu)) : 1.0;
+    return std::round(v * ppu) / ppu;
+}
+
 std::optional<QPoint> SceneView::on_screen(double x, double y) const {
     if (document_ == nullptr || image_.isNull()) {
         return std::nullopt;
@@ -395,22 +401,28 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
                         members.push_back(member);
                     }
                 }
+                QPointF sum;
                 for (const engine::Guid member : members) {
                     const engine::world::Entity m = document_->world().find(member);
                     const auto* sprite =
                         m.is_valid() ? document_->world().get<scene2d::Sprite>(m) : nullptr;
-                    if (sprite != nullptr) {
+                    const auto* where =
+                        m.is_valid() ? document_->world().get<scene2d::Transform2D>(m) : nullptr;
+                    if (sprite != nullptr && where != nullptr) {
                         const auto finite_or = [](double v, double otherwise) {
                             return std::isfinite(v) ? v : otherwise;
                         };
-                        shaped_.push_back(Shape{member, finite_or(sprite->rotation, 0.0),
-                                                finite_or(sprite->scale_x, 1.0),
-                                                finite_or(sprite->scale_y, 1.0)});
+                        shaped_.push_back(Document::SpriteShape{
+                            member, where->x, where->y, finite_or(sprite->rotation, 0.0),
+                            finite_or(sprite->scale_x, 1.0), finite_or(sprite->scale_y, 1.0)});
+                        sum += QPointF(where->x, where->y);
                     }
                 }
                 if (!shaped_.empty() && shaped_.front().entity == selection_) {
+                    middle_ = sum / static_cast<double>(shaped_.size());
+                    const std::optional<QPoint> middle = on_screen(middle_.x(), middle_.y());
                     drag_ = h->turn.contains(at) ? Drag::Turn : Drag::Stretch;
-                    pivot_ = QPointF(h->origin);
+                    pivot_ = shaped_.size() > 1 && middle ? QPointF(*middle) : QPointF(h->origin);
                     document_->end_merge();
                     return;
                 }
@@ -504,12 +516,24 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
             if (snap_) {
                 degrees = std::round(degrees / 15.0) * 15.0;
             }
-            std::vector<std::pair<engine::Guid, double>> turns;
-            turns.reserve(shaped_.size());
-            for (const Shape& shape : shaped_) {
-                turns.emplace_back(shape.entity, shape.rotation + (degrees - grabbed));
+            if (shaped_.size() == 1) {
+                changed = document_->turn_sprite(selection_, degrees);
+            } else {
+                // The group swings round its middle, each picture turning as much.
+                const double turn = degrees - grabbed;
+                const double radians = turn * 3.14159265358979323846 / 180.0;
+                const double c = std::cos(radians);
+                const double s = std::sin(radians);
+                std::vector<Document::SpriteShape> turned = shaped_;
+                for (Document::SpriteShape& shape : turned) {
+                    const double dx = shape.x - middle_.x();
+                    const double dy = shape.y - middle_.y();
+                    shape.x = on_pixel(middle_.x() + (dx * c) - (dy * s));
+                    shape.y = on_pixel(middle_.y() + (dx * s) + (dy * c));
+                    shape.rotation += turn;
+                }
+                changed = document_->shape_sprites(turned, true);
             }
-            changed = document_->turn_sprites(turns);
         } else {
             // By as much as the cursor went away from the position, the same both ways.
             const double start = std::hypot(from.x(), from.y());
@@ -524,13 +548,20 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
                 const double sign = from_scale < 0.0 ? -1.0 : 1.0;
                 return sign * std::clamp(std::abs(from_scale) * by, 0.0625, 16.0);
             };
-            std::vector<std::pair<engine::Guid, std::array<double, 2>>> scales;
-            scales.reserve(shaped_.size());
-            for (const Shape& shape : shaped_) {
-                scales.emplace_back(shape.entity, std::array<double, 2>{scaled(shape.scale_x),
-                                                                        scaled(shape.scale_y)});
+            if (shaped_.size() == 1) {
+                changed = document_->scale_sprite(selection_, scaled(shaped_.front().scale_x),
+                                                  scaled(shaped_.front().scale_y));
+            } else {
+                // The group spreads from its middle (or draws in), each picture as much.
+                std::vector<Document::SpriteShape> grown = shaped_;
+                for (Document::SpriteShape& shape : grown) {
+                    shape.x = on_pixel(middle_.x() + ((shape.x - middle_.x()) * by));
+                    shape.y = on_pixel(middle_.y() + ((shape.y - middle_.y()) * by));
+                    shape.scale_x = scaled(shape.scale_x);
+                    shape.scale_y = scaled(shape.scale_y);
+                }
+                changed = document_->shape_sprites(grown, false);
             }
-            changed = document_->scale_sprites(scales);
         }
         if (changed) {
             Q_EMIT moved();
