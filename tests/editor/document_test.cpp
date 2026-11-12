@@ -321,6 +321,22 @@ TEST_CASE("A property of several entities changes for all of them, as one step")
     REQUIRE(d->undo());
     CHECK(d->world().get<scene2d::Sprite>(d->world().find(hero)) != nullptr);
     CHECK(d->world().get<scene2d::Sprite>(d->world().find(lamp)) == nullptr);
+
+    // Named together, numbered, past names others have: one step, undone together.
+    const Guid other = d->create_entity("tree_1", 0.0, 0.0);
+    REQUIRE(d->rename_many({hero, elder}, "tree"));
+    CHECK(d->world().name(d->world().find(hero)) == "tree_2");
+    CHECK(d->world().name(d->world().find(elder)) == "tree_3");
+    CHECK(d->world().name(d->world().find(other)) == "tree_1");
+    CHECK(d->undo_label() == "Rename 2 entities");
+    CHECK_FALSE(d->rename_many({hero, elder}, ""));
+    REQUIRE(d->undo());
+    CHECK(d->world().name(d->world().find(hero)) == "hero");
+    CHECK(d->world().name(d->world().find(elder)) == "elder");
+    // Their own names do not count as taken.
+    REQUIRE(d->rename_many({hero, elder}, "hero"));
+    CHECK(d->world().name(d->world().find(hero)) == "hero_1");
+    CHECK(d->world().name(d->world().find(elder)) == "hero_2");
 }
 
 TEST_CASE("Placing a picture from the assets makes a sprite there, as one step") {

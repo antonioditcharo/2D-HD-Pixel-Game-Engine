@@ -813,6 +813,45 @@ bool Document::rename(Guid entity, std::string_view name) {
     return true;
 }
 
+bool Document::rename_many(const std::vector<Guid>& entities, std::string_view base) {
+    Impl& d = *impl_;
+    if (base.empty()) {
+        return false;
+    }
+    std::vector<world::Entity> named;
+    for (const Guid guid : entities) {
+        if (const world::Entity e = d.find(guid); e.is_valid()) {
+            named.push_back(e);
+        }
+    }
+    if (named.empty()) {
+        return false;
+    }
+    // Names taken by entities not being renamed.
+    const auto taken = [&](const std::string& name) {
+        for (const world::Entity other : d.world->find_named(name)) {
+            if (std::find(named.begin(), named.end(), other) == named.end()) {
+                return true;
+            }
+        }
+        return false;
+    };
+    serialize::Json before = d.snapshot();
+    std::size_t number = 1;
+    for (const world::Entity e : named) {
+        std::string name;
+        do {
+            name = std::string(base) + "_" + std::to_string(number++);
+        } while (taken(name));
+        if (!d.world->set_name(e, name)) {
+            d.restore(before);
+            return false;
+        }
+    }
+    d.record("Rename " + std::to_string(named.size()) + " entities", std::move(before));
+    return true;
+}
+
 bool Document::add_component(Guid entity, const reflect::TypeInfo& component) {
     Impl& d = *impl_;
     const world::Entity e = d.find(entity);

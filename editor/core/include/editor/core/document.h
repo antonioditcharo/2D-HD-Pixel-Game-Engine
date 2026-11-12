@@ -189,6 +189,10 @@ public:
     /// nothing moved.
     bool move_entities(const std::vector<std::pair<engine::Guid, std::array<double, 2>>>& to);
     bool rename(engine::Guid entity, std::string_view name);
+    /// Names several entities after `base`, numbered in their order: "tree_1", "tree_2",
+    /// ..., skipping names other entities have, so logic can tell each apart. One step
+    /// of undo ("Rename 3 entities"). False, changing nothing, for an empty base.
+    bool rename_many(const std::vector<engine::Guid>& entities, std::string_view base);
     bool add_component(engine::Guid entity, const engine::reflect::TypeInfo& component);
     bool remove_component(engine::Guid entity, const engine::reflect::TypeInfo& component);
     /// Adds `component` to every one of `entities` that lacks it, as one step of undo ("Add

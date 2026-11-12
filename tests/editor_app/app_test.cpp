@@ -470,6 +470,24 @@ TEST_CASE("Several entities selected: Ctrl-click and the list, dragged and delet
     CHECK(at(hero).x == 10.0);
     CHECK(at(elder).x == 6.0);
     CHECK(e.window.selected() == std::vector<Guid>{hero, elder});
+    // One name for both, numbered; listed so; undone together.
+    auto* name_all = inspector->findChild<QLineEdit*>(QStringLiteral("name_all"));
+    REQUIRE(name_all != nullptr);
+    name_all->setText(QStringLiteral(" pal "));
+    Q_EMIT name_all->editingFinished();
+    QApplication::processEvents();
+    CHECK(e.window.document()->world().name(e.window.document()->world().find(hero)) == "pal_1");
+    CHECK(e.window.document()->world().name(e.window.document()->world().find(elder)) == "pal_2");
+    bool renamed_listed = false;
+    for (QTreeWidgetItemIterator it(e.window.outliner()); *it != nullptr; ++it) {
+        renamed_listed = renamed_listed || (*it)->text(0) == QStringLiteral("pal_2");
+    }
+    CHECK(renamed_listed);
+    CHECK(e.window.document()->undo_label() == "Rename 2 entities");
+    e.window.undo();
+    QApplication::processEvents();
+    CHECK(e.window.document()->world().name(e.window.document()->world().find(hero)) == "hero");
+    inspector = e.window.inspector();
     // A component added to both at once (only the elder lacked a Top-down Mover), then
     // removed from both: one undo step each.
     const auto has_mover = [&](Guid g) {

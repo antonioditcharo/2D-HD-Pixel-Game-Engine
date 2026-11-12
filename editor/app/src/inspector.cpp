@@ -191,6 +191,20 @@ void Inspector::rebuild_many(QVBoxLayout& column) {
     heading->setObjectName(QStringLiteral("many"));
     heading->setWordWrap(true);
     column.addWidget(heading);
+    // One name for them all, numbered: "tree" names them tree_1, tree_2, ...
+    auto* name = new QLineEdit(content_);
+    name->setObjectName(QStringLiteral("name_all"));
+    name->setPlaceholderText(tr("Name them all (numbered)"));
+    name->setAccessibleName(tr("Name them all"));
+    connect(name, &QLineEdit::editingFinished, this, [this, name] {
+        const std::string base = name->text().trimmed().toStdString();
+        if (!base.empty() && document_->rename_many(entities_, base)) {
+            Q_EMIT edited(true);
+        }
+    });
+    auto* name_row = new QFormLayout();
+    name_row->addRow(tr("Name"), name);
+    column.addLayout(name_row);
     // The components all of them have, in the first one's order.
     const engine::world::Entity first = world.find(entity_);
     for (const reflect::TypeInfo* component : world.components(first)) {
