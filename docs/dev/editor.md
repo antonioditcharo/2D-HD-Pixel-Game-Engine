@@ -142,7 +142,7 @@ run → Artifacts), unzip it, and open `sparxel-editor.exe`.
 | `player/` | `sparxel-player.exe` with only its own libraries and notices. The editor plays and exports with it, so exported games never carry Qt |
 | `samples/hello` | The sample village, to open first |
 | `README.txt`, `LICENSE.txt`, `THIRD_PARTY_NOTICES.md`, `QT-NOTICE.txt`, `qt-licences/` | How to start, and the licence notices: Qt is LGPL, linked dynamically, its libraries left as files that can be replaced |
-| `vc_redist.x64.exe` | Microsoft's C++ runtime installer, for a PC that lacks it |
+| `vcruntime140.dll`, `msvcp140.dll` and the rest of Microsoft's C++ runtime, here and in `player/` | So it runs on a PC that never installed it (app-local deployment, taken from the Visual Studio that built it). Exported games copy the player's folder, so they carry it too |
 
 [`tools/package_windows.cmake`](../../tools/package_windows.cmake) makes it from a build.
 CI then **checks it with nothing else on the path** (no Qt, no build folder):

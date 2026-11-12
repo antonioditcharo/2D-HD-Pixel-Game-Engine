@@ -55,6 +55,25 @@ foreach(needed "Qt6Widgets.dll" "Qt6Gui.dll" "Qt6Core.dll" "platforms/qwindows.d
     endif()
 endforeach()
 
+# Microsoft's C++ runtime, beside the editor and beside the player, so the package runs
+# on a PC that never had it installed (Microsoft's "app-local" deployment). Exported games
+# copy the player's folder, so they get it too. VCToolsRedistDir is set by vcvars64.bat.
+if(DEFINED ENV{VCToolsRedistDir})
+    file(TO_CMAKE_PATH "$ENV{VCToolsRedistDir}" redist)
+    file(GLOB runtime "${redist}/x64/Microsoft.VC*.CRT/*.dll")
+endif()
+if(NOT runtime)
+    message(FATAL_ERROR "The C++ runtime was not found: run this from a Visual Studio "
+                        "developer prompt (VCToolsRedistDir is not set).")
+endif()
+file(COPY ${runtime} DESTINATION "${OUT}")
+file(COPY ${runtime} DESTINATION "${OUT}/player")
+foreach(needed "vcruntime140.dll" "msvcp140.dll" "player/vcruntime140.dll")
+    if(NOT EXISTS "${OUT}/${needed}")
+        message(FATAL_ERROR "The package has no ${needed}.")
+    endif()
+endforeach()
+
 # Notices: the engine's, the libraries', and Qt's (LGPL: its licence texts, and the
 # libraries left as separate files that can be replaced).
 file(COPY "${OUT}/player/LICENSE.txt" "${OUT}/player/THIRD_PARTY_NOTICES.md" DESTINATION "${OUT}")
@@ -84,9 +103,7 @@ To see a game:   File > Open project, and choose the folder samples\\hello
                  then press F5 (Play)
 To make your own: File > New project
 
-If Windows says VCRUNTIME140.dll or MSVCP140.dll is missing, run vc_redist.x64.exe
-(in this folder, if present) or install the \"Microsoft Visual C++ Redistributable\"
-from https://aka.ms/vs/17/release/vc_redist.x64.exe
+Nothing needs installing: Microsoft's C++ runtime is included beside the programs.
 
 The folder 'player' holds the program that plays games; exported games are copies of it
 with your game's files. Keep it beside the editor.
