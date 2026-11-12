@@ -331,17 +331,26 @@ std::optional<SceneView::Handles> SceneView::handles() const {
         return std::nullopt;
     }
     Handles found{*across_head, *down_head, *origin, QRect(), QRect()};
-    // Turning and scaling, in Classic 2D: by the box around the picture as drawn.
-    if (!diorama()) {
-        if (const std::optional<scene2d::Box> box = sprite_bounds(
-                document_->world(), document_->assets(), e, document_->settings().ppu)) {
-            const QPoint top_middle = from_map((box->left + box->right) / 2.0, box->top);
-            const QPoint top_right = from_map(box->right, box->top);
-            found.turn =
-                QRect(top_middle + QPoint(-(head / 2), -18 - (head / 2)), QSize(head, head));
-            found.stretch =
-                QRect(top_right + QPoint(6 - (head / 2), -6 - (head / 2)), QSize(head, head));
+    // Turning and scaling: by the box around the picture as drawn (in 3D, around the
+    // billboard as the camera sees it).
+    std::optional<std::pair<QPoint, QPoint>> top; // its top's middle and right end
+    if (diorama()) {
+        if (const auto rect = diorama_sprite_rect(
+                document_->world(), document_->assets(), e,
+                diorama_camera(document_->settings(), camera_x_, camera_y_),
+                static_cast<float>(image_.width()) / static_cast<float>(image_.height()))) {
+            const auto [left, bottom, right, upper] = *rect; // y up
+            top.emplace(from_ndc((left + right) / 2.0, upper), from_ndc(right, upper));
         }
+    } else if (const std::optional<scene2d::Box> box = sprite_bounds(
+                   document_->world(), document_->assets(), e, document_->settings().ppu)) {
+        top.emplace(from_map((box->left + box->right) / 2.0, box->top),
+                    from_map(box->right, box->top));
+    }
+    if (top) {
+        found.turn = QRect(top->first + QPoint(-(head / 2), -18 - (head / 2)), QSize(head, head));
+        found.stretch =
+            QRect(top->second + QPoint(6 - (head / 2), -6 - (head / 2)), QSize(head, head));
     }
     return found;
 }

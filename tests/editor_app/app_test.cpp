@@ -971,6 +971,48 @@ TEST_CASE("In the Diorama style: click through the camera, drag along the ground
     CHECK(t->y == 9.0); // and not down at all
     window.undo();
 
+    // Turning and scaling around the billboard: the knob above it, dragged a quarter turn
+    // round the hero's feet with snapping on, turns it 90 degrees in its own plane; the
+    // square at its top-right corner, dragged twice as far from its feet, doubles it.
+    REQUIRE(view->handles().has_value());
+    const editor::SceneView::Handles shaping =
+        view->handles().value_or(editor::SceneView::Handles{});
+    REQUIRE_FALSE(shaping.turn.isNull());
+    REQUIRE_FALSE(shaping.stretch.isNull());
+    CHECK(shaping.turn.center().y() < view->from_ndc((rect[0] + rect[2]) / 2.0, rect[3]).y());
+    view->set_snap(true);
+    const QPointF base(shaping.origin);
+    const QPointF up_to_knob = QPointF(shaping.turn.center()) - base;
+    const double radius = std::hypot(up_to_knob.x(), up_to_knob.y());
+    mouse(view, QEvent::MouseButtonPress, shaping.turn.center(), Qt::LeftButton);
+    QPoint round_to;
+    for (int i = 1; i <= 6; ++i) {
+        const double angle = (3.14159265358979 / 2.0) * i / 6.0;
+        round_to = (base + QPointF(std::sin(angle), -std::cos(angle)) * radius).toPoint();
+        mouse(view, QEvent::MouseMove, round_to, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, round_to, Qt::LeftButton);
+    const auto sprite = [&] {
+        return *d->world().get<scene2d::Sprite>(d->world().find(hero_guid));
+    };
+    CHECK(sprite().rotation == 90.0);
+    CHECK(d->undo_label() == "Turn hero");
+    REQUIRE(view->handles().has_value());
+    const QPoint corner = view->handles().value_or(editor::SceneView::Handles{}).stretch.center();
+    const QPoint far = shaping.origin + ((corner - shaping.origin) * 2);
+    mouse(view, QEvent::MouseButtonPress, corner, Qt::LeftButton);
+    for (int i = 1; i <= 4; ++i) {
+        mouse(view, QEvent::MouseMove, corner + ((far - corner) * i) / 4, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, far, Qt::LeftButton);
+    CHECK(sprite().scale_x == 2.0);
+    CHECK(sprite().scale_y == 2.0);
+    window.undo();
+    window.undo();
+    CHECK(sprite().rotation == 0.0);
+    CHECK(sprite().scale_x == 1.0);
+    view->set_snap(false);
+
     // Painting a tile on the ground through the camera.
     window.select(d->world().guid(d->world().find_named("ground").at(0)));
     auto* path = window.tile_palette()->findChild<QToolButton*>(QStringLiteral("tile:1"));

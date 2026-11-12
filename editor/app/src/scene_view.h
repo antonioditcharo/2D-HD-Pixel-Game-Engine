@@ -62,11 +62,12 @@ public:
     /// an arrow's head moves the selection along that axis only. Nothing when nothing
     /// movable is selected, or while painting.
     ///
-    /// In Classic 2D there are two more: a round knob above the picture, which turns it
-    /// about its position as it is dragged round (to 15 degrees at a time with snapping
-    /// on), and a square at its top-right corner, which scales it evenly as it is dragged
-    /// away from or towards its position (to halves with snapping on). Each drag is one
-    /// undo step. In the Diorama style these are empty.
+    /// Two more, in either style: a round knob above the picture, which turns it about
+    /// its position as it is dragged round (to 15 degrees at a time with snapping on), and
+    /// a square at its top-right corner, which scales it evenly as it is dragged away from
+    /// or towards its position (to halves with snapping on). Each drag is one undo step.
+    /// In the Diorama style they sit around the billboard as the camera shows it, and the
+    /// turn is in the billboard's own plane.
     struct Handles {
         QRect across;
         QRect down;
