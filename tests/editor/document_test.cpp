@@ -907,7 +907,27 @@ TEST_CASE("A scene placed in another as a door to it, which the game walks throu
     REQUIRE(d->save(error));
     CHECK(fs::exists(sample.path / "assets" / "logic" / "doors.drules"));
 
-    // Played: the hero stands in the door, so the game fades out to the road and in again.
+    // The village dropped into the road: a door back, which arrives at the village's door
+    // to the road, and that door now arrives at this one. One step.
+    REQUIRE(d->open_scene("maps/road.dscene", error));
+    const Guid back = d->place_door("maps/village.dscene", 2.0, 3.0, error);
+    INFO(error);
+    REQUIRE(back.is_valid());
+    CHECK(d->world().name(d->world().find(back)) == "door_to_village");
+    CHECK(lines() == std::vector<std::string>{
+                         "When [who] walks in (door_to_road)",
+                         "Go to scene “maps/road.dscene”, arriving at “door_to_village” (game)",
+                         "When [who] walks in (door_to_village)",
+                         "Go to scene “maps/village.dscene”, arriving at “door_to_road” (game)"});
+    CHECK(d->check_logic(doors).empty());
+    REQUIRE(d->undo()); // both doors' Rules as they were, in one step
+    CHECK(lines() == std::vector<std::string>{"When [who] walks in (door_to_road)",
+                                              "Go to scene “maps/road.dscene” (game)"});
+    REQUIRE(d->redo());
+    REQUIRE(d->save(error));
+
+    // Played: the hero stands in the door, so the game fades out to the road and in again,
+    // arriving at the door back (2, 3), and stays: arriving in it is not walking in.
     game::RuntimeOptions options;
     options.graphics = false;
     options.audio = game::AudioMode::Headless;
@@ -926,6 +946,13 @@ TEST_CASE("A scene placed in another as a door to it, which the game walks throu
         runtime->step();
     }
     CHECK(runtime->scene() == "maps/road.dscene");
+    for (int i = 0; i < 120; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->scene() == "maps/road.dscene");
+    const world::Entity arrived = runtime->world().find_named("hero").at(0);
+    CHECK(runtime->world().get<scene2d::Transform2D>(arrived)->x == 2.0);
+    CHECK(runtime->world().get<scene2d::Transform2D>(arrived)->y == 3.0);
 }
 
 TEST_CASE("Turning and scaling a sprite, each a step of undo that a drag merges") {

@@ -12,6 +12,7 @@
 #include <iterator>
 #include <limits>
 #include <utility>
+#include <variant>
 
 #include "document_impl.h"
 
@@ -518,6 +519,36 @@ bool Document::move_entities(const std::vector<std::pair<Guid, std::array<double
     return true;
 }
 
+namespace {
+
+/// The name place_door() gives a door to the scene named `stem`: door_to_ and the name,
+/// in lower-case letters, digits and _.
+std::string door_name(std::string_view stem) {
+    std::string name = "door_to_";
+    for (const char c : stem) {
+        const auto u = static_cast<unsigned char>(c);
+        name += std::isalnum(u) != 0 ? static_cast<char>(std::tolower(u)) : '_';
+    }
+    return name;
+}
+
+/// Whether the scene file at `file` has an entity named `name` (false if it cannot be
+/// read).
+bool scene_has_entity(const fs::path& file, std::string_view name) {
+    std::ifstream in(file, std::ios::binary);
+    const serialize::Json json = serialize::Json::parse(in, nullptr, false);
+    if (!json.is_object() || !json.contains("entities") || !json["entities"].is_array()) {
+        return false;
+    }
+    return std::any_of(
+        json["entities"].begin(), json["entities"].end(), [name](const serialize::Json& entity) {
+            return entity.is_object() && entity.contains("name") && entity["name"].is_string() &&
+                   entity["name"].get_ref<const std::string&>() == name;
+        });
+}
+
+} // namespace
+
 Guid Document::place_door(std::string_view scene, double x, double y, std::string& error) {
     Impl& d = *impl_;
     const std::vector<std::string> all = scenes();
@@ -533,13 +564,9 @@ Guid Document::place_door(std::string_view scene, double x, double y, std::strin
         error = "That is not a place on the map.";
         return Guid{};
     }
-    // A name logic can use: door_to_ and the scene's name, letters, digits and _ only.
+    // A name logic can use: door_to_ and the scene's name.
     const std::string stem = std::filesystem::path(scene).stem().string();
-    std::string base = "door_to_";
-    for (const char c : stem) {
-        const auto u = static_cast<unsigned char>(c);
-        base += std::isalnum(u) != 0 ? static_cast<char>(std::tolower(u)) : '_';
-    }
+    const std::string base = door_name(stem);
     std::string name = base;
     for (int n = 2; !d.world->find_named(name).empty(); ++n) {
         name = base + "_" + std::to_string(n);
@@ -568,13 +595,44 @@ Guid Document::place_door(std::string_view scene, double x, double y, std::strin
     if (d.logic_file(doors) == nullptr && !create_logic_file(doors, error)) {
         return fail();
     }
+    // A door back from there (placed earlier): the player arrives at it, and through it
+    // arrives at this one. Arriving in a trigger area does not count as walking in, so
+    // nobody is sent straight back (game.md, scenes).
+    const std::string back = door_name(fs::path(d.scene_path).stem().string());
+    const bool has_back = scene_has_entity(d.folder / "assets" / scene, back);
     const logic::BlockId rule = add_logic_rule(doors, LogicEvent{name, "entered", {}}, error);
     const logic::BlockId go =
-        rule.is_valid() ? add_logic_step(doors, rule, LogicAction{"game", "go_to_scene", {}}, error)
-                        : logic::BlockId{};
+        rule.is_valid()
+            ? add_logic_step(doors, rule,
+                             LogicAction{"game", has_back ? "go_to_scene_at" : "go_to_scene", {}},
+                             error)
+            : logic::BlockId{};
     if (!go.is_valid() ||
-        !set_logic_slot(doors, go, 0, reflect::Value{std::string(scene)}, error)) {
+        !set_logic_slot(doors, go, 0, reflect::Value{std::string(scene)}, error) ||
+        (has_back && !set_logic_slot(doors, go, 1, reflect::Value{back}, error))) {
         return fail();
+    }
+    if (has_back) {
+        // The door back's own Rule, if it simply goes here, now arrives at this door.
+        for (LogicFile& file : d.logic) {
+            for (logic::Rule& other : file.asset.rules) {
+                if (other.object != back || other.event != "entered") {
+                    continue;
+                }
+                for (logic::Stmt& step : other.actions) {
+                    const auto* to = step.arguments.size() == 1
+                                         ? std::get_if<std::string>(&step.arguments[0].literal)
+                                         : nullptr;
+                    if (step.kind == logic::StmtKind::Do && step.object == "game" &&
+                        step.member == "go_to_scene" &&
+                        step.arguments[0].kind == logic::ExprKind::Literal && to != nullptr &&
+                        *to == d.scene_path) {
+                        step.member = "go_to_scene_at";
+                        step.arguments.push_back(logic::ir::literal(reflect::Value{name}));
+                    }
+                }
+            }
+        }
     }
     d.undo.resize(steps);
     d.undo.push_back(Step{"Place a door to " + stem, std::move(before), d.snapshot(), {}, {}});
