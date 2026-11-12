@@ -285,10 +285,16 @@ void MainWindow::build_actions() {
     new_entity_ = edit->addAction(tr("&New entity"), this, [this] { new_entity(); });
     delete_ = edit->addAction(tr("&Delete"), this, [this] { delete_selection(); });
     delete_->setShortcut(QKeySequence::Delete);
+    QAction* snap = edit->addAction(tr("&Snap to tiles"));
+    snap->setObjectName(QStringLiteral("snap"));
+    snap->setCheckable(true);
+    snap->setToolTip(tr("Dragged things land on whole tiles"));
+    connect(snap, &QAction::toggled, view_, &SceneView::set_snap);
     play_ = game->addAction(tr("&Play"), this, [this] { play(); });
     play_->setShortcut(Qt::Key_F5);
     export_ = game->addAction(tr("&Export…"), this, [this] { export_to({}); });
-    for (QAction* action : {open, save_, undo_, redo_, new_entity_, delete_, play_, export_}) {
+    for (QAction* action :
+         {open, save_, undo_, redo_, new_entity_, delete_, snap, play_, export_}) {
         tools->addAction(action);
     }
 }

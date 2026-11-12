@@ -293,6 +293,7 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
                         [guid](const auto& member) { return member.first == guid; });
         if (movable && ground) {
             drag_ = Drag::Entity;
+            grabbed_ = guid;
             ground_from_ = *ground;
             document_->end_merge();
         } else {
@@ -342,7 +343,16 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
         if (!ground) {
             return;
         }
-        const QPointF moved_by = *ground - ground_from_;
+        QPointF moved_by = *ground - ground_from_;
+        if (snap_) {
+            // By as much as puts the grabbed entity on the nearest whole tile.
+            for (const auto& [member, from] : dragged_) {
+                if (member == grabbed_) {
+                    moved_by = QPointF(std::round(from.x() + moved_by.x()) - from.x(),
+                                       std::round(from.y() + moved_by.y()) - from.y());
+                }
+            }
+        }
         std::vector<std::pair<engine::Guid, std::array<double, 2>>> to;
         to.reserve(dragged_.size());
         for (const auto& [member, from] : dragged_) {

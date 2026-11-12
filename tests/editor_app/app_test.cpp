@@ -395,6 +395,29 @@ TEST_CASE("Several entities selected: Ctrl-click and the list, dragged and delet
     CHECK(at(hero).x == 10.0);
     CHECK(at(elder).x == 6.0);
     CHECK_FALSE(e.window.document()->can_undo());
+    // Snapping on: the hero, grabbed with the elder a little off its own tile, lands on
+    // whole tiles; the elder moves by as much, keeping its place beside it.
+    auto* snap = e.window.findChild<QAction*>(QStringLiteral("snap"));
+    REQUIRE(snap != nullptr);
+    snap->setChecked(true);
+    CHECK(view->snap());
+    e.window.document()->move_entities({{elder, {6.25, 5.0}}});
+    e.window.document()->end_merge();
+    const QPoint grab = view->from_map(10.0, 8.5);
+    const QPoint drop = view->from_map(11.3, 9.1); // 1.3 across and 0.6 down
+    mouse(view, QEvent::MouseButtonPress, grab, Qt::LeftButton);
+    for (int i = 1; i <= 3; ++i) {
+        mouse(view, QEvent::MouseMove, grab + ((drop - grab) * i) / 3, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, drop, Qt::LeftButton);
+    CHECK(at(hero).x == 11.0);
+    CHECK(at(hero).y == 10.0);
+    CHECK(at(elder).x == 7.25);
+    CHECK(at(elder).y == 6.0);
+    e.window.undo();
+    e.window.undo();
+    snap->setChecked(false);
+    CHECK(at(elder).x == 6.0);
     CHECK(e.window.selected().size() == 2); // still both after undo
     // Ctrl-click the hero again: out; Shift-click: back in, last.
     click(QPointF(10.0, 8.5), Qt::ControlModifier);

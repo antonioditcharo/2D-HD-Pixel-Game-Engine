@@ -49,6 +49,10 @@ public:
     enum class PaintTool : std::uint8_t { Pencil, Rectangle, Fill };
     void set_paint_tool(PaintTool tool) { paint_tool_ = tool; }
     [[nodiscard]] PaintTool paint_tool() const noexcept { return paint_tool_; }
+    /// Snapping: what is dragged lands on whole tiles (the entity grabbed; others
+    /// selected with it move by as much, keeping their places around it).
+    void set_snap(bool snap) noexcept { snap_ = snap; }
+    [[nodiscard]] bool snap() const noexcept { return snap_; }
     /// Draws the scene again (after an edit).
     void refresh();
 
@@ -120,6 +124,8 @@ private:
     /// A box to select with has been dragged out: the button moved with it held. A press
     /// and release alone are a click, wherever they land.
     bool boxing_ = false;
+    bool snap_ = false;
+    engine::Guid grabbed_; ///< The entity a drag of entities began on.
     QPoint drag_from_;
     QPointF ground_from_; ///< The map point under the cursor when a drag began.
     [[nodiscard]] bool diorama() const;
