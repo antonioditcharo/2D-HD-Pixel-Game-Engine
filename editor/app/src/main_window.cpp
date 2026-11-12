@@ -22,6 +22,8 @@
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <algorithm>
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -226,7 +228,8 @@ void MainWindow::build_actions() {
             return;
         }
         const QStringList kinds{tr("Classic 2D: seen from above, flat"),
-                                tr("Diorama: HD-2D, in 3D with light and shadows")};
+                                tr("Diorama: HD-2D, in 3D with light and shadows"),
+                                tr("Visual novel: a story in pictures and words")};
         const QString kind = QInputDialog::getItem(this, tr("New project"), tr("Start from:"),
                                                    kinds, 0, false, &named);
         if (!named) {
@@ -235,7 +238,11 @@ void MainWindow::build_actions() {
         const QString folder =
             QFileDialog::getExistingDirectory(this, tr("Choose an empty folder for %1").arg(name));
         if (!folder.isEmpty()) {
-            new_project(path_of(folder), name, kind == kinds.at(1));
+            const auto chosen =
+                static_cast<std::size_t>(std::max<qsizetype>(kinds.indexOf(kind), 0));
+            constexpr std::array<ProjectTemplate, 3> templates{
+                ProjectTemplate::TopDown2D, ProjectTemplate::Diorama, ProjectTemplate::VisualNovel};
+            new_project(path_of(folder), name, templates.at(chosen));
         }
     });
     fresh->setObjectName(QStringLiteral("new_project"));
@@ -315,12 +322,12 @@ void MainWindow::build_actions() {
     }
 }
 
-bool MainWindow::new_project(const fs::path& folder, const QString& name, bool diorama) {
+bool MainWindow::new_project(const fs::path& folder, const QString& name, ProjectTemplate kind) {
     std::string error;
     const QByteArray bytes = name.trimmed().toUtf8();
     if (!create_project(folder,
                         std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())),
-                        error, diorama ? ProjectTemplate::Diorama : ProjectTemplate::TopDown2D)) {
+                        error, kind)) {
         report(tr("The project could not be made:\n%1").arg(text_of(error)));
         return false;
     }

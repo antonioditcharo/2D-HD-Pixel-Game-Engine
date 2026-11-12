@@ -973,6 +973,77 @@ TEST_CASE("A new Diorama project draws in 3D, and not as the flat one does") {
     CHECK(green > 6000); // of 12,000
 }
 
+TEST_CASE("A new visual novel: a backdrop, Mira, and a story that answers back") {
+    const fs::path folder =
+        fs::temp_directory_path() / ("sparxel-new-" + Guid::generate().to_string());
+    std::string error;
+    REQUIRE(editor::create_project(folder, "A Story", error, editor::ProjectTemplate::VisualNovel));
+    CHECK(fs::exists(folder / "assets" / "logic" / "story.drules.meta"));
+    {
+        std::vector<serialize::Issue> issues;
+        const auto d = editor::Document::open(folder, issues);
+        REQUIRE(d != nullptr);
+        CHECK(issues.empty());
+        CHECK(d->world().find_named("backdrop").size() == 1);
+        CHECK(d->world().find_named("mira").size() == 1);
+        if (test_support::gpu() != nullptr) {
+            // Looking at the origin: the backdrop fills the screen, Mira stands right of the
+            // middle with her feet at pixel (232, 122).
+            const auto preview = editor::Preview::create(error);
+            REQUIRE(preview != nullptr);
+            const engine::assets::Image frame =
+                preview->render(*d, 0.0, 0.0, error).value_or(engine::assets::Image{});
+            REQUIRE(frame.width == 320);
+            REQUIRE(frame.height == 180);
+            const auto at = [&frame](std::uint32_t x, std::uint32_t y) {
+                const std::size_t i = (std::size_t{y} * frame.width + x) * 4;
+                return std::array<int, 3>{frame.rgba.at(i), frame.rgba.at(i + 1),
+                                          frame.rgba.at(i + 2)};
+            };
+            CHECK(at(160, 5) == std::array<int, 3>{112, 160, 224});  // the sky, high
+            CHECK(at(0, 0) == std::array<int, 3>{112, 160, 224});    // to the very corner
+            CHECK(at(2, 170) == std::array<int, 3>{116, 176, 96});   // the meadow
+            CHECK(at(319, 179) == std::array<int, 3>{116, 176, 96}); // to the other corner
+            CHECK(at(231, 83) == std::array<int, 3>{124, 84, 168});  // Mira's dress
+            CHECK(at(228, 72) == std::array<int, 3>{240, 202, 170}); // and face
+        }
+    }
+    // Played in the game's own runtime, once for each answer.
+    for (const std::size_t pick : {std::size_t{0}, std::size_t{1}}) {
+        game::RuntimeOptions options;
+        options.graphics = false;
+        options.audio = game::AudioMode::Headless;
+        options.save_folder = folder / "saves";
+        std::vector<serialize::Issue> issues;
+        const std::unique_ptr<game::Runtime> runtime = game::Runtime::open(folder, options, issues);
+        for (const serialize::Issue& issue : issues) {
+            CAPTURE(issue.path);
+            CAPTURE(issue.message);
+            CHECK(false);
+        }
+        REQUIRE(runtime != nullptr);
+        game::DialogueObject& dialogue = runtime->dialogue();
+        const auto showing = [&] {
+            return dialogue.current() != nullptr ? *dialogue.current() : std::string("nothing");
+        };
+        runtime->step();
+        CHECK(showing() == "Mira: Oh! You came after all.");
+        dialogue.close_current();
+        runtime->step();
+        CHECK(showing() == "Mira: Will you walk with me to the lake?");
+        CHECK(dialogue.choices() == std::vector<std::string>{"Yes, let's go", "Not today"});
+        REQUIRE(dialogue.choose(pick));
+        dialogue.close_current();
+        for (int i = 0; i < 3; ++i) {
+            runtime->step();
+        }
+        CHECK(showing() == (pick == 0 ? "Mira: Wonderful! I know a shortcut through the meadow."
+                                      : "Mira: Another time, then. I'll be here."));
+    }
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
+}
+
 TEST_CASE("A new project plays: the hero walks, and the walls stop it") {
     const fs::path folder =
         fs::temp_directory_path() / ("sparxel-new-" + Guid::generate().to_string());

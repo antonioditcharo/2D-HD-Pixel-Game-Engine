@@ -11,6 +11,7 @@
 #include <memory>
 
 #include "editor/core/document.h"
+#include "editor/core/new_project.h"
 
 class QAction;
 class QSettings;
@@ -44,7 +45,7 @@ public:
     /// Makes a new project named `name` in `folder` (new or empty), a small starter game,
     /// and opens it. Returns false, with the reason shown, if it cannot.
     bool new_project(const std::filesystem::path& folder, const QString& name,
-                     bool diorama = false);
+                     ProjectTemplate kind = ProjectTemplate::TopDown2D);
     /// Edits another scene of the project (its path in assets/), saving the open one
     /// first if it changed. Returns false, showing why, if it cannot.
     bool open_scene(const QString& path);

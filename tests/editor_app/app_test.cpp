@@ -151,12 +151,39 @@ TEST_CASE("File > New project makes a starter game and opens it") {
     // The Diorama starter: the same game, opened in the 3D style.
     const fs::path folder_3d =
         fs::temp_directory_path() / ("sparxel-new-app-" + Guid::generate().to_string());
-    REQUIRE(e.window.new_project(folder_3d, QStringLiteral("My Diorama"), true));
+    REQUIRE(e.window.new_project(folder_3d, QStringLiteral("My Diorama"),
+                                 editor::ProjectTemplate::Diorama));
     QApplication::processEvents();
     CHECK(e.window.document()->settings().style == engine::game::RenderStyle::Diorama);
     CHECK(e.window.document()->settings().look.tilt_shift);
     CHECK(e.window.document()->entities().size() == 3);
     CHECK_FALSE(e.window.scene_view()->image().isNull());
+    // The visual novel: a backdrop and Mira, and a story the Logic view reads and checks.
+    const fs::path folder_vn =
+        fs::temp_directory_path() / ("sparxel-new-app-" + Guid::generate().to_string());
+    REQUIRE(e.window.new_project(folder_vn, QStringLiteral("A Story"),
+                                 editor::ProjectTemplate::VisualNovel));
+    QApplication::processEvents();
+    CHECK(e.window.document()->settings().style == engine::game::RenderStyle::Classic2D);
+    CHECK(e.window.document()->entities().size() == 2);
+    QTreeWidget* story = e.window.logic_view();
+    REQUIRE(story->topLevelItemCount() == 1);
+    CHECK(story->topLevelItem(0)->text(0) == QStringLiteral("logic/story.drules"));
+    REQUIRE(story->topLevelItem(0)->childCount() == 1);
+    QTreeWidgetItem* starts = story->topLevelItem(0)->child(0);
+    CHECK(starts->text(0) == QStringLiteral("When the game starts"));
+    // Say, Ask, Wait until, If and its Otherwise (each holding its own reply).
+    REQUIRE(starts->childCount() == 5);
+    CHECK(starts->child(3)->childCount() == 1);
+    CHECK(starts->child(4)->text(0) == QStringLiteral("Otherwise:"));
+    CHECK(starts->child(4)->childCount() == 1);
+    CHECK(starts->child(0)->text(0) ==
+          QStringLiteral("Say “Mira: Oh! You came after all.” (dialogue)"));
+    story->setCurrentItem(starts->child(0));
+    QApplication::processEvents();
+    auto* problems = e.window.logic_panel()->findChild<QLabel*>(QStringLiteral("logic_problems"));
+    REQUIRE(problems != nullptr);
+    CHECK(problems->text() == QStringLiteral("logic/story.drules runs: no problems."));
     // A picture of it, when asked for.
     if (const QString shot = qEnvironmentVariable("SPARXEL_STARTER_SCREENSHOT"); !shot.isEmpty()) {
         e.window.scene_view()->image().save(shot);
@@ -164,6 +191,7 @@ TEST_CASE("File > New project makes a starter game and opens it") {
     std::error_code ignored;
     fs::remove_all(folder, ignored);
     fs::remove_all(folder_3d, ignored);
+    fs::remove_all(folder_vn, ignored);
 }
 
 TEST_CASE("Scenes from the window: a new one, back by a double-click, and where the game starts") {
