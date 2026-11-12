@@ -70,7 +70,7 @@ tilt-shift band that keeps the middle of the screen sharp.
 | `player_classic_2d`, `player_diorama` | CTest plays a copy of the sample headless for 120 frames in each style: it must start, report no problems, and print the welcome message (`said: Welcome to the village`) and the Brain's first line |
 | `player_long_run` | 2,000 frames in the Diorama style, past the rain at 30 seconds (it must print *It starts to rain.*). Headless runs once grew in memory every frame and crashed after about 900 frames ([rendering.md](rendering.md) §4) |
 | The sample in the Diorama style | Renders the village in 3D and checks that no path pixel appears alone in the grass. That once happened: in perspective, a texture coordinate on a tile's edge rounded into the next tile of the atlas. World quads now keep their coordinates a hundredth of a texel inside the tile ([rendering.md](rendering.md) §7); the test fails without that |
-| The sample through the gate | In the game's runtime with recorded input (in the editor's model tests): the hero walks east, closing messages, into the gate; the scene becomes the road with the hero exactly at the milestone and the village's elder gone; the stream's Sound Source plays on repeat and is heard in the mix; no problems and no script errors |
+| The sample through the gate | In the game's runtime with recorded input (in the editor's model tests): the hero walks east, closing messages, into the gate; the scene becomes the road with the hero exactly at the milestone and the village's elder gone; the stream's Sound Source starts there, silent while the screen is black, and is heard once the scene has faded in; no problems and no script errors |
 
 ## 4. Next increments
 

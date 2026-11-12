@@ -67,6 +67,7 @@ MyGame/
 | `look` | The frame's post-processing: tilt-shift (Diorama style only: it imitates a lens photographing a miniature, so flat Classic 2D ignores it), bloom, grading and vignette ([rendering.md](rendering.md) §8). A group of named settings; unknown ones are reported, values out of range refuse the project | Changes nothing |
 | `sprite_shadow`, `shadow_shape` | How dark each sprite's shadow is in the Diorama style, and its shape: `"cast"`, its silhouette laid away from the sun, or `"round"`, a blob at its feet ([scene2d.md](scene2d.md) §7) | 0.35 (0 to 1), `"cast"` |
 | `block_shadow` | How dark the sun's shadows of blocks are in the Diorama style ([scene2d.md](scene2d.md) §7) | 0.45; 0 to 1 |
+| `scene_fade` | Seconds the screen takes to fade to black when logic goes to another scene, and to fade back in; 0 cuts (§8) | 0.4; 0 to 3 |
 | `sun_angle`, `sun_height` | Where the sun is at the start: degrees clockwise from north (up the map), and above the horizon. Logic moves it with the `lighting` object | 215 (0 to 360), 55 (5 to 90) |
 | `ambient_light`, `sun_light` | The Diorama style's light at the start: from everywhere, and from the sun ([scene2d.md](scene2d.md) §7). Logic changes them with the `lighting` object | 0.55, 0.45; each 0 to 2 |
 
@@ -312,9 +313,15 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 [scene], arriving at [where]"* and the condition *"The scene is [scene]"*; scenes are
 named by path (`maps/cave.dscene`) or GUID.
 
-- The change happens at the end of the step (step 7), like saving: the rest of the Rule
+- The change happens at the end of a step (step 7), like saving: the rest of the Rule
   that asked for it runs first. `Runtime::change_scene()` does it, and `scene()` says
   which is being played.
+- **It fades:** over `scene_fade` seconds (0.4 by default) the screen darkens to black,
+  the scene changes, and it lightens again over as long; `fade()` says how dark it is,
+  0 to 1, and the black is drawn over everything, the message box too. While it fades
+  nobody walks, and Sound Sources fade with the picture. Asking again while it fades
+  in turns it back towards black from where it is; with `scene_fade` 0 the scene cuts at
+  the end of the step. `change_scene()` itself never fades.
 - The new scene is checked whole in a scratch world first: one that is missing, is not a
   scene or cannot be loaded **changes nothing** and is reported in `problems()`.
 - The world is replaced; **variables, waiting Sequences, an open message, music and the
@@ -356,7 +363,7 @@ named by path (`maps/cave.dscene`) or GUID.
 | Save files | Slot file names and limits; atomic writes creating folders and replacing files, leaving no temporary file; a failed write reported |
 | Saved games | A save restores a moved hero, a destroyed rock, a variable and the step count; an exact round trip; logic acting on the loaded world and its restored variable; other formats, newer versions, other games and broken worlds refused with nothing changed; a vanished variable reported while the rest loads |
 | Slots from logic | Cancel saves in slot 2 and Menu loads it at the end of their steps, putting the hero back; an empty slot and slot 0 reported |
-| Scenes | A second scene with a bat only it has, whose Rule compiles while the first scene is played; walking into a doorway runs *Go to scene … arriving at stairs*: the rest of that Rule runs first, the world is the cave's alone, the hero is exactly at the stairs, *When a scene starts* runs once (and *The scene is …* is true), the game start is not repeated, and the hero walks on; a save names its scene; going back by GUID with a missing arrival spot changes scene and reports it; a missing scene and a picture change nothing; loading the save returns to the cave |
+| Scenes | A second scene with a bat only it has, whose Rule compiles while the first scene is played; walking into a doorway runs *Go to scene … arriving at stairs*: the rest of that Rule runs first, the world is the cave's alone, the hero is exactly at the stairs, *When a scene starts* runs once (and *The scene is …* is true), the game start is not repeated, and the hero walks on; a save names its scene; going back by GUID with a missing arrival spot changes scene and reports it; a missing scene and a picture change nothing; loading the save returns to the cave ; the fade: the request starts it at 0, it darkens by 1/24 a step (0.4 s) while the scene stays and the hero, Left held, does not move, the scene changes when it is black, it lightens by 1/24 a step, and only then does the hero walk; the setting round-trips, and 3.5 or text are refused. Drawn (GPU): half-way every pixel at half brightness, at the change all black, then the scene as it was |
 
 ## 10. Next increments
 

@@ -351,6 +351,7 @@ TEST_CASE("Project settings are read, checked and written back") {
     diorama.sun_height = 20.0;
     diorama.shadow_shape = scene2d::ShadowShape::Round;
     diorama.block_shadow = 0.7;
+    diorama.scene_fade = 1.25;
     write_json(folder.path / game::project_file, game::project_to_json(diorama));
     issues.clear();
     const game::ProjectSettings again =
@@ -368,6 +369,8 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(again.sun_height == 20.0);
     CHECK(again.shadow_shape == scene2d::ShadowShape::Round);
     CHECK(again.block_shadow == 0.7);
+    CHECK(again.scene_fade == 1.25);
+    CHECK(settings.scene_fade == 0.4); // the default
 
     // Out-of-range values and a wrong style refuse the project; unknown entries do not.
     serialize::Json json = game::project_to_json(settings);
@@ -394,6 +397,18 @@ TEST_CASE("Project settings are read, checked and written back") {
                        "project.sparxel.json/sun_light", "project.sparxel.json/sun_height",
                        "project.sparxel.json/shadow_shape", "project.sparxel.json/camera_clamp",
                        "project.sparxel.json/render_style"});
+
+    // A fade longer than 3 seconds, or not a number, is refused.
+    for (const serialize::Json& fade : {serialize::Json(3.5), serialize::Json("slow")}) {
+        json = game::project_to_json(settings);
+        json["scene_fade"] = fade;
+        write_json(folder.path / game::project_file, json);
+        issues.clear();
+        CHECK_FALSE(game::read_project(folder.path, issues).has_value());
+        REQUIRE(issues.size() == 1);
+        CHECK(issues[0].path == "project.sparxel.json/scene_fade");
+        CHECK(issues[0].message == "This must be a number from 0 to 3.");
+    }
 
     json = game::project_to_json(settings);
     json["shiny"] = true;
@@ -1020,14 +1035,27 @@ TEST_CASE("Logic goes to another scene: the world changes, the rest carries on")
     const auto logged = [&](std::string_view line) {
         return std::count(runtime->log().begin(), runtime->log().end(), line);
     };
+    // Walking into the door asks for the cave: the screen starts to fade out (0.4 s by
+    // default: 24 steps), and no one moves meanwhile.
     int steps = 0;
-    while (runtime->scene() == "maps/start.dscene" && steps < 200) {
+    while (logged("leaving") == 0 && steps < 200) {
         runtime->step();
         ++steps;
     }
     // The door's area starts half a tile east of it, 4.5 tiles from the start: over a second.
     CHECK(steps > 60);
     CHECK(steps < 80);
+    CHECK(runtime->scene() == "maps/start.dscene");
+    CHECK(runtime->fade() == 0.0);
+    const double at_door = transform_of(*runtime, "hero").x;
+    for (int i = 1; i < 24; ++i) {
+        runtime->step();
+        CHECK(runtime->fade() == doctest::Approx(i / 24.0));
+        CHECK(runtime->scene() == "maps/start.dscene");
+    }
+    CHECK(transform_of(*runtime, "hero").x == at_door); // Left held, but still
+    runtime->step();                                    // black: the scene changes
+    CHECK(runtime->fade() == 1.0);
     REQUIRE(runtime->scene() == "maps/cave.dscene");
     // The rest of the Rule ran before the scene changed, at the end of the step; then the
     // new scene started.
@@ -1044,7 +1072,13 @@ TEST_CASE("Logic goes to another scene: the world changes, the rest carries on")
     CHECK(transform_of(*runtime, "hero").y == 3.0);
     CHECK(runtime->problems().empty());
     CHECK(runtime->vm().errors().empty());
-    // The game goes on there: Left is still held.
+    // It fades back in over as long, the hero still; then the game goes on there, Left
+    // still held.
+    for (int i = 23; i >= 0; --i) {
+        runtime->step();
+        CHECK(runtime->fade() == doctest::Approx(i / 24.0));
+    }
+    CHECK(transform_of(*runtime, "hero").x == 7.0);
     runtime->step();
     CHECK(transform_of(*runtime, "hero").x < 7.0);
 
@@ -1117,6 +1151,23 @@ TEST_CASE("The game draws pixel-perfect, with the camera following the hero") {
     input::Recording replay;
     replay.record(0, key(input::Key::Right), true);
     replay.record(15, key(input::Key::Right), false); // 0.25 s at 4 tiles/s: one tile
+    replay.record(15, key(input::Key::Z), true);      // then Interact, for the fade below
+    replay.record(16, key(input::Key::Z), false);
+    {
+        logic::LogicAsset again;
+        again.name = "again";
+        again.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "input",
+            "pressed",
+            {ir::compare(logic::CompareOp::Equal, ir::event_value("action"),
+                         ir::literal(reflect::Value{std::string("interact")}))},
+            {ir::do_action(2, "game", "go_to_scene",
+                           {ir::literal(reflect::Value{std::string("maps/start.dscene")})})},
+            {}});
+        write_json(project.folder.path / "assets/logic/again.drules",
+                   serialize::logic_to_json(again));
+    }
     game::RuntimeOptions options;
     options.headless = true;
     options.replay = &replay;
@@ -1153,6 +1204,54 @@ TEST_CASE("The game draws pixel-perfect, with the camera following the hero") {
     CHECK(pixel(pixels, 32, 9, 14) == background);
     CHECK(pixel(pixels, 32, 14, 14) == background);
     CHECK(pixel(pixels, 32, 15, 13) == background);
+
+    // A change of scene fades the picture to black: half-way, every pixel at half its
+    // brightness; at the change, all black; once it has faded in, the scene as before.
+    // (Interact goes to the same scene, so the picture is known.)
+    runtime->step(); // Interact: the Rule asks for the scene
+    CHECK(runtime->fade() == 0.0);
+    for (int i = 0; i < 12; ++i) {
+        runtime->step();
+    }
+    REQUIRE(runtime->fade() == doctest::Approx(0.5));
+    REQUIRE(runtime->draw());
+    pixels = runtime->target()->read_pixels();
+    const auto halved = [](render::Color c) {
+        // Black at alpha 128 of 255 over it.
+        const auto half = [](std::uint8_t v) {
+            return static_cast<int>(std::lround(v * (255.0 - 128.0) / 255.0));
+        };
+        return std::array<int, 3>{half(c.r), half(c.g), half(c.b)};
+    };
+    const auto near = [](render::Color got, std::array<int, 3> want) {
+        CAPTURE(int{got.r});
+        CAPTURE(int{got.g});
+        CAPTURE(int{got.b});
+        return std::abs(got.r - want[0]) <= 1 && std::abs(got.g - want[1]) <= 1 &&
+               std::abs(got.b - want[2]) <= 1;
+    };
+    CHECK(near(pixel(pixels, 32, 15, 14), halved(hero_colour)));
+    CHECK(near(pixel(pixels, 32, 7, 14), halved(rock_colour)));
+    CHECK(near(pixel(pixels, 32, 2, 2), halved(background)));
+    for (int i = 0; i < 12; ++i) {
+        runtime->step();
+    }
+    REQUIRE(runtime->fade() == 1.0);
+    REQUIRE(runtime->draw());
+    pixels = runtime->target()->read_pixels();
+    for (const auto& [x, y] : {std::pair{15U, 14U}, std::pair{2U, 2U}, std::pair{30U, 30U}}) {
+        CHECK(pixel(pixels, 32, x, y) == render::Color{0, 0, 0, 255});
+    }
+    for (int i = 0; i < 24; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->fade() == 0.0);
+    REQUIRE(runtime->draw());
+    pixels = runtime->target()->read_pixels();
+    CHECK(pixel(pixels, 32, 2, 2) == background); // back at the start: hero and rock as at first
+    const render::Color again = pixel(pixels, 32, 15, 14);
+    CHECK((again == hero_colour || again == rock_colour));
+    CHECK(runtime->problems().empty());
 }
 
 TEST_CASE("A Diorama project draws the hero as a lit billboard the camera follows") {

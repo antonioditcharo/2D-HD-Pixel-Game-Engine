@@ -904,12 +904,25 @@ TEST_CASE("The sample plays through its gate to the road, hears the stream, and 
     CHECK(hero().x == 3.0); // at the milestone
     CHECK(hero().y == 9.0);
     CHECK(runtime->world().find_named("elder").empty());
-    // The stream is heard: its Sound Source plays on repeat, from the first step there.
-    runtime->step();
+    // The stream's Sound Source plays on repeat from the step the scene changes, silent
+    // while the screen is black, and is heard once the scene has faded in.
+    const auto loud = [&] {
+        std::vector<float> mixed(std::size_t{4800} * 2);
+        REQUIRE(runtime->audio()->render(mixed));
+        float peak = 0.0F;
+        for (const float v : mixed) {
+            peak = std::max(peak, std::abs(v));
+        }
+        return peak;
+    };
+    CHECK(runtime->fade() == 1.0);
     CHECK(runtime->audio()->playing_loops() == 1);
-    std::vector<float> mixed(std::size_t{4800} * 2);
-    REQUIRE(runtime->audio()->render(mixed));
-    CHECK(std::any_of(mixed.begin(), mixed.end(), [](float v) { return std::abs(v) > 0.001F; }));
+    CHECK(loud() < 0.0001F);
+    while (runtime->fade() > 0.0) {
+        runtime->step();
+    }
+    CHECK(runtime->audio()->playing_loops() == 1);
+    CHECK(loud() > 0.001F);
     CHECK(runtime->problems().empty());
     CHECK(runtime->vm().errors().empty());
 }

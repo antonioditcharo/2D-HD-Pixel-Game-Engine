@@ -98,7 +98,7 @@ void AudioObject::set_sound_volume(std::int64_t percent) {
     }
 }
 
-void AudioObject::update_sources() {
+void AudioObject::update_sources(double gain) {
     if (engine_ == nullptr || world_ == nullptr) {
         return;
     }
@@ -115,8 +115,9 @@ void AudioObject::update_sources() {
             return; // not playing: its loop, if any, is stopped below
         }
         // Heard from the player; without one, from where the sound is.
-        const Heard level =
+        Heard level =
             heard(*source, at->x, at->y, ear.value_or(std::array<double, 2>{at->x, at->y}));
+        level.volume *= std::clamp(gain, 0.0, 1.0);
         const Guid guid = world_->guid(entity);
         Source playing;
         if (const auto found = sources_.find(guid);

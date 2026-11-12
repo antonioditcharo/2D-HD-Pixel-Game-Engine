@@ -85,6 +85,9 @@ struct ProjectSettings {
     /// (0, 0) for top-down games, (0, 30) or so for side views. -1000 to 1000 each.
     double gravity_x = 0.0;
     double gravity_y = 0.0;
+    /// How long the screen takes to fade to black when logic goes to another scene, and
+    /// to fade back in, in seconds: 0 (a cut) to 3. In the project file, "scene_fade".
+    double scene_fade = 0.4;
 };
 
 /// Reads `root`/project.sparxel.json. Returns nothing, with issues, if it is missing or
@@ -191,6 +194,8 @@ public:
                       std::vector<serialize::Issue>& issues);
     /// The scene being played: its path in assets/.
     [[nodiscard]] const std::string& scene() const noexcept;
+    /// How dark the screen is, from 0 to 1, while a change of scene fades out and in.
+    [[nodiscard]] double fade() const noexcept;
     /// Where save slots go (see RuntimeOptions::save_folder).
     [[nodiscard]] std::filesystem::path save_folder() const;
     /// Problems with what logic asked for (saving, loading, playing sounds), oldest first.

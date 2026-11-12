@@ -148,6 +148,10 @@ void ProjectPanel::build() {
         game_form, tr("Gravity down"), "gravity_y", -1000, 1000, 1, 1,
         [](const Settings& s) { return s.gravity_y; },
         [](Settings& s, double v) { s.gravity_y = v; });
+    number(
+        game_form, tr("Scene fade (seconds)"), "scene_fade", 0, 3, 0.1, 2,
+        [](const Settings& s) { return s.scene_fade; },
+        [](Settings& s, double v) { s.scene_fade = v; });
 
     QFormLayout* picture = group(tr("Picture"));
     choice(picture, tr("Style"), "render_style", {tr("Classic 2D"), tr("Diorama (3D)")},

@@ -40,12 +40,12 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 22> known_project_keys{
+constexpr std::array<std::string_view, 23> known_project_keys{
     "format",       "version",         "name",       "start_scene",  "ppu",
     "width",        "height",          "background", "render_style", "gravity",
     "camera_pitch", "camera_distance", "camera_fov", "camera_clamp", "ambient_light",
     "sun_light",    "sun_angle",       "sun_height", "look",         "sprite_shadow",
-    "shadow_shape", "block_shadow"};
+    "shadow_shape", "block_shadow",    "scene_fade"};
 
 } // namespace
 
@@ -317,6 +317,7 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     number("sun_height", settings.sun_height, 5.0, 90.0);
     number("sprite_shadow", settings.sprite_shadow, 0.0, 1.0);
     number("block_shadow", settings.block_shadow, 0.0, 1.0);
+    number("scene_fade", settings.scene_fade, 0.0, 3.0);
     if (const auto shape = doc.find("shadow_shape"); shape != doc.end()) {
         if (shape->is_string() && shape->get<std::string>() == "cast") {
             settings.shadow_shape = scene2d::ShadowShape::Cast;
@@ -427,6 +428,7 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["sprite_shadow"] = settings.sprite_shadow;
     json["shadow_shape"] = settings.shadow_shape == scene2d::ShadowShape::Round ? "round" : "cast";
     json["block_shadow"] = settings.block_shadow;
+    json["scene_fade"] = settings.scene_fade;
     serialize::Json look = serialize::Json::object();
     look["tilt_shift"] = settings.look.tilt_shift;
     for (const LookNumber& number : look_numbers) {
@@ -487,6 +489,12 @@ struct Runtime::Impl {
     /// What the entities of the project's other scenes are made of, by each name logic can
     /// use for them, so Rules about them compile while another scene is played.
     std::map<std::string, std::vector<const reflect::TypeInfo*>, std::less<>> elsewhere;
+    /// A change of scene on its way: the screen fades out (`fade_steps` up to
+    /// `fade_length`), the scene changes, then it fades in (down to 0).
+    enum class Fade : std::uint8_t { None, Out, In } fading = Fade::None;
+    std::optional<SaveObject::SceneRequest> leaving;
+    std::uint32_t fade_steps = 0;
+    std::uint32_t fade_length = 0;
     std::unique_ptr<logic::Vm> vm;
     FixedStepClock clock;
     const input::Recording* replay{nullptr};
@@ -738,8 +746,9 @@ void Runtime::step() {
     }
 
     // While a message is open, the player stands still and Interact turns its pages.
+    // So does everyone while the scene fades out and in.
     const bool talking = r.dialogue.is_open();
-    const input::InputState& moves = talking ? r.idle : r.state;
+    const input::InputState& moves = talking || r.fading != Impl::Fade::None ? r.idle : r.state;
 
     // 2. Movement, with walls, bodies and walk animations; then trigger areas.
     const double dt = r.clock.step_seconds();
@@ -848,17 +857,43 @@ void Runtime::step() {
             }
         }
     }
-    // 7. A change of scene that logic asked for.
-    if (const std::optional<SaveObject::SceneRequest> request =
-            r.save_object.take_scene_request()) {
+    // 7. A change of scene that logic asked for: at once with no fade; else the screen
+    //    fades out over scene_fade, the scene changes, and it fades back in.
+    const auto change = [this, &r](const SaveObject::SceneRequest& request) {
         std::vector<serialize::Issue> issues;
-        static_cast<void>(change_scene(request->scene, request->where, issues));
+        static_cast<void>(change_scene(request.scene, request.where, issues));
         for (const serialize::Issue& issue : issues) {
             r.problems.push_back(issue.path.empty() ? issue.message
                                                     : issue.path + ": " + issue.message);
         }
+    };
+    if (r.fading == Impl::Fade::Out && ++r.fade_steps >= r.fade_length) {
+        r.fading = Impl::Fade::In;
+        r.fade_steps = r.fade_length;
+        if (r.leaving) {
+            change(*r.leaving);
+            r.leaving.reset();
+        }
+    } else if (r.fading == Impl::Fade::In) {
+        r.fade_steps = r.fade_steps > 0 ? r.fade_steps - 1 : 0;
+        if (r.fade_steps == 0) {
+            r.fading = Impl::Fade::None;
+        }
     }
-    r.audio_object.update_sources();
+    if (std::optional<SaveObject::SceneRequest> request = r.save_object.take_scene_request()) {
+        const auto length =
+            static_cast<std::uint32_t>(std::lround(r.settings.scene_fade / r.clock.step_seconds()));
+        if (length == 0) {
+            change(*request);
+        } else {
+            // From as dark as the screen is now (a request while fading in turns back).
+            r.leaving = std::move(request);
+            r.fade_length = length;
+            r.fade_steps = r.fading == Impl::Fade::None ? 0 : std::min(r.fade_steps, length);
+            r.fading = Impl::Fade::Out;
+        }
+    }
+    r.audio_object.update_sources(1.0 - fade());
     for (std::string& problem : r.audio_object.take_problems()) {
         r.problems.push_back(std::move(problem));
     }
@@ -989,6 +1024,16 @@ bool Runtime::draw() {
                               line_y, colour);
             }
         }
+        r.sprites->end();
+    }
+    // A change of scene: black over everything, as dark as the fade has got.
+    if (const double dark = fade(); dark > 0.0) {
+        r.sprites->begin_over(*r.target);
+        r.sprites->draw(
+            *r.white, render::Rect{0.0F, 0.0F, 1.0F, 1.0F},
+            render::Rect{0.0F, 0.0F, static_cast<float>(r.target->width()),
+                         static_cast<float>(r.target->height())},
+            render::Color{0, 0, 0, static_cast<std::uint8_t>(std::lround(dark * 255.0))});
         r.sprites->end();
     }
     return true;
@@ -1296,6 +1341,14 @@ bool Runtime::change_scene(std::string_view scene, std::string_view where,
     static_cast<void>(update_triggers(*r.world));
     r.vm->emit("", "scene_start");
     return true;
+}
+
+double Runtime::fade() const noexcept {
+    const Impl& r = *impl_;
+    if (r.fading == Impl::Fade::None || r.fade_length == 0) {
+        return 0.0;
+    }
+    return static_cast<double>(r.fade_steps) / static_cast<double>(r.fade_length);
 }
 
 const std::string& Runtime::scene() const noexcept {

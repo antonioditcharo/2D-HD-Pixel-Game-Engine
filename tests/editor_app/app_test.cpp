@@ -835,6 +835,14 @@ TEST_CASE("The Project view changes the settings, and the scene shows them at on
     REQUIRE(again != nullptr);
     CHECK(again->currentIndex() == 0);
     CHECK(e.window.scene_view()->image() == flat);
+    // The fade between scenes: its field shows the default and sets the setting.
+    auto* fade = panel->findChild<QDoubleSpinBox*>(QStringLiteral("setting:scene_fade"));
+    REQUIRE(fade != nullptr);
+    CHECK(fade->value() == doctest::Approx(0.4));
+    CHECK(fade->maximum() == 3.0);
+    fade->setValue(1.0);
+    QApplication::processEvents();
+    CHECK(e.window.document()->settings().scene_fade == 1.0);
 }
 
 TEST_CASE("The Logic view turns conditions around, matches any of them, and adds Otherwise") {
