@@ -1,6 +1,6 @@
 // sparxel-editor: the editor. Opens the project folder given, if any.
 //
-//   sparxel-editor [project folder]
+//   sparxel-editor [project folder] [--check]
 //
 // See docs/dev/editor.md.
 
@@ -22,18 +22,33 @@ std::filesystem::path path_of(const QString& text) {
 int main(int argc, char** argv) {
     const QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Sparxel Editor"));
-    // The player beside the editor, as installed; else the one this build made.
-    std::filesystem::path player = path_of(QApplication::applicationDirPath()) / "sparxel-player";
+    // The player packaged with the editor (in its own folder, so exported games get only
+    // the player's libraries), or beside it; else the one this build made.
+    const std::filesystem::path here = path_of(QApplication::applicationDirPath());
 #ifdef _WIN32
-    player += ".exe";
+    const char* const name = "sparxel-player.exe";
+#else
+    const char* const name = "sparxel-player";
 #endif
+    std::filesystem::path player = here / "player" / name;
+    if (!std::filesystem::exists(player)) {
+        player = here / name;
+    }
     if (!std::filesystem::exists(player)) {
         player = SPARXEL_DEFAULT_PLAYER;
     }
     editor::MainWindow window(player);
-    const QStringList arguments = QApplication::arguments();
+    QStringList arguments = QApplication::arguments();
+    // --check: start, open the project given (if any) and leave at once, saying by the
+    // exit code whether that worked. For checking a packaged editor without a person.
+    const bool check = arguments.removeAll(QStringLiteral("--check")) > 0;
+    window.set_quiet(check);
+    bool opened = true;
     if (arguments.size() > 1) {
-        window.open_project(path_of(arguments.at(1)));
+        opened = window.open_project(path_of(arguments.at(1)));
+    }
+    if (check) {
+        return opened && std::filesystem::exists(player) ? 0 : 1;
     }
     window.show();
     return QApplication::exec();

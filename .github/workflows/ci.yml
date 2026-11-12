@@ -155,3 +155,35 @@ jobs:
           cmake --preset ${{ matrix.preset }} -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DSPARXEL_REQUIRE_EDITOR=ON || exit /b 1
           cmake --build --preset ${{ matrix.preset }} || exit /b 1
           ctest --preset ${{ matrix.preset }} || exit /b 1
+
+      # The editor as a creator gets it: one folder that needs nothing installed.
+      - name: Package the editor
+        if: matrix.preset == 'windows-msvc'
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
+          call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cmake -DBUILD=build/windows-msvc -DSOURCE=. -DOUT=package/Sparxel -DQT="%CMAKE_PREFIX_PATH%" -P tools/package_windows.cmake || exit /b 1
+
+      - name: Check the package starts with nothing else on the path
+        # No Qt, no build folder: only Windows itself. The editor opens the sample and
+        # leaves; the packaged player plays it for half a second.
+        if: matrix.preset == 'windows-msvc'
+        timeout-minutes: 5
+        shell: cmd
+        run: |
+          set "PATH=%SystemRoot%\system32;%SystemRoot%"
+          set QT_PLUGIN_PATH=
+          set QT_QPA_PLATFORM=
+          cd /d package\Sparxel || exit /b 1
+          start /wait "" sparxel-editor.exe samples\hello --check
+          if errorlevel 1 (echo The packaged editor did not start or could not open the sample. & exit /b 1)
+          player\sparxel-player.exe samples\hello --headless --frames 30 --no-audio || exit /b 1
+
+      - name: Upload the package
+        if: matrix.preset == 'windows-msvc'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Sparxel-windows
+          path: package
+          if-no-files-found: error
