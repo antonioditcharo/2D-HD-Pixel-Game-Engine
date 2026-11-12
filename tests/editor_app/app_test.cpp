@@ -11,6 +11,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -23,6 +24,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSettings>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QToolButton>
@@ -214,6 +216,53 @@ TEST_CASE("Scenes from the window: a new one, back by a double-click, and where 
     // What is not a scene is refused.
     CHECK_FALSE(e.window.open_scene(QStringLiteral("art/hero.png")));
     CHECK(e.window.document()->scene_path() == "maps/cave.dscene");
+}
+
+TEST_CASE("The panels' layout is kept between sessions, and can be put back") {
+    const fs::path file =
+        fs::temp_directory_path() / ("sparxel-layout-" + Guid::generate().to_string() + ".ini");
+    const QString ini = QString::fromStdU16String(file.u16string());
+    {
+        const Editor e;
+        QDockWidget* tiles = e.window.findChild<QDockWidget*>(QStringLiteral("tiles_dock"));
+        REQUIRE(tiles != nullptr);
+        CHECK_FALSE(tiles->isHidden());
+        // Every panel is in the View menu, so a closed one can be opened again.
+        CHECK(tiles->toggleViewAction()->isChecked());
+        tiles->close();
+        QApplication::processEvents();
+        CHECK(tiles->isHidden());
+        CHECK_FALSE(tiles->toggleViewAction()->isChecked());
+        QSettings settings(ini, QSettings::IniFormat);
+        e.window.save_layout(settings);
+        settings.sync();
+    }
+    // A new session: the Tiles panel is still closed; reset puts it back.
+    Editor again;
+    QDockWidget* back = again.window.findChild<QDockWidget*>(QStringLiteral("tiles_dock"));
+    REQUIRE(back != nullptr);
+    CHECK_FALSE(back->isHidden());
+    QSettings settings(ini, QSettings::IniFormat);
+    REQUIRE(again.window.restore_layout(settings));
+    QApplication::processEvents();
+    CHECK(back->isHidden());
+    auto* reset = again.window.findChild<QAction*>(QStringLiteral("reset_layout"));
+    REQUIRE(reset != nullptr);
+    reset->trigger();
+    QApplication::processEvents();
+    CHECK_FALSE(back->isHidden());
+    // Nothing saved yet, or something unreadable: nothing changes.
+    QSettings empty(
+        QString::fromStdU16String(
+            (fs::temp_directory_path() / ("sparxel-none-" + Guid::generate().to_string() + ".ini"))
+                .u16string()),
+        QSettings::IniFormat);
+    CHECK_FALSE(again.window.restore_layout(empty));
+    settings.setValue(QStringLiteral("window/state"), QByteArray("not a layout"));
+    CHECK_FALSE(again.window.restore_layout(settings));
+    CHECK_FALSE(back->isHidden());
+    std::error_code ignored;
+    fs::remove(file, ignored);
 }
 
 TEST_CASE("Selecting in the list fills the inspector, whose fields edit the scene") {

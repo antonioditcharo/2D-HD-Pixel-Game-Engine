@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QSettings>
 #include <filesystem>
 
 #include "main_window.h"
@@ -21,6 +22,7 @@ std::filesystem::path path_of(const QString& text) {
 
 int main(int argc, char** argv) {
     const QApplication app(argc, argv);
+    QApplication::setOrganizationName(QStringLiteral("Sparxel"));
     QApplication::setApplicationName(QStringLiteral("Sparxel Editor"));
     // The player packaged with the editor (in its own folder, so exported games get only
     // the player's libraries), or beside it; else the one this build made.
@@ -50,6 +52,11 @@ int main(int argc, char** argv) {
     if (check) {
         return opened && std::filesystem::exists(player) ? 0 : 1;
     }
+    // Where the panels were last time (in the user's settings: the registry on Windows).
+    QSettings settings;
+    window.restore_layout(settings);
     window.show();
-    return QApplication::exec();
+    const int result = QApplication::exec();
+    window.save_layout(settings);
+    return result;
 }

@@ -13,6 +13,7 @@
 #include "editor/core/document.h"
 
 class QAction;
+class QSettings;
 class QTreeWidget;
 class QTreeView;
 class QFileSystemModel;
@@ -51,6 +52,13 @@ public:
     bool new_scene(const QString& name);
     /// Makes the open scene the one the game starts in.
     bool start_here();
+    /// The window's size and where its panels are (docked, floating, hidden, their sizes),
+    /// written to `settings` and read back: the editor keeps them between sessions.
+    void save_layout(QSettings& settings) const;
+    /// False, changing nothing, if `settings` holds no layout or one this editor cannot use.
+    bool restore_layout(QSettings& settings);
+    /// Every panel back where it was when the editor first opened.
+    void reset_layout();
     /// Quiet: problems go to the status bar only, never to a dialog that waits for
     /// someone (for checks that run with no one there).
     void set_quiet(bool quiet) noexcept { quiet_ = quiet; }
@@ -95,6 +103,7 @@ private:
     /// After undo or redo: keeps selected what is still there.
     void reselect();
     bool quiet_ = false;
+    QByteArray first_layout_; ///< The panels as built, for reset_layout().
     std::vector<engine::Guid> selected_;
 
 private:

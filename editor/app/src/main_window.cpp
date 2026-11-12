@@ -15,6 +15,7 @@
 #include <QMessageBox>
 #include <QProcess>
 #include <QScrollArea>
+#include <QSettings>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QTreeView>
@@ -38,6 +39,9 @@ namespace editor {
 namespace fs = std::filesystem;
 
 namespace {
+
+/// Which layout format save_layout() writes: one from another version is not restored.
+constexpr int layout_version = 1;
 
 QString text_of(const std::string& s) {
     return QString::fromStdString(s);
@@ -155,6 +159,7 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     connect(view_, &SceneView::stop_painting, this, [this] { palette_->choose(std::nullopt); });
 
     build_actions();
+    first_layout_ = saveState(layout_version);
     connect(advanced, &QCheckBox::toggled, inspector_, &Inspector::set_show_advanced);
     connect(outliner_, &QTreeWidget::itemSelectionChanged, this, [this] {
         // In the list's order, the current item (the one clicked last) first.
@@ -201,6 +206,14 @@ void MainWindow::build_actions() {
     QMenu* file = menuBar()->addMenu(tr("&File"));
     QMenu* edit = menuBar()->addMenu(tr("&Edit"));
     QMenu* game = menuBar()->addMenu(tr("&Game"));
+    // The panels: each can be shown again after it was closed, and all put back.
+    QMenu* view = menuBar()->addMenu(tr("&View"));
+    for (QDockWidget* dock : findChildren<QDockWidget*>()) {
+        view->addAction(dock->toggleViewAction());
+    }
+    view->addSeparator();
+    QAction* reset = view->addAction(tr("&Reset layout"), this, [this] { reset_layout(); });
+    reset->setObjectName(QStringLiteral("reset_layout"));
     QToolBar* tools = addToolBar(tr("Commands"));
     tools->setObjectName(QStringLiteral("commands"));
 
@@ -585,6 +598,24 @@ bool MainWindow::export_to(const fs::path& folder) {
     statusBar()->showMessage(tr("Exported: play it with %1").arg(path_text(exported->executable)),
                              8000);
     return true;
+}
+
+void MainWindow::save_layout(QSettings& settings) const {
+    settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
+    settings.setValue(QStringLiteral("window/state"), saveState(layout_version));
+}
+
+bool MainWindow::restore_layout(QSettings& settings) {
+    const QByteArray state = settings.value(QStringLiteral("window/state")).toByteArray();
+    if (state.isEmpty() || !restoreState(state, layout_version)) {
+        return false;
+    }
+    restoreGeometry(settings.value(QStringLiteral("window/geometry")).toByteArray());
+    return true;
+}
+
+void MainWindow::reset_layout() {
+    restoreState(first_layout_, layout_version);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
