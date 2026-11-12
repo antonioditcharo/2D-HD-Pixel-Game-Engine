@@ -78,6 +78,11 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     resize(1280, 800);
     view_ = new SceneView(this);
     setCentralWidget(view_);
+    // Panels split beside and under each other anywhere, gather as tabs (with the tabs on
+    // top), float as windows, and a group of tabs drags as one.
+    setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks |
+                   QMainWindow::AllowTabbedDocks | QMainWindow::GroupedDragging);
+    setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
 
     // Left: the project's assets, and the scene's entities.
     outliner_ = new QTreeWidget(this);

@@ -263,12 +263,28 @@ TEST_CASE("The panels' layout is kept between sessions, and can be put back") {
         fs::temp_directory_path() / ("sparxel-layout-" + Guid::generate().to_string() + ".ini");
     const QString ini = QString::fromStdU16String(file.u16string());
     {
-        const Editor e;
+        Editor e;
         QDockWidget* tiles = e.window.findChild<QDockWidget*>(QStringLiteral("tiles_dock"));
         REQUIRE(tiles != nullptr);
         CHECK_FALSE(tiles->isHidden());
         // Every panel is in the View menu, so a closed one can be opened again.
         CHECK(tiles->toggleViewAction()->isChecked());
+        // Panels split beside each other and gather as tabs, anywhere.
+        CHECK((e.window.dockOptions() & QMainWindow::AllowNestedDocks) != 0);
+        CHECK((e.window.dockOptions() & QMainWindow::GroupedDragging) != 0);
+        auto* entities = e.window.findChild<QDockWidget*>(QStringLiteral("entities_dock"));
+        auto* assets = e.window.findChild<QDockWidget*>(QStringLiteral("assets_dock"));
+        auto* inspector = e.window.findChild<QDockWidget*>(QStringLiteral("inspector_dock"));
+        REQUIRE(entities != nullptr);
+        REQUIRE(assets != nullptr);
+        REQUIRE(inspector != nullptr);
+        e.window.splitDockWidget(entities, assets, Qt::Horizontal); // Assets beside Entities
+        QApplication::processEvents();
+        CHECK(assets->geometry().left() >= entities->geometry().right());
+        e.window.tabifyDockWidget(inspector, entities); // Entities among the right's tabs
+        QApplication::processEvents();
+        CHECK(e.window.tabifiedDockWidgets(inspector).contains(entities));
+        CHECK(e.window.dockWidgetArea(entities) == Qt::RightDockWidgetArea);
         tiles->close();
         QApplication::processEvents();
         CHECK(tiles->isHidden());
@@ -286,6 +302,13 @@ TEST_CASE("The panels' layout is kept between sessions, and can be put back") {
     REQUIRE(again.window.restore_layout(settings));
     QApplication::processEvents();
     CHECK(back->isHidden());
+    // The tabs come back as they were.
+    auto* entities_again = again.window.findChild<QDockWidget*>(QStringLiteral("entities_dock"));
+    auto* inspector_again = again.window.findChild<QDockWidget*>(QStringLiteral("inspector_dock"));
+    REQUIRE(entities_again != nullptr);
+    REQUIRE(inspector_again != nullptr);
+    CHECK(again.window.dockWidgetArea(entities_again) == Qt::RightDockWidgetArea);
+    CHECK(again.window.tabifiedDockWidgets(inspector_again).contains(entities_again));
     auto* reset = again.window.findChild<QAction*>(QStringLiteral("reset_layout"));
     REQUIRE(reset != nullptr);
     reset->trigger();
