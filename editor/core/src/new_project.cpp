@@ -91,6 +91,31 @@ assets::Image hero() {
     return image;
 }
 
+/// The platformer's level, seen from the side: grass over stone along the bottom two rows,
+/// stone walls at both ends, and three stone ledges rising to the right, each 2 tiles
+/// above the last (a jump reaches 3).
+std::string side_tiles() {
+    scene2d::TileGrid grid;
+    grid.width = map_width;
+    grid.height = map_height;
+    grid.cells.assign(std::size_t{map_width} * map_height, -1);
+    const auto set = [&grid](std::uint32_t x0, std::uint32_t x1, std::uint32_t y, std::int32_t t) {
+        for (std::uint32_t x = x0; x <= x1; ++x) {
+            grid.cells[(std::size_t{y} * map_width) + x] = t;
+        }
+    };
+    set(0, map_width - 1, map_height - 2, 0); // grass
+    set(0, map_width - 1, map_height - 1, 2); // stone under it
+    for (std::uint32_t y = 0; y + 1 < map_height; ++y) {
+        set(0, 0, y, 2); // the walls
+        set(map_width - 1, map_width - 1, y, 2);
+    }
+    set(6, 9, 8, 2); // the ledges
+    set(11, 14, 6, 2);
+    set(15, 18, 4, 2);
+    return scene2d::format_tiles(grid);
+}
+
 /// The visual novel's backdrop, the size of the screen: a sky growing paler towards the
 /// horizon, green hills, and a meadow.
 assets::Image backdrop() {
@@ -259,6 +284,35 @@ serialize::Json entity(std::string_view entity_name, serialize::Json components)
                            {"components", std::move(components)}};
 }
 
+/// create_project() for a platformer, into its folders, made already, with its pictures.
+bool create_platformer(const fs::path& folder, std::string_view name, std::string& error,
+                       const std::string& tileset_id, const std::string& hero_id) {
+    serialize::Json entities = serialize::Json::array();
+    entities.push_back(entity(
+        "level", {{"tilemap", {{"tiles", side_tiles()}, {"tileset", tileset_id}, {"solid", true}}},
+                  {"transform_2d", {{"layer", -1}, {"x", 0.0}, {"y", 0.0}}}}));
+    // Standing on the grass, as tall as its hitbox, walking and jumping.
+    entities.push_back(entity("hero", {{"sprite", {{"image", hero_id}}},
+                                       {"top_down_mover", {{"speed", 5.0}, {"hitbox_height", 1.0}}},
+                                       {"jumping", serialize::Json::object()},
+                                       {"transform_2d", {{"x", 3.0}, {"y", 10.0}}}}));
+    const serialize::Json scene{
+        {"format", "sparxel.scene"}, {"version", 1}, {"entities", std::move(entities)}};
+    engine::game::ProjectSettings settings;
+    settings.name = std::string(name);
+    settings.start_scene = "maps/start.dscene";
+    settings.background = engine::render::Color{132, 188, 236, 255}; // a clear sky
+    if (!write_text(folder / "assets" / "maps" / "start.dscene", serialize::to_text(scene)) ||
+        !write_text(folder / "project.sparxel.json",
+                    serialize::to_text(engine::game::project_to_json(settings)))) {
+        error = "The project's files could not be written.";
+        return false;
+    }
+    assets::AssetDatabase database(folder / "assets");
+    database.refresh(); // the scene's ".meta"
+    return true;
+}
+
 /// create_project() for a visual novel, into its folders, made already.
 bool create_visual_novel(const fs::path& folder, std::string_view name, std::string& error) {
     const fs::path assets_folder = folder / "assets";
@@ -342,6 +396,9 @@ bool create_project(const fs::path& folder, std::string_view name, std::string& 
         return false;
     }
     const std::string tileset_id = tiles_png->guid.to_string();
+    if (kind == ProjectTemplate::Platformer) {
+        return create_platformer(folder, name, error, tileset_id, hero_png->guid.to_string());
+    }
     // The ground under the walls, both under the hero.
     const serialize::Json under{{"layer", -2}, {"x", 0.0}, {"y", 0.0}};
     const serialize::Json flat{{"layer", -1}, {"x", 0.0}, {"y", 0.0}};

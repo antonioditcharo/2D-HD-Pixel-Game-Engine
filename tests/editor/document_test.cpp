@@ -973,6 +973,82 @@ TEST_CASE("A new Diorama project draws in 3D, and not as the flat one does") {
     CHECK(green > 6000); // of 12,000
 }
 
+TEST_CASE("A new platformer: seen from the side, the hero jumps onto a ledge") {
+    const fs::path folder =
+        fs::temp_directory_path() / ("sparxel-new-" + Guid::generate().to_string());
+    std::string error;
+    REQUIRE(editor::create_project(folder, "Up We Go", error, editor::ProjectTemplate::Platformer));
+    {
+        std::vector<serialize::Issue> issues;
+        const auto d = editor::Document::open(folder, issues);
+        REQUIRE(d != nullptr);
+        CHECK(issues.empty());
+        CHECK(d->entities().size() == 2);
+        const world::Entity hero = d->world().find_named("hero").at(0);
+        CHECK(d->world().get<game::Jumping>(hero) != nullptr);
+        CHECK(d->world().get<game::TopDownMover>(hero)->hitbox_height == 1.0);
+        if (test_support::gpu() != nullptr) {
+            // Looking at (10, 6): the map's corner is at pixel (0, -6).
+            const auto preview = editor::Preview::create(error);
+            REQUIRE(preview != nullptr);
+            const engine::assets::Image frame =
+                preview->render(*d, 10.0, 6.0, error).value_or(engine::assets::Image{});
+            REQUIRE(frame.width == 320);
+            const auto at = [&frame](std::uint32_t x, std::uint32_t y) {
+                const std::size_t i = (std::size_t{y} * frame.width + x) * 4;
+                return std::array<int, 3>{frame.rgba.at(i), frame.rgba.at(i + 1),
+                                          frame.rgba.at(i + 2)};
+            };
+            CHECK(at(160, 20) == std::array<int, 3>{132, 188, 236});  // the sky
+            CHECK(at(100, 160) == std::array<int, 3>{72, 148, 76});   // grass, row 10
+            CHECK(at(100, 172) == std::array<int, 3>{120, 122, 132}); // stone under it
+            CHECK(at(120, 125) == std::array<int, 3>{120, 122, 132}); // the first ledge
+            CHECK(at(5, 50) == std::array<int, 3>{120, 122, 132});    // the west wall
+            CHECK(at(46, 148) == std::array<int, 3>{52, 96, 180});    // the hero's tunic
+        }
+    }
+    {
+        // Played with recorded input: Right held for a second, Space pressed at a third of
+        // it. The jump (2.87 tiles) clears the ledge's underside, and the hero lands on its
+        // top (y = 8) and walks on along it to x = 3 + 5 tiles a second for a second.
+        engine::input::Recording replay;
+        const auto right = engine::input::Binding::key(engine::input::Key::Right);
+        const auto space = engine::input::Binding::key(engine::input::Key::Space);
+        replay.record(0, right, true);
+        replay.record(20, space, true);
+        replay.record(22, space, false);
+        replay.record(60, right, false);
+        game::RuntimeOptions options;
+        options.graphics = false;
+        options.replay = &replay;
+        options.audio = game::AudioMode::Headless;
+        options.save_folder = folder / "saves";
+        std::vector<serialize::Issue> issues;
+        const std::unique_ptr<game::Runtime> runtime = game::Runtime::open(folder, options, issues);
+        CHECK(issues.empty());
+        REQUIRE(runtime != nullptr);
+        const auto hero = [&] {
+            const world::Entity e = runtime->world().find_named("hero").at(0);
+            return *runtime->world().get<scene2d::Transform2D>(e);
+        };
+        runtime->step();
+        CHECK(hero().y == 10.0); // standing on the grass
+        double highest = 10.0;
+        for (int i = 1; i < 120; ++i) {
+            runtime->step();
+            highest = std::min(highest, hero().y);
+        }
+        CAPTURE(highest);
+        CHECK(highest < 7.2);
+        CHECK(hero().y == 8.0);
+        CHECK(hero().x == doctest::Approx(8.0));
+        const world::Entity e = runtime->world().find_named("hero").at(0);
+        CHECK(runtime->world().get<game::Jumping>(e)->on_ground);
+    }
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
+}
+
 TEST_CASE("A new visual novel: a backdrop, Mira, and a story that answers back") {
     const fs::path folder =
         fs::temp_directory_path() / ("sparxel-new-" + Guid::generate().to_string());

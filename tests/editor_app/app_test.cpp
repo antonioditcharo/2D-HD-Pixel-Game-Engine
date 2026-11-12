@@ -184,6 +184,17 @@ TEST_CASE("File > New project makes a starter game and opens it") {
     auto* problems = e.window.logic_panel()->findChild<QLabel*>(QStringLiteral("logic_problems"));
     REQUIRE(problems != nullptr);
     CHECK(problems->text() == QStringLiteral("logic/story.drules runs: no problems."));
+    // The platformer: the level and the hero, who jumps.
+    const fs::path folder_side =
+        fs::temp_directory_path() / ("sparxel-new-app-" + Guid::generate().to_string());
+    REQUIRE(e.window.new_project(folder_side, QStringLiteral("Up We Go"),
+                                 editor::ProjectTemplate::Platformer));
+    QApplication::processEvents();
+    CHECK(e.window.document()->entities().size() == 2);
+    e.window.select(e.guid("hero"));
+    CHECK(e.window.document()->world().get<engine::game::Jumping>(
+              e.window.document()->world().find(e.guid("hero"))) != nullptr);
+    CHECK_FALSE(e.window.scene_view()->image().isNull());
     // A picture of it, when asked for.
     if (const QString shot = qEnvironmentVariable("SPARXEL_STARTER_SCREENSHOT"); !shot.isEmpty()) {
         e.window.scene_view()->image().save(shot);
@@ -192,6 +203,7 @@ TEST_CASE("File > New project makes a starter game and opens it") {
     fs::remove_all(folder, ignored);
     fs::remove_all(folder_3d, ignored);
     fs::remove_all(folder_vn, ignored);
+    fs::remove_all(folder_side, ignored);
 }
 
 TEST_CASE("Scenes from the window: a new one, back by a double-click, and where the game starts") {

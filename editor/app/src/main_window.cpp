@@ -229,7 +229,8 @@ void MainWindow::build_actions() {
         }
         const QStringList kinds{tr("Classic 2D: seen from above, flat"),
                                 tr("Diorama: HD-2D, in 3D with light and shadows"),
-                                tr("Visual novel: a story in pictures and words")};
+                                tr("Visual novel: a story in pictures and words"),
+                                tr("Platformer: seen from the side, walking and jumping")};
         const QString kind = QInputDialog::getItem(this, tr("New project"), tr("Start from:"),
                                                    kinds, 0, false, &named);
         if (!named) {
@@ -240,8 +241,9 @@ void MainWindow::build_actions() {
         if (!folder.isEmpty()) {
             const auto chosen =
                 static_cast<std::size_t>(std::max<qsizetype>(kinds.indexOf(kind), 0));
-            constexpr std::array<ProjectTemplate, 3> templates{
-                ProjectTemplate::TopDown2D, ProjectTemplate::Diorama, ProjectTemplate::VisualNovel};
+            constexpr std::array<ProjectTemplate, 4> templates{
+                ProjectTemplate::TopDown2D, ProjectTemplate::Diorama, ProjectTemplate::VisualNovel,
+                ProjectTemplate::Platformer};
             new_project(path_of(folder), name, templates.at(chosen));
         }
     });
