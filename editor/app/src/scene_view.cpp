@@ -195,8 +195,8 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
     const int s = scale();
     const QPoint o = origin();
     painter.drawImage(QRect(o, image_.size() * s), image_);
-    // A rectangle being dragged out, before it is painted.
-    if (drag_ == Drag::Paint && paint_tool_ == PaintTool::Rectangle) {
+    // A rectangle being dragged out, before it is painted or selected with.
+    if ((drag_ == Drag::Paint && paint_tool_ == PaintTool::Rectangle) || drag_ == Drag::Box) {
         painter.setPen(QPen(QColor(255, 255, 255), 1, Qt::DashLine));
         painter.drawRect(QRect(drag_from_, rect_to_).normalized());
     }
@@ -270,8 +270,7 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
             return;
         }
         // On one of a group: the group stays, to be dragged together.
-        const bool in_group = group_.size() > 1 && guid.is_valid() &&
-                              std::find(group_.begin(), group_.end(), guid) != group_.end();
+        const bool in_group = group_.size() > 1 && guid.is_valid() && contains(group_, guid);
         if (!in_group) {
             selection_ = guid;
             group_.assign(guid.is_valid() ? 1U : 0U, guid);
@@ -295,6 +294,11 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
             drag_ = Drag::Entity;
             ground_from_ = *ground;
             document_->end_merge();
+        } else {
+            // Nothing to move here (the ground, or nothing): a drag draws a box to select
+            // with; a click stays a click.
+            drag_ = Drag::Box;
+            rect_to_ = drag_from_;
         }
         update();
     } else if (event->button() == Qt::RightButton || event->button() == Qt::MiddleButton) {
@@ -316,6 +320,11 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
         } else {
             paint_at(event->position().toPoint());
         }
+        return;
+    }
+    if (drag_ == Drag::Box) {
+        rect_to_ = event->position().toPoint();
+        update();
         return;
     }
     if (drag_ == Drag::Entity) {
@@ -343,7 +352,54 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
     }
 }
 
+std::vector<engine::Guid> SceneView::pictures_in(QRect band) const {
+    std::vector<engine::Guid> found;
+    if (document_ == nullptr || image_.isNull()) {
+        return found;
+    }
+    const engine::world::World& world = document_->world();
+    for (const engine::world::Entity e : document_->entities()) {
+        if (world.get<scene2d::Sprite>(e) == nullptr ||
+            world.get<scene2d::Transform2D>(e) == nullptr) {
+            continue;
+        }
+        // Where the picture is drawn on this widget, as its outline is.
+        QRect drawn;
+        if (diorama()) {
+            const auto rect = diorama_sprite_rect(
+                world, document_->assets(), e,
+                diorama_camera(document_->settings(), camera_x_, camera_y_),
+                static_cast<float>(image_.width()) / static_cast<float>(image_.height()));
+            if (!rect) {
+                continue;
+            }
+            drawn = QRect(from_ndc((*rect)[0], (*rect)[3]), from_ndc((*rect)[2], (*rect)[1]));
+        } else {
+            const auto box =
+                sprite_bounds(world, document_->assets(), e, document_->settings().ppu);
+            if (!box) {
+                continue;
+            }
+            drawn = QRect(from_map(box->left, box->top), from_map(box->right, box->bottom));
+        }
+        if (drawn.normalized().intersects(band)) {
+            found.push_back(world.guid(e));
+        }
+    }
+    return found;
+}
+
 void SceneView::mouseReleaseEvent(QMouseEvent* event) {
+    if (drag_ == Drag::Box) {
+        const QRect band = QRect(drag_from_, event->position().toPoint()).normalized();
+        drag_ = Drag::None;
+        // A few pixels is a click, which selected what it was on already.
+        if (band.width() + band.height() > 6) {
+            Q_EMIT boxed(pictures_in(band));
+        }
+        update();
+        return;
+    }
     if (drag_ == Drag::Paint && paint_tool_ == PaintTool::Rectangle && document_ != nullptr) {
         const std::optional<QPointF> from = map_point(drag_from_);
         const std::optional<QPointF> to = map_point(event->position().toPoint());

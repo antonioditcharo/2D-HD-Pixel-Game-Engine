@@ -10,6 +10,7 @@
 #include <QImage>
 #include <QPoint>
 #include <QWidget>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -19,6 +20,13 @@
 #include "editor/core/preview.h"
 
 namespace editor {
+
+/// Whether `guids` holds `guid`. (By comparison, not std::find: Microsoft's library under
+/// clang-cl cannot search 16-byte values its fast way, and stops the build.)
+[[nodiscard]] inline bool contains(const std::vector<engine::Guid>& guids, engine::Guid guid) {
+    return std::find_if(guids.begin(), guids.end(), [guid](engine::Guid g) { return g == guid; }) !=
+           guids.end();
+}
 
 class SceneView : public QWidget {
     Q_OBJECT
@@ -64,6 +72,8 @@ Q_SIGNALS:
     void selected(engine::Guid entity);
     /// Ctrl- or Shift-click: `entity` joins the selection, or leaves it.
     void toggled(engine::Guid entity);
+    /// A box was dragged from where nothing can be moved: these pictures are in it.
+    void boxed(std::vector<engine::Guid> entities);
     /// The scene was changed here: an entity dragged, or tiles painted.
     void moved();
     /// Escape was pressed while painting.
@@ -96,7 +106,10 @@ private:
     double camera_x_ = 0.0;
     double camera_y_ = 0.0;
     // A drag in progress.
-    enum class Drag : std::uint8_t { None, Entity, Camera, Paint } drag_ = Drag::None;
+    enum class Drag : std::uint8_t { None, Entity, Camera, Paint, Box } drag_ = Drag::None;
+    /// The pictures (entities with a Position and a Sprite) whose drawn rectangles touch
+    /// `band`, a rectangle of this widget, in the scene's order.
+    [[nodiscard]] std::vector<engine::Guid> pictures_in(QRect band) const;
     /// Paints the drag's tile at a widget point.
     void paint_at(QPoint widget_point);
     engine::Guid paint_map_;

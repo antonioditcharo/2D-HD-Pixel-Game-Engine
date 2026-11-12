@@ -379,6 +379,27 @@ TEST_CASE("Several entities selected: Ctrl-click and the list, dragged and delet
     list->setCurrentItem(lamp_item, 0, QItemSelectionModel::Select);
     CHECK(e.window.selected() == std::vector<Guid>{e.guid("lamp"), hero});
     CHECK(e.window.selection() == e.guid("lamp"));
+
+    // A box dragged from the ground selects every picture it touches, in the scene's order;
+    // over no picture, nothing. A click on the ground still selects the ground.
+    const auto drag_box = [&](QPointF corner, QPointF opposite) {
+        const QPoint a = view->from_map(corner.x(), corner.y());
+        const QPoint b = view->from_map(opposite.x(), opposite.y());
+        mouse(view, QEvent::MouseButtonPress, a, Qt::LeftButton);
+        for (int i = 1; i <= 3; ++i) {
+            mouse(view, QEvent::MouseMove, a + ((b - a) * i) / 3, Qt::LeftButton);
+        }
+        mouse(view, QEvent::MouseButtonRelease, b, Qt::LeftButton);
+    };
+    drag_box(QPointF(4.0, 3.0), QPointF(11.0, 9.5));
+    CHECK(e.window.selected() == std::vector<Guid>{hero, elder});
+    CHECK(at(hero).x == 10.0); // selecting moved nothing
+    CHECK(at(elder).x == 6.0);
+    drag_box(QPointF(13.0, 2.0), QPointF(15.0, 3.5));
+    CHECK(e.window.selected().empty());
+    click(QPointF(3.0, 3.0), Qt::NoModifier);
+    CHECK(e.window.selected() == std::vector<Guid>{e.guid("ground")});
+    CHECK_FALSE(e.window.document()->dirty());
 }
 
 TEST_CASE("New entities get components from the inspector, and saving and exporting work") {

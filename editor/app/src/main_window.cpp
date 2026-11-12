@@ -162,7 +162,7 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
         const auto add = [&chosen](const QTreeWidgetItem* item) {
             const std::optional<engine::Guid> guid =
                 engine::Guid::parse(item->data(0, Qt::UserRole).toString().toStdString());
-            if (guid && std::find(chosen.begin(), chosen.end(), *guid) == chosen.end()) {
+            if (guid && !contains(chosen, *guid)) {
                 chosen.push_back(*guid);
             }
         };
@@ -178,6 +178,8 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     });
     connect(view_, &SceneView::selected, this, [this](engine::Guid guid) { select(guid); });
     connect(view_, &SceneView::toggled, this, [this](engine::Guid guid) { toggle_selected(guid); });
+    connect(view_, &SceneView::boxed, this,
+            [this](std::vector<engine::Guid> guids) { select_many(std::move(guids)); });
     connect(view_, &SceneView::moved, this, [this] { changed(false); });
     connect(view_, &SceneView::problem, this, &MainWindow::report);
     connect(logic_, &LogicPanel::edited, this, [this] { update_title_and_actions(); });
@@ -388,8 +390,8 @@ void MainWindow::select(engine::Guid entity) {
 
 void MainWindow::toggle_selected(engine::Guid entity) {
     std::vector<engine::Guid> now = selected_;
-    if (const auto found = std::find(now.begin(), now.end(), entity); found != now.end()) {
-        now.erase(found);
+    if (contains(now, entity)) {
+        std::erase_if(now, [entity](engine::Guid g) { return g == entity; });
     } else {
         now.push_back(entity);
     }
@@ -409,7 +411,7 @@ void MainWindow::select_many(std::vector<engine::Guid> entities) {
     for (QTreeWidgetItemIterator it(outliner_); *it != nullptr; ++it) {
         const std::optional<engine::Guid> guid =
             engine::Guid::parse((*it)->data(0, Qt::UserRole).toString().toStdString());
-        if (guid && std::find(selected_.begin(), selected_.end(), *guid) != selected_.end()) {
+        if (guid && contains(selected_, *guid)) {
             (*it)->setSelected(true);
             if (*guid == entity) {
                 outliner_->scrollToItem(*it);
