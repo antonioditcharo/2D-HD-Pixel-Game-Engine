@@ -1,0 +1,98 @@
+{
+  "format": "sparxel.logic",
+  "name": "road",
+  "rules": [
+    {
+      "block": 1,
+      "do": [
+        {
+          "block": 2,
+          "kind": "do",
+          "member": "go_to_scene_at",
+          "object": "game",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "maps/road.dscene"
+            },
+            {
+              "kind": "literal",
+              "value": "milestone"
+            }
+          ]
+        }
+      ],
+      "event": "entered",
+      "object": "gate"
+    },
+    {
+      "block": 3,
+      "do": [
+        {
+          "block": 4,
+          "kind": "do",
+          "member": "go_to_scene_at",
+          "object": "game",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "maps/village.dscene"
+            },
+            {
+              "kind": "literal",
+              "value": "lantern"
+            }
+          ]
+        }
+      ],
+      "event": "entered",
+      "object": "way_back"
+    },
+    {
+      "block": 5,
+      "do": [
+        {
+          "block": 6,
+          "kind": "do",
+          "member": "say",
+          "object": "dialogue",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "The road home. A stream runs beside it."
+            }
+          ]
+        }
+      ],
+      "event": "scene_start",
+      "if": [
+        {
+          "kind": "call",
+          "member": "in_scene",
+          "object": "game",
+          "operands": [
+            {
+              "kind": "literal",
+              "value": "maps/road.dscene"
+            }
+          ]
+        }
+      ],
+      "otherwise": [
+        {
+          "block": 7,
+          "kind": "do",
+          "member": "say",
+          "object": "dialogue",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "The village again."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

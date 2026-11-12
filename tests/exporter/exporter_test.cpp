@@ -104,7 +104,8 @@ TEST_CASE("Exporting the sample writes the player, its licences and the game, no
     std::vector<std::string> expected{exe, "LICENSE.txt", "THIRD_PARTY_NOTICES.md",
                                       "game/project.sparxel.json"};
     for (const char* asset : {"art/elder.png", "art/hero.png", "art/tiles.png", "logic/main.drules",
-                              "maps/village.dscene", "sfx/chime.wav"}) {
+                              "logic/road.drules", "maps/road.dscene", "maps/village.dscene",
+                              "sfx/chime.wav", "sfx/stream.wav"}) {
         expected.push_back(std::string("game/assets/") + asset);
         expected.push_back(std::string("game/assets/") + asset + ".meta");
     }

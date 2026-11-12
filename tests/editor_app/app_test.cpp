@@ -105,9 +105,12 @@ TEST_CASE("The editor opens the sample: its entities, its scene, its name") {
         QApplication::processEvents();
         e.window.grab().save(shot);
     }
-    // The logic, as plain language: one file; its three Rules and a Brain.
+    // The logic, as plain language: the village's file (its three Rules and a Brain),
+    // and the road's.
     QTreeWidget* logic = e.window.logic_view();
-    REQUIRE(logic->topLevelItemCount() == 1);
+    REQUIRE(logic->topLevelItemCount() == 2);
+    CHECK(logic->topLevelItem(1)->text(0) == QStringLiteral("logic/road.drules"));
+    CHECK(logic->topLevelItem(1)->childCount() == 3);
     QTreeWidgetItem* file = logic->topLevelItem(0);
     CHECK(file->text(0) == QStringLiteral("logic/main.drules"));
     REQUIRE(file->childCount() == 4);

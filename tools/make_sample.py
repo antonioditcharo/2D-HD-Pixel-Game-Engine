@@ -23,6 +23,9 @@ GUIDS = {
     "sfx/chime.wav": "8d4f3b5e0c6a4f9d2e1b4a5c6d7e8f90",
     "maps/village.dscene": "9e5a4c6f1d7b4a0e3f2c5b6d7e8f90a1",
     "logic/main.drules": "af6b5d7a2e8c4b1f4a3d6c7e8f90a1b2",
+    "sfx/stream.wav": "b07c6e8b3f9d4c2a5b4e7d8f90a1b2c3",
+    "maps/road.dscene": "c18d7f9c4a0e4d3b6c5f8e90a1b2c3d4",
+    "logic/road.drules": "d29e80ad5b1f4e4c7d6a9f0a1b2c3d4e",
 }
 
 
@@ -130,6 +133,41 @@ def chime(path):
         out.writeframes(bytes(samples))
 
 
+def stream(path):
+    """Running water: a second of soft noise that repeats without a click.
+
+    Noise from a fixed sequence (so the file is always the same), smoothed; its first
+    tenth of a second is blended with what would follow its end.
+    """
+    rate = 22050
+    frames = rate
+    state = 12345
+    raw = []
+    for _ in range(frames + rate // 10):
+        state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+        raw.append(state / 0x7FFFFFFF * 2.0 - 1.0)
+    smooth = []
+    low = 0.0
+    for value in raw:
+        low += 0.18 * (value - low)
+        smooth.append(low)
+    tail = rate // 10
+    samples = bytearray()
+    for i in range(frames):
+        value = smooth[i]
+        if i < tail:
+            # The start fades in over what follows the end, so the end runs into it.
+            t = i / tail
+            value = value * t + smooth[frames + i] * (1.0 - t)
+        samples += struct.pack("<h", int(max(-1.0, min(1.0, value * 0.7)) * 32767))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(bytes(samples))
+
+
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
@@ -149,6 +187,7 @@ def main():
         character((120, 70, 150, 255), (230, 190, 150, 255), (230, 230, 235, 255), 0, 1, True))
     png(assets / "art/tiles.png", 48, 16, tiles())
     chime(assets / "sfx/chime.wav")
+    stream(assets / "sfx/stream.wav")
 
     # The village: 20 x 12 tiles of grass, a path, and a wall around it.
     width, height = 20, 12
@@ -199,6 +238,44 @@ def main():
         ],
     }
     write_json(assets / "maps/village.dscene", scene)
+
+    # The road beyond the gate: a second scene. A stream runs across it, heard louder the
+    # closer the hero comes; the way back is at its west end.
+    road_ground = []
+    for y in range(height):
+        row = []
+        for x in range(width):
+            row.append("1" if y == 8 else "0")
+        road_ground.append(",".join(row))
+    road = {
+        "format": "sparxel.scene",
+        "version": 1,
+        "entities": [
+            {"guid": "20000000000040008000000000000001", "name": "ground",
+             "components": {"transform_2d": {"x": 0.0, "y": 0.0, "layer": -1},
+                            "tilemap": {"tileset": tiles_guid, "tiles": "\n".join(road_ground)}}},
+            {"guid": "20000000000040008000000000000002", "name": "walls",
+             "components": {"transform_2d": {"x": 0.0, "y": 0.0, "layer": -1},
+                            "tilemap": {"tileset": tiles_guid, "tiles": "\n".join(walls),
+                                        "solid": True, "height": 1.0}}},
+            {"guid": "20000000000040008000000000000003", "name": "hero",
+             "components": {"transform_2d": {"x": 3.0, "y": 9.0},
+                            "sprite": {"image": GUIDS["art/hero.png"], "frame_width": 16,
+                                       "frame_height": 16, "frame": 1},
+                            "top_down_mover": {"speed": 4.0},
+                            "walk_animation": {"frames_per_direction": 3}}},
+            {"guid": "20000000000040008000000000000004", "name": "milestone",
+             "components": {"transform_2d": {"x": 3.0, "y": 9.0}}},
+            {"guid": "20000000000040008000000000000005", "name": "way_back",
+             "components": {"transform_2d": {"x": 1.5, "y": 9.0},
+                            "trigger": {"width": 1.0, "height": 1.0}}},
+            {"guid": "20000000000040008000000000000006", "name": "stream",
+             "components": {"transform_2d": {"x": 14.0, "y": 5.0},
+                            "sound_source": {"sound": GUIDS["sfx/stream.wav"], "range": 14.0,
+                                             "volume": 0.8}}},
+        ],
+    }
+    write_json(assets / "maps/road.dscene", road)
 
     def text(value):
         return {"kind": "literal", "value": value}
@@ -262,6 +339,29 @@ def main():
         ],
     }
     write_json(assets / "logic/main.drules", logic)
+
+    # Moving between the two scenes: through the gate to the road, and back.
+    def go(block, scene_path, where):
+        return {"block": block, "kind": "do", "object": "game", "member": "go_to_scene_at",
+                "values": [text(scene_path), text(where)]}
+
+    road_logic = {
+        "format": "sparxel.logic",
+        "version": 1,
+        "name": "road",
+        "rules": [
+            {"block": 1, "object": "gate", "event": "entered",
+             "do": [go(2, "maps/road.dscene", "milestone")]},
+            {"block": 3, "object": "way_back", "event": "entered",
+             "do": [go(4, "maps/village.dscene", "lantern")]},
+            {"block": 5, "event": "scene_start",
+             "if": [{"kind": "call", "object": "game", "member": "in_scene",
+                       "operands": [text("maps/road.dscene")]}],
+             "do": [say(6, "The road home. A stream runs beside it.")],
+             "otherwise": [say(7, "The village again.")]},
+        ],
+    }
+    write_json(assets / "logic/road.drules", road_logic)
 
     for path, guid in GUIDS.items():
         importer = "image" if path.endswith(".png") else "file"

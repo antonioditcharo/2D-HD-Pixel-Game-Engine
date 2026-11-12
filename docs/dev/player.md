@@ -38,8 +38,9 @@ sparxel-player samples/hello --headless --frames 120 --no-audio --screenshot fra
 ## 2. The sample: Hello Sparxel
 
 A 20 × 12 tile village in a stone wall, with a path, a hero to walk with the arrow keys or
-a gamepad, an elder to talk to with Z, and a gate on the east road. It uses most of what
-the engine does today:
+a gamepad, an elder to talk to with Z, and a gate on the east road, which leads to a
+second scene: the road, where a stream is heard louder the closer the hero comes, and
+whose west end leads back. It uses most of what the engine does today:
 
 | Part | What it shows |
 |---|---|
@@ -48,13 +49,16 @@ the engine does today:
 | `art/elder.png` | An elder who is a Solid Body and an Interactable |
 | `sfx/chime.wav` | Played when the player talks to the elder |
 | `logic/main.drules` | Rules for the start (a welcome message on screen), talking (the elder's words in a message box, and a question whose answer changes the reply; counting talks in a variable) and the gate (a Trigger Area, with a message); and a Brain, `weather`, turning sunny and rainy, and dimming the `lighting` when it rains |
+| `sfx/stream.wav` | A second of running water that repeats without a click: the road's stream, a Sound Source |
+| `maps/road.dscene` | The road: its own hero, a milestone to arrive at, the way back (a Trigger Area) and the stream |
+| `logic/road.drules` | *Go to scene …, arriving at …* through the gate and back (arriving by the village's lantern), and *When a scene starts* saying where the hero is now |
 | `maps/village.dscene` | The village, with two warm Lights for the Diorama style (a lantern by the gate, a lamp by the elder) that glow when the rain dims the day |
 
 Switch `"render_style"` in `project.sparxel.json` to `"diorama"` to see the same village
 in 3D. Its `look` adds a little bloom, warmth and a vignette, and in the Diorama style a
 tilt-shift band that keeps the middle of the screen sharp.
 
-- **All of it is made by `tools/make_sample.py`:** the pixel art and the chime are drawn
+- **All of it is made by `tools/make_sample.py`:** the pixel art, the chime and the stream are drawn
   and synthesised in code, so the sample has no third-party assets and regenerates
   exactly. Its `.meta` files have fixed GUIDs, so playing it never writes into the
   repository.
@@ -66,6 +70,7 @@ tilt-shift band that keeps the middle of the screen sharp.
 | `player_classic_2d`, `player_diorama` | CTest plays a copy of the sample headless for 120 frames in each style: it must start, report no problems, and print the welcome message (`said: Welcome to the village`) and the Brain's first line |
 | `player_long_run` | 2,000 frames in the Diorama style, past the rain at 30 seconds (it must print *It starts to rain.*). Headless runs once grew in memory every frame and crashed after about 900 frames ([rendering.md](rendering.md) §4) |
 | The sample in the Diorama style | Renders the village in 3D and checks that no path pixel appears alone in the grass. That once happened: in perspective, a texture coordinate on a tile's edge rounded into the next tile of the atlas. World quads now keep their coordinates a hundredth of a texel inside the tile ([rendering.md](rendering.md) §7); the test fails without that |
+| The sample through the gate | In the game's runtime with recorded input (in the editor's model tests): the hero walks east, closing messages, into the gate; the scene becomes the road with the hero exactly at the milestone and the village's elder gone; the stream's Sound Source plays on repeat and is heard in the mix; no problems and no script errors |
 
 ## 4. Next increments
 

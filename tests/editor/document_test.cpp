@@ -1,6 +1,7 @@
 // The editor's model, on a copy of the sample: opening, editing through reflection with
 // undo and redo, saving, picking, and the preview the scene view shows.
 
+#include "engine/audio/audio.h"
 #include "engine/foundation/guid.h"
 #include "engine/game/behaviours.h"
 #include "engine/game/runtime.h"
@@ -11,6 +12,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -536,7 +538,7 @@ TEST_CASE("A project's scenes: made, opened, started in, and known to logic by n
     const auto d = sample.open();
     std::string error;
     CHECK(d->scene_path() == "maps/village.dscene");
-    CHECK(d->scenes() == std::vector<std::string>{"maps/village.dscene"});
+    CHECK(d->scenes() == std::vector<std::string>{"maps/road.dscene", "maps/village.dscene"});
     const std::size_t village = d->entities().size();
     constexpr std::string_view logic = "logic/main.drules";
     const auto lines = [&] {
@@ -569,7 +571,8 @@ TEST_CASE("A project's scenes: made, opened, started in, and known to logic by n
     CHECK_FALSE(d->can_undo()); // undo starts again in the scene opened
     CHECK(fs::is_regular_file(sample.path / "assets/maps/cave.dscene"));
     CHECK(fs::is_regular_file(sample.path / "assets/maps/cave.dscene.meta"));
-    CHECK(d->scenes() == std::vector<std::string>{"maps/cave.dscene", "maps/village.dscene"});
+    CHECK(d->scenes() ==
+          std::vector<std::string>{"maps/cave.dscene", "maps/road.dscene", "maps/village.dscene"});
 
     // A bat lives in the cave, and a Rule is about it. The village's elder is known here
     // by name, from its scene's file.
@@ -858,14 +861,87 @@ TEST_CASE("A new project plays: the hero walks, and the walls stop it") {
     fs::remove_all(folder, ignored);
 }
 
+TEST_CASE("The sample plays through its gate to the road, hears the stream, and comes back") {
+    const Sample sample;
+    // Right all the way to the gate, with Interact tapped now and then to close messages.
+    engine::input::Recording replay;
+    const auto key = [](engine::input::Key k) { return engine::input::Binding::key(k); };
+    replay.record(0, key(engine::input::Key::Right), true);
+    for (std::uint64_t step = 10; step < 2000; step += 20) {
+        replay.record(step, key(engine::input::Key::Z), true);
+        replay.record(step + 1, key(engine::input::Key::Z), false);
+    }
+    game::RuntimeOptions options;
+    options.graphics = false;
+    options.replay = &replay;
+    options.audio = game::AudioMode::Headless;
+    options.save_folder = sample.path / "saves";
+    std::vector<serialize::Issue> issues;
+    const std::unique_ptr<game::Runtime> runtime =
+        game::Runtime::open(sample.path, options, issues);
+    for (const serialize::Issue& issue : issues) {
+        CAPTURE(issue.path);
+        CAPTURE(issue.message);
+        CHECK(false);
+    }
+    REQUIRE(runtime != nullptr);
+    REQUIRE(runtime->audio() != nullptr);
+    const auto hero = [&] {
+        const world::Entity e = runtime->world().find_named("hero").at(0);
+        return *runtime->world().get<scene2d::Transform2D>(e);
+    };
+    CHECK(runtime->scene() == "maps/village.dscene");
+    CHECK(runtime->audio()->playing_loops() == 0);
+    int steps = 0;
+    while (runtime->scene() == "maps/village.dscene" && steps < 600) {
+        runtime->step();
+        ++steps;
+    }
+    // Eight tiles at four a second, and a moment for the first message: a few seconds.
+    CAPTURE(steps);
+    REQUIRE(runtime->scene() == "maps/road.dscene");
+    CHECK(steps > 100);
+    CHECK(hero().x == 3.0); // at the milestone
+    CHECK(hero().y == 9.0);
+    CHECK(runtime->world().find_named("elder").empty());
+    // The stream is heard: its Sound Source plays on repeat, from the first step there.
+    runtime->step();
+    CHECK(runtime->audio()->playing_loops() == 1);
+    std::vector<float> mixed(std::size_t{4800} * 2);
+    REQUIRE(runtime->audio()->render(mixed));
+    CHECK(std::any_of(mixed.begin(), mixed.end(), [](float v) { return std::abs(v) > 0.001F; }));
+    CHECK(runtime->problems().empty());
+    CHECK(runtime->vm().errors().empty());
+}
+
 TEST_CASE("Logic reads as plain language") {
     const Sample sample;
     const auto d = sample.open();
     std::vector<serialize::Issue> issues;
     const std::vector<editor::LogicFile> files = editor::logic_files(*d, issues);
     CHECK(issues.empty());
-    REQUIRE(files.size() == 1);
+    REQUIRE(files.size() == 2);
     CHECK(files[0].path == "logic/main.drules");
+    CHECK(files[1].path == "logic/road.drules");
+    // The road's logic: between the two scenes, and what is said on arriving.
+    std::vector<std::string> road;
+    for (const editor::LogicLine& line : editor::describe(files[1].asset, *d)) {
+        road.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+    }
+    CHECK(
+        road ==
+        std::vector<std::string>{
+            "When [who] walks in (gate)",
+            "  Go to scene \u201cmaps/road.dscene\u201d, arriving at \u201cmilestone\u201d (game)",
+            "When [who] walks in (way_back)",
+            "  Go to scene \u201cmaps/village.dscene\u201d, arriving at \u201clantern\u201d (game)",
+            "When a scene starts",
+            "  If the scene is \u201cmaps/road.dscene\u201d (game)",
+            "  Say \u201cThe road home. A stream runs beside it.\u201d (dialogue)",
+            "  Otherwise:",
+            "    Say \u201cThe village again.\u201d (dialogue)",
+        });
+    CHECK(d->check_logic("logic/road.drules").empty()); // way_back is in the other scene
     std::vector<std::string> shown;
     for (const editor::LogicLine& line : editor::describe(files[0].asset, *d)) {
         shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
@@ -934,7 +1010,7 @@ constexpr std::string_view sample_logic = "logic/main.drules";
 
 /// The logic file's lines as the editor shows them.
 std::vector<editor::LogicLine> lines_of(const editor::Document& d) {
-    REQUIRE(d.logic().size() == 1);
+    REQUIRE(d.logic().size() == 2); // main, then the road's
     return editor::describe(d.logic()[0].asset, d);
 }
 
@@ -1093,7 +1169,7 @@ TEST_CASE("Logic is authored from nothing: files, Rules, conditions, Sequences, 
     CHECK(error == "There is already a file logic/main.drules.");
     constexpr std::string_view quests = "logic/quests.drules";
     REQUIRE(d->create_logic_file(quests, error));
-    REQUIRE(d->logic().size() == 2);
+    REQUIRE(d->logic().size() == 3); // sorted by path: main, quests, road
     CHECK(d->logic()[1].path == quests);
     CHECK(d->logic()[1].asset.name == "quests");
     CHECK(d->check_logic(quests).empty());
@@ -1216,10 +1292,10 @@ TEST_CASE("Logic is authored from nothing: files, Rules, conditions, Sequences, 
     while (d->can_undo()) {
         REQUIRE(d->undo());
     }
-    CHECK(d->logic().size() == 1);
+    CHECK(d->logic().size() == 2);
     CHECK_FALSE(d->dirty());
     REQUIRE(d->redo());
-    REQUIRE(d->logic().size() == 2);
+    REQUIRE(d->logic().size() == 3);
 
     // Saved, the file is written, gets its GUID, and is read back on reopening.
     REQUIRE(d->add_logic_sequence(quests, error).is_valid());
@@ -1227,7 +1303,7 @@ TEST_CASE("Logic is authored from nothing: files, Rules, conditions, Sequences, 
     CHECK(fs::exists(sample.path / "assets" / quests));
     CHECK(d->assets().find(quests) != nullptr);
     const auto again = sample.open();
-    REQUIRE(again->logic().size() == 2);
+    REQUIRE(again->logic().size() == 3);
     CHECK(again->logic()[1].asset.sequences.size() == 1);
 }
 
