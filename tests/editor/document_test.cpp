@@ -531,6 +531,116 @@ TEST_CASE("A new project is a small game that opens cleanly and can be edited") 
     fs::remove_all(folder, ignored);
 }
 
+TEST_CASE("A project's scenes: made, opened, started in, and known to logic by name") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    CHECK(d->scene_path() == "maps/village.dscene");
+    CHECK(d->scenes() == std::vector<std::string>{"maps/village.dscene"});
+    const std::size_t village = d->entities().size();
+    constexpr std::string_view logic = "logic/main.drules";
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        for (const editor::LogicLine& line : editor::describe(d->logic().at(0).asset, *d)) {
+            shown.push_back(line.text);
+        }
+        return shown;
+    };
+    const auto has_line = [&](std::string_view text) {
+        const std::vector<std::string> shown = lines();
+        return std::find(shown.begin(), shown.end(), text) != shown.end();
+    };
+
+    // A new scene: named as one, not over a file, and not while changes are unsaved.
+    CHECK_FALSE(d->create_scene("maps/cave", error));
+    CHECK(error == "A scene is named like maps/cave.dscene, in assets/.");
+    CHECK_FALSE(d->create_scene("../cave.dscene", error));
+    CHECK_FALSE(d->create_scene("maps/village.dscene", error));
+    CHECK(error == "There is already a file maps/village.dscene.");
+    REQUIRE(d->rename(guid_of(*d, "elder"), "sage"));
+    CHECK_FALSE(d->create_scene("maps/cave.dscene", error));
+    CHECK(error == "Save your changes before making another scene.");
+    CHECK_FALSE(d->open_scene("maps/village.dscene.meta", error));
+    REQUIRE(d->undo());
+    REQUIRE(d->create_scene("maps/cave.dscene", error));
+    CHECK(d->scene_path() == "maps/cave.dscene");
+    CHECK(d->entities().empty());
+    CHECK_FALSE(d->dirty());
+    CHECK_FALSE(d->can_undo()); // undo starts again in the scene opened
+    CHECK(fs::is_regular_file(sample.path / "assets/maps/cave.dscene"));
+    CHECK(fs::is_regular_file(sample.path / "assets/maps/cave.dscene.meta"));
+    CHECK(d->scenes() == std::vector<std::string>{"maps/cave.dscene", "maps/village.dscene"});
+
+    // A bat lives in the cave, and a Rule is about it. The village's elder is known here
+    // by name, from its scene's file.
+    const Guid bat = d->create_entity("bat", 3.0, 4.0);
+    const reflect::TypeInfo* interactable = d->registry().find_type<game::Interactable>();
+    REQUIRE(interactable != nullptr);
+    REQUIRE(d->add_component(bat, *interactable));
+    REQUIRE(
+        d->add_logic_rule(logic, editor::LogicEvent{"bat", "interacted", ""}, error).is_valid());
+    CHECK(d->check_logic(logic).empty()); // the elder's Rules too, though it is elsewhere
+    CHECK_FALSE(d->types_elsewhere("elder").empty());
+    CHECK(d->types_elsewhere("bat").empty()); // here, not elsewhere
+    CHECK(has_line("When [who] interacts with it (elder)"));
+    CHECK(has_line("When [who] interacts with it (bat)"));
+    // Unsaved changes stay with their scene: save, then open the other.
+    CHECK_FALSE(d->open_scene("maps/village.dscene", error));
+    CHECK(error == "Save your changes before opening another scene.");
+    CHECK(d->scene_path() == "maps/cave.dscene");
+    REQUIRE(d->save(error));
+    REQUIRE(d->open_scene("maps/village.dscene", error));
+    CHECK(d->scene_path() == "maps/village.dscene");
+    CHECK(d->entities().size() == village);
+    CHECK(d->world().find_named("bat").empty());
+    CHECK_FALSE(d->dirty());
+    // The bat's Rule still checks and reads as it did: the bat is in the cave's file.
+    CHECK(d->check_logic(logic).empty());
+    CHECK_FALSE(d->types_elsewhere("bat").empty());
+    CHECK(d->types_elsewhere("elder").empty());
+    CHECK(has_line("When [who] interacts with it (bat)"));
+    // What is not a scene of the project is refused, and the open scene stays.
+    CHECK_FALSE(d->open_scene("maps/nothing.dscene", error));
+    CHECK(error == "There is no scene maps/nothing.dscene in assets/.");
+    CHECK_FALSE(d->open_scene("art/hero.png", error));
+    CHECK(d->scene_path() == "maps/village.dscene");
+
+    // Logic for moving between them: the game's actions, and the event of arriving.
+    const std::vector<editor::LogicEvent> events = d->logic_events();
+    CHECK(std::any_of(events.begin(), events.end(), [](const editor::LogicEvent& e) {
+        return e.object.empty() && e.event == "scene_start" && e.text == "When a scene starts";
+    }));
+    const engine::logic::BlockId arriving =
+        d->add_logic_rule(logic, editor::LogicEvent{"", "scene_start", ""}, error);
+    REQUIRE(arriving.is_valid());
+    const engine::logic::BlockId go = d->add_logic_step(
+        logic, arriving, editor::LogicAction{"game", "go_to_scene_at", ""}, error);
+    REQUIRE(go.is_valid());
+    REQUIRE(
+        d->set_logic_slot(logic, go, 0, reflect::Value{std::string("maps/cave.dscene")}, error));
+    REQUIRE(d->set_logic_slot(logic, go, 1, reflect::Value{std::string("bat")}, error));
+    CHECK(has_line("When a scene starts"));
+    CHECK(has_line("Go to scene “maps/cave.dscene”, arriving at “bat” (game)"));
+    CHECK(d->check_logic(logic).empty());
+
+    // The scene the game starts in is a setting: one undo step, saved in the project.
+    CHECK_FALSE(d->set_start_scene("maps/nothing.dscene", error));
+    REQUIRE(d->set_start_scene("maps/cave.dscene", error));
+    CHECK(d->undo_label() == "Start the game in maps/cave.dscene");
+    CHECK(d->settings().start_scene == "maps/cave.dscene");
+    REQUIRE(d->undo());
+    CHECK(d->settings().start_scene == "maps/village.dscene");
+    REQUIRE(d->redo());
+    REQUIRE(d->save(error));
+    std::vector<serialize::Issue> issues;
+    const auto again = editor::Document::open(sample.path, issues);
+    REQUIRE(again != nullptr);
+    CHECK(issues.empty());
+    CHECK(again->scene_path() == "maps/cave.dscene"); // a project opens in its start scene
+    CHECK(again->world().find_named("bat").size() == 1);
+    CHECK(again->check_logic(logic).empty());
+}
+
 TEST_CASE("Saving writes the scene; reopening finds the edits") {
     const Sample sample;
     const Guid lamp_guid = [&] {

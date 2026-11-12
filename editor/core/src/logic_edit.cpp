@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <utility>
 #include <variant>
@@ -30,9 +31,13 @@ namespace fs = std::filesystem;
 namespace {
 
 /// What the helpers below look objects up in: the registry and the scene.
+/// Where logic's objects are found: the game's own in the registry, the open scene's
+/// entities in the world, and the other scenes' entities by name.
 struct Lookup {
     const reflect::Registry& registry;
     const world::World& world;
+    const std::map<std::string, std::vector<const reflect::TypeInfo*>, std::less<>>* elsewhere =
+        nullptr;
 };
 
 bool is_game_object(std::string_view object) {
@@ -47,7 +52,13 @@ std::vector<const reflect::TypeInfo*> types_of(const Lookup& d, std::string_view
         return type != nullptr ? std::vector<const reflect::TypeInfo*>{type}
                                : std::vector<const reflect::TypeInfo*>{};
     }
-    return engine::game::object_types(d.world)(object);
+    std::vector<const reflect::TypeInfo*> here = engine::game::object_types(d.world)(object);
+    if (here.empty() && d.elsewhere != nullptr) {
+        if (const auto found = d.elsewhere->find(object); found != d.elsewhere->end()) {
+            return found->second;
+        }
+    }
+    return here;
 }
 
 const reflect::FunctionInfo* find_function(const Lookup& d, std::string_view object,
@@ -764,13 +775,14 @@ std::vector<LogicSlot> Document::header_slots(logic::LogicAsset& asset, BlockId 
     std::vector<LogicSlot> slots;
     if (h.condition != nullptr && is_comparison(tested(*h.condition))) {
         const logic::Expr& c = tested(*h.condition);
-        comparison_slots(kind_of(Lookup{d.registry, *d.world}, asset, block, c.operands[0]), c,
-                         slots);
+        comparison_slots(
+            kind_of(Lookup{d.registry, *d.world, &d.elsewhere}, asset, block, c.operands[0]), c,
+            slots);
     } else if (h.condition != nullptr) {
         const logic::Expr& c = tested(*h.condition);
         const reflect::FunctionInfo* f =
             c.kind == logic::ExprKind::Call
-                ? find_function(Lookup{d.registry, *d.world}, c.object, c.member)
+                ? find_function(Lookup{d.registry, *d.world, &d.elsewhere}, c.object, c.member)
                 : nullptr;
         if (f != nullptr) {
             for (std::size_t i = 0; i < f->parameters.size() && i < c.operands.size(); ++i) {
@@ -843,7 +855,7 @@ std::vector<LogicSlot> Document::unfilled_slots(std::string_view path, BlockId s
     switch (s.kind) {
     case StmtKind::Do:
         if (const reflect::FunctionInfo* f =
-                find_function(Lookup{d.registry, *d.world}, s.object, s.member)) {
+                find_function(Lookup{d.registry, *d.world, &d.elsewhere}, s.object, s.member)) {
             for (std::size_t i = 0; i < f->parameters.size(); ++i) {
                 if (!literal(i)) {
                     continue;
@@ -858,7 +870,7 @@ std::vector<LogicSlot> Document::unfilled_slots(std::string_view path, BlockId s
         break;
     case StmtKind::Set:
         if (const reflect::PropertyInfo* p =
-                find_property(Lookup{d.registry, *d.world}, s.object, s.member);
+                find_property(Lookup{d.registry, *d.world, &d.elsewhere}, s.object, s.member);
             p != nullptr && literal(0)) {
             LogicSlot one = slot(0, p->meta.display_name, p->kind, s.arguments[0].literal);
             one.limits = p->limits;
@@ -901,15 +913,16 @@ std::vector<LogicSlot> Document::unfilled_slots(std::string_view path, BlockId s
         // A variable compared with a value: the operator and the value.
         if (!s.arguments.empty() && is_comparison(tested(s.arguments[0]))) {
             const logic::Expr& c = tested(s.arguments[0]);
-            comparison_slots(
-                kind_of(Lookup{d.registry, *d.world}, file->asset, step, c.operands[0]), c, slots);
+            comparison_slots(kind_of(Lookup{d.registry, *d.world, &d.elsewhere}, file->asset, step,
+                                     c.operands[0]),
+                             c, slots);
             break;
         }
         // The values of its condition, when it is one of an object's conditions.
         if (!s.arguments.empty() && tested(s.arguments[0]).kind == logic::ExprKind::Call) {
             const logic::Expr& c = tested(s.arguments[0]);
             if (const reflect::FunctionInfo* f =
-                    find_function(Lookup{d.registry, *d.world}, c.object, c.member)) {
+                    find_function(Lookup{d.registry, *d.world, &d.elsewhere}, c.object, c.member)) {
                 for (std::size_t i = 0; i < f->parameters.size() && i < c.operands.size(); ++i) {
                     const reflect::ParameterInfo& p = f->parameters[i];
                     LogicSlot one = slot(i, p.meta.display_name, p.kind, c.operands[i].literal);
@@ -1094,7 +1107,8 @@ std::vector<LogicAction> Document::logic_functions(reflect::FunctionRole role) c
     std::vector<LogicAction> found;
     for (const std::string& object : logic_objects()) {
         std::vector<LogicAction> mine;
-        for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, object)) {
+        for (const reflect::TypeInfo* type :
+             types_of(Lookup{d.registry, *d.world, &d.elsewhere}, object)) {
             for (const reflect::FunctionInfo& f : type->functions) {
                 if (f.role == role) {
                     mine.push_back(LogicAction{object, f.id, reflect::block_text(f)});
@@ -1128,10 +1142,10 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
         error = "There is no logic file " + std::string(path) + ".";
         return BlockId{};
     }
-    const reflect::FunctionInfo* f =
-        action.object.empty()
-            ? nullptr
-            : find_function(Lookup{d.registry, *d.world}, action.object, action.member);
+    const reflect::FunctionInfo* f = action.object.empty()
+                                         ? nullptr
+                                         : find_function(Lookup{d.registry, *d.world, &d.elsewhere},
+                                                         action.object, action.member);
     const bool built_in =
         action.object.empty() &&
         (action.member == "log" || action.member == "run" || action.member == "wait" ||
@@ -1351,8 +1365,8 @@ BlockId Document::add_logic_branch(std::string_view path, BlockId after,
         error = "There is no logic file " + std::string(path) + ".";
         return BlockId{};
     }
-    const reflect::FunctionInfo* f =
-        find_function(Lookup{d.registry, *d.world}, condition.object, condition.member);
+    const reflect::FunctionInfo* f = find_function(Lookup{d.registry, *d.world, &d.elsewhere},
+                                                   condition.object, condition.member);
     if (f == nullptr || f->role != reflect::FunctionRole::Condition) {
         error = condition.object + " has no condition " + condition.member + ".";
         return BlockId{};
@@ -1592,7 +1606,8 @@ std::vector<LogicSource> Document::sources_of(std::string_view path, BlockId blo
     // The values the Rule's event carries, for blocks inside a Rule.
     if (const logic::Rule* rule = rule_of(file->asset, block);
         rule != nullptr && !rule->object.empty()) {
-        for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, rule->object)) {
+        for (const reflect::TypeInfo* type :
+             types_of(Lookup{d.registry, *d.world, &d.elsewhere}, rule->object)) {
             if (const reflect::EventInfo* event = type->find_event(rule->event)) {
                 for (const reflect::ParameterInfo& p : event->parameters) {
                     if (fits(p.kind)) {
@@ -1605,7 +1620,8 @@ std::vector<LogicSource> Document::sources_of(std::string_view path, BlockId blo
     }
     // Properties of what logic can name.
     for (const std::string& object : logic_objects()) {
-        for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, object)) {
+        for (const reflect::TypeInfo* type :
+             types_of(Lookup{d.registry, *d.world, &d.elsewhere}, object)) {
             for (const reflect::PropertyInfo& p : type->properties) {
                 if (fits(p.kind) && !reflect::has_flag(p.flags, reflect::property_flag::hidden)) {
                     sources.push_back(LogicSource{LogicSource::Kind::Property, object, p.id,
@@ -1936,10 +1952,12 @@ bool Document::ungroup_logic_conditions(std::string_view path, BlockId group, st
 
 std::vector<LogicEvent> Document::logic_events() const {
     const Impl& d = *impl_;
-    std::vector<LogicEvent> events{LogicEvent{"", "game_start", "When the game starts"}};
+    std::vector<LogicEvent> events{LogicEvent{"", "game_start", "When the game starts"},
+                                   LogicEvent{"", "scene_start", "When a scene starts"}};
     for (const std::string& object : logic_objects()) {
         std::vector<LogicEvent> mine;
-        for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, object)) {
+        for (const reflect::TypeInfo* type :
+             types_of(Lookup{d.registry, *d.world, &d.elsewhere}, object)) {
             for (const reflect::EventInfo& e : type->events) {
                 mine.push_back(LogicEvent{object, e.id, reflect::block_text(e)});
             }
@@ -1963,9 +1981,11 @@ BlockId Document::add_logic_rule(std::string_view path, const LogicEvent& event,
         error = "There is no logic file " + std::string(path) + ".";
         return BlockId{};
     }
-    const bool game_wide = event.object.empty() && event.event == "game_start";
+    const bool game_wide =
+        event.object.empty() && (event.event == "game_start" || event.event == "scene_start");
     bool known = game_wide;
-    for (const reflect::TypeInfo* type : types_of(Lookup{d.registry, *d.world}, event.object)) {
+    for (const reflect::TypeInfo* type :
+         types_of(Lookup{d.registry, *d.world, &d.elsewhere}, event.object)) {
         known = known || type->find_event(event.event) != nullptr;
     }
     if (!known) {
@@ -1993,8 +2013,8 @@ BlockId Document::add_logic_condition(std::string_view path, BlockId block,
         error = "Conditions go on a Rule or a “Go to”.";
         return BlockId{};
     }
-    const reflect::FunctionInfo* f =
-        find_function(Lookup{d.registry, *d.world}, condition.object, condition.member);
+    const reflect::FunctionInfo* f = find_function(Lookup{d.registry, *d.world, &d.elsewhere},
+                                                   condition.object, condition.member);
     if (f == nullptr || f->role != reflect::FunctionRole::Condition) {
         error = condition.object + " has no condition " + condition.member + ".";
         return BlockId{};
@@ -2172,7 +2192,7 @@ std::vector<logic::Diagnostic> Document::check_logic(std::string_view path) cons
     if (file == nullptr) {
         return {logic::Diagnostic{BlockId{}, "There is no logic file " + std::string(path) + "."}};
     }
-    const Lookup look{d.registry, *d.world};
+    const Lookup look{d.registry, *d.world, &d.elsewhere};
     const logic::ObjectTypes objects = [&look](std::string_view object) {
         return types_of(look, object);
     };

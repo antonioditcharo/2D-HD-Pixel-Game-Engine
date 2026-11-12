@@ -1,6 +1,7 @@
 #include "editor/core/document.h"
 
 #include "engine/game/behaviours.h"
+#include "engine/game/logic_world.h"
 #include "engine/game/save.h"
 #include "engine/scene2d/scene2d.h"
 
@@ -149,6 +150,74 @@ const LogicFile* Document::Impl::logic_file(std::string_view path) const {
     return nullptr;
 }
 
+bool Document::Impl::load_scene(const std::string& path, std::vector<Issue>& issues) {
+    const std::string file = "assets/" + path;
+    std::ifstream in(folder / "assets" / path, std::ios::binary);
+    if (!in) {
+        issues.push_back(Issue{file, "The scene could not be opened."});
+        return false;
+    }
+    const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    std::vector<Issue> found;
+    const std::optional<serialize::Json> json = serialize::parse(text, found);
+    // Checked in a scratch world first, so a scene that cannot be loaded changes nothing.
+    world::World scratch(registry);
+    scene2d::register_components(scratch);
+    game::register_behaviour_components(scratch);
+    serialize::SceneLoad trial =
+        json ? serialize::scene_from_json(*json, scratch) : serialize::SceneLoad{};
+    if (!json || (trial.entities.empty() && !trial.issues.empty())) {
+        for (std::vector<Issue>* list : {&found, &trial.issues}) {
+            for (Issue& issue : *list) {
+                issue.path = file + issue.path;
+                issues.push_back(std::move(issue));
+            }
+        }
+        return false;
+    }
+    for (const world::Entity root : world->roots()) {
+        world->destroy(root);
+    }
+    serialize::SceneLoad loaded = serialize::scene_from_json(*json, *world);
+    for (Issue& issue : loaded.issues) {
+        issue.path = file + issue.path;
+        issues.push_back(std::move(issue));
+    }
+    scene_path = path;
+    read_elsewhere();
+    return true;
+}
+
+void Document::Impl::read_elsewhere() {
+    elsewhere.clear();
+    for (const engine::assets::AssetRecord& record : assets->assets()) {
+        if (!record.path.ends_with(".dscene") || record.path == scene_path) {
+            continue;
+        }
+        std::ifstream in(folder / "assets" / record.path, std::ios::binary);
+        const std::string text{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+        std::vector<Issue> ignored; // told when that scene is opened
+        const std::optional<serialize::Json> json = serialize::parse(text, ignored);
+        if (!json) {
+            continue;
+        }
+        world::World scratch(registry);
+        scene2d::register_components(scratch);
+        game::register_behaviour_components(scratch);
+        for (const world::Entity entity : serialize::scene_from_json(*json, scratch).entities) {
+            for (const std::string& name : game::names_of(scratch, entity)) {
+                std::vector<const reflect::TypeInfo*>& parts = elsewhere[name];
+                for (const reflect::TypeInfo* type : scratch.components(entity)) {
+                    if (std::find(parts.begin(), parts.end(), type) == parts.end()) {
+                        parts.push_back(type);
+                    }
+                }
+            }
+        }
+    }
+}
+
 Document::Document(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 Document::~Document() = default;
 
@@ -170,35 +239,100 @@ std::unique_ptr<Document> Document::open(const fs::path& folder, std::vector<Iss
     scene2d::register_components(*impl->world);
     game::register_behaviour_components(*impl->world);
 
-    impl->scene_path = impl->settings.start_scene;
-    const fs::path scene_file = folder / "assets" / impl->scene_path;
-    std::ifstream in(scene_file, std::ios::binary);
-    if (!in) {
-        issues.push_back(
-            Issue{"assets/" + impl->scene_path, "The start scene could not be opened."});
-        return nullptr;
-    }
-    const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-    std::vector<Issue> parse_issues;
-    const std::optional<serialize::Json> json = serialize::parse(text, parse_issues);
-    if (!json) {
-        for (Issue& issue : parse_issues) {
-            issue.path = "assets/" + impl->scene_path + issue.path;
-            issues.push_back(std::move(issue));
-        }
-        return nullptr;
-    }
-    serialize::SceneLoad loaded = serialize::scene_from_json(*json, *impl->world);
-    for (Issue& issue : loaded.issues) {
-        issue.path = "assets/" + impl->scene_path + issue.path;
-        issues.push_back(std::move(issue));
-    }
-    if (loaded.entities.empty() && !loaded.issues.empty()) {
+    if (!impl->load_scene(impl->settings.start_scene, issues)) {
         return nullptr;
     }
     impl->logic = read_logic_files(*impl->assets, impl->logic_issues);
     impl->saved = impl->snapshot();
     return std::unique_ptr<Document>(new Document(std::move(impl)));
+}
+
+std::vector<std::string> Document::scenes() const {
+    std::vector<std::string> paths;
+    for (const engine::assets::AssetRecord& record : impl_->assets->assets()) {
+        if (record.path.ends_with(".dscene")) {
+            paths.push_back(record.path);
+        }
+    }
+    return paths; // sorted, as the assets are
+}
+
+std::vector<const reflect::TypeInfo*> Document::types_elsewhere(std::string_view name) const {
+    const auto found = impl_->elsewhere.find(name);
+    return found != impl_->elsewhere.end() ? found->second
+                                           : std::vector<const reflect::TypeInfo*>{};
+}
+
+bool Document::open_scene(std::string_view path, std::string& error) {
+    Impl& d = *impl_;
+    if (path == d.scene_path) {
+        return true;
+    }
+    if (dirty()) {
+        error = "Save your changes before opening another scene.";
+        return false;
+    }
+    const engine::assets::AssetRecord* record = d.assets->find(path);
+    if (record == nullptr || !record->path.ends_with(".dscene")) {
+        error = "There is no scene " + std::string(path) + " in assets/.";
+        return false;
+    }
+    std::vector<Issue> issues;
+    if (!d.load_scene(record->path, issues)) {
+        error = issues.empty() ? std::string("The scene could not be opened.")
+                               : issues.front().path + ": " + issues.front().message;
+        return false;
+    }
+    // Undo belongs to the scene that was open: it starts again here.
+    d.undo.clear();
+    d.redo.clear();
+    d.merging = false;
+    d.saved = d.snapshot();
+    return true;
+}
+
+bool Document::create_scene(std::string_view path, std::string& error) {
+    Impl& d = *impl_;
+    const fs::path file(path);
+    if (file.extension() != ".dscene" || file.stem().empty() || file.is_absolute() ||
+        std::any_of(file.begin(), file.end(), [](const fs::path& part) { return part == ".."; })) {
+        error = "A scene is named like maps/cave.dscene, in assets/.";
+        return false;
+    }
+    if (dirty()) {
+        error = "Save your changes before making another scene.";
+        return false;
+    }
+    std::error_code ignored;
+    const fs::path target = d.folder / "assets" / file;
+    if (fs::exists(target, ignored)) {
+        error = "There is already a file " + std::string(path) + ".";
+        return false;
+    }
+    // An empty scene, as the game reads one.
+    const world::World empty(d.registry);
+    if (!game::write_file_atomically(target, serialize::to_text(serialize::scene_to_json(empty)),
+                                     error)) {
+        return false;
+    }
+    static_cast<void>(d.assets->refresh()); // its .meta, and so its GUID
+    return open_scene(file.generic_string(), error);
+}
+
+bool Document::set_start_scene(std::string_view path, std::string& error) {
+    Impl& d = *impl_;
+    const engine::assets::AssetRecord* record = d.assets->find(path);
+    if (record == nullptr || !record->path.ends_with(".dscene")) {
+        error = "There is no scene " + std::string(path) + " in assets/.";
+        return false;
+    }
+    if (d.settings.start_scene == record->path) {
+        return true;
+    }
+    serialize::Json before = d.snapshot();
+    d.settings.start_scene = record->path;
+    d.record("Start the game in " + record->path, std::move(before));
+    return true;
 }
 
 bool Document::set_settings(const game::ProjectSettings& settings, std::string& error) {

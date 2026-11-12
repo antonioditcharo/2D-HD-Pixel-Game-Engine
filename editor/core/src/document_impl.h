@@ -6,6 +6,7 @@
 #include "engine/serialize/json.h"
 
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,6 +32,14 @@ struct Document::Impl {
     std::unique_ptr<engine::assets::AssetDatabase> assets;
     std::unique_ptr<engine::world::World> world;
     std::string scene_path;
+    /// What the entities of the project's other scenes are made of, by each name logic can
+    /// use for them: Rules about them are checked and read as the game will run them.
+    std::map<std::string, std::vector<const engine::reflect::TypeInfo*>, std::less<>> elsewhere;
+    /// Reads `elsewhere` again from the scene files (all but the open one).
+    void read_elsewhere();
+    /// Loads the scene file at `path` (in assets/) into the world, replacing what is
+    /// there; false with `issues` if it cannot be loaded, changing nothing.
+    bool load_scene(const std::string& path, std::vector<engine::serialize::Issue>& issues);
     /// The project's logic files that could be read, sorted by path, and the problems
     /// reading the others.
     std::vector<LogicFile> logic;

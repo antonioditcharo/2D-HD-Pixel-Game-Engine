@@ -90,7 +90,8 @@ void mouse(QWidget* widget, QEvent::Type type, QPoint at, Qt::MouseButton button
 
 TEST_CASE("The editor opens the sample: its entities, its scene, its name") {
     Editor e;
-    CHECK(e.window.windowTitle() == QStringLiteral("Hello Sparxel — Sparxel Editor"));
+    CHECK(e.window.windowTitle() ==
+          QStringLiteral("Hello Sparxel: maps/village.dscene — Sparxel Editor"));
     QTreeWidget* list = e.window.outliner();
     REQUIRE(list->topLevelItemCount() == 7);
     CHECK(list->topLevelItem(2)->text(0) == QStringLiteral("hero"));
@@ -160,6 +161,58 @@ TEST_CASE("File > New project makes a starter game and opens it") {
     fs::remove_all(folder_3d, ignored);
 }
 
+TEST_CASE("Scenes from the window: a new one, back by a double-click, and where the game starts") {
+    Editor e;
+    REQUIRE(e.window.findChild<QAction*>(QStringLiteral("new_scene")) != nullptr);
+    QTreeWidget* list = e.window.outliner();
+    const int village = list->topLevelItemCount();
+    // An unsaved change is saved on the way to the new scene, not lost.
+    e.window.select(e.guid("hero"));
+    const Guid made = e.window.new_entity();
+    REQUIRE(made.is_valid());
+    REQUIRE(e.window.document()->dirty());
+    REQUIRE(e.window.new_scene(QStringLiteral(" cave ")));
+    QApplication::processEvents();
+    CHECK(e.window.document()->scene_path() == "maps/cave.dscene");
+    CHECK(e.window.windowTitle() ==
+          QStringLiteral("Hello Sparxel: maps/cave.dscene — Sparxel Editor"));
+    CHECK(list->topLevelItemCount() == 0);
+    CHECK_FALSE(e.window.selection().is_valid());
+    CHECK(e.window.statusBar()->currentMessage() == QStringLiteral("Editing maps/cave.dscene"));
+    // The same name again is refused, with why; the cave stays open.
+    CHECK_FALSE(e.window.new_scene(QStringLiteral("cave")));
+    CHECK(e.window.statusBar()->currentMessage().startsWith(
+        QStringLiteral("The scene could not be made: There is already a file")));
+    // Something in the cave; then the village again, by a double-click in the assets.
+    REQUIRE(e.window.new_entity().is_valid());
+    CHECK(list->topLevelItemCount() == 1);
+    auto* assets = e.window.findChild<QTreeView*>(QStringLiteral("assets"));
+    REQUIRE(assets != nullptr);
+    auto* model = qobject_cast<QFileSystemModel*>(assets->model());
+    REQUIRE(model != nullptr);
+    const QModelIndex scene = model->index(
+        QString::fromStdU16String((e.sample.path / "assets/maps/village.dscene").u16string()));
+    REQUIRE(scene.isValid());
+    Q_EMIT assets->doubleClicked(scene);
+    QApplication::processEvents();
+    CHECK(e.window.document()->scene_path() == "maps/village.dscene");
+    CHECK(list->topLevelItemCount() == village + 1); // with the entity made before leaving
+    CHECK_FALSE(e.window.document()->dirty());
+    CHECK_FALSE(e.window.scene_view()->image().isNull());
+    // The cave kept what was made in it.
+    REQUIRE(e.window.open_scene(QStringLiteral("maps/cave.dscene")));
+    CHECK(list->topLevelItemCount() == 1);
+    // The game starts where it is told to: an undo step, shown in the status bar.
+    REQUIRE(e.window.start_here());
+    CHECK(e.window.document()->settings().start_scene == "maps/cave.dscene");
+    CHECK(e.window.statusBar()->currentMessage() ==
+          QStringLiteral("The game starts in maps/cave.dscene"));
+    CHECK(e.window.document()->undo_label() == "Start the game in maps/cave.dscene");
+    // What is not a scene is refused.
+    CHECK_FALSE(e.window.open_scene(QStringLiteral("art/hero.png")));
+    CHECK(e.window.document()->scene_path() == "maps/cave.dscene");
+}
+
 TEST_CASE("Selecting in the list fills the inspector, whose fields edit the scene") {
     Editor e;
     QTreeWidget* list = e.window.outliner();
@@ -191,7 +244,8 @@ TEST_CASE("Selecting in the list fills the inspector, whose fields edit the scen
             e.window.document()->world().find(hero));
     };
     CHECK(mover()->speed == 6.5);
-    CHECK(e.window.windowTitle().startsWith(QStringLiteral("Hello Sparxel *")));
+    CHECK(
+        e.window.windowTitle().startsWith(QStringLiteral("Hello Sparxel: maps/village.dscene *")));
     e.window.undo();
     QApplication::processEvents();
     CHECK(mover()->speed == 4.0);
@@ -605,7 +659,8 @@ TEST_CASE("The Logic view edits logic: values typed in place, steps added, moved
     QApplication::processEvents();
     CHECK(say->text(0) == QStringLiteral("Say “Elder: Hi.” (dialogue)"));
     CHECK(e.window.document()->undo_label() == "Change Text in logic/main.drules");
-    CHECK(e.window.windowTitle() == QStringLiteral("Hello Sparxel * — Sparxel Editor"));
+    CHECK(e.window.windowTitle() ==
+          QStringLiteral("Hello Sparxel: maps/village.dscene * — Sparxel Editor"));
     // The lines below are buttons' business: only steps can be deleted or moved.
     auto* remove = panel->findChild<QPushButton*>(QStringLiteral("logic_delete"));
     auto* up = panel->findChild<QPushButton*>(QStringLiteral("logic_up"));
@@ -748,7 +803,8 @@ TEST_CASE("The Project view changes the settings, and the scene shows them at on
     QApplication::processEvents();
     CHECK(e.window.document()->settings().style == game::RenderStyle::Diorama);
     CHECK(e.window.scene_view()->image() != flat);
-    CHECK(e.window.windowTitle() == QStringLiteral("Hello Sparxel * — Sparxel Editor"));
+    CHECK(e.window.windowTitle() ==
+          QStringLiteral("Hello Sparxel: maps/village.dscene * — Sparxel Editor"));
     // A number, as it spins.
     sun->setValue(90.0);
     QApplication::processEvents();

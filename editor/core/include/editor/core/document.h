@@ -114,7 +114,25 @@ public:
     [[nodiscard]] engine::world::World& world() noexcept;
     [[nodiscard]] const engine::world::World& world() const noexcept;
     /// The scene file being edited, relative to assets/.
+    /// The scene being edited: its path in assets/. The project's start scene when opened.
     [[nodiscard]] const std::string& scene_path() const noexcept;
+    /// Every scene of the project, by path in assets/, sorted.
+    [[nodiscard]] std::vector<std::string> scenes() const;
+    /// Edits another scene of the project instead. Refused, with `error`, while there are
+    /// unsaved changes (save first), or if it is not a scene that can be loaded; nothing
+    /// changes then. Undo starts again in the scene opened.
+    bool open_scene(std::string_view path, std::string& error);
+    /// Makes an empty scene at `path` (such as "maps/cave.dscene"), with its .meta, and
+    /// opens it. Refused over an existing file, for a name that is not a scene's, and
+    /// while there are unsaved changes.
+    bool create_scene(std::string_view path, std::string& error);
+    /// Makes `path` the scene the game starts in: a project setting, as one undo step.
+    bool set_start_scene(std::string_view path, std::string& error);
+    /// What an entity of one of the project's other scenes is made of, by a name logic
+    /// can use for it; empty if no other scene has it. Rules about it are checked with
+    /// these.
+    [[nodiscard]] std::vector<const engine::reflect::TypeInfo*>
+    types_elsewhere(std::string_view name) const;
 
     /// Every entity, parents before their children, in the scene's order.
     [[nodiscard]] std::vector<engine::world::Entity> entities() const;

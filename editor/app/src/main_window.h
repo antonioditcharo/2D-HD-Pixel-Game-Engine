@@ -44,6 +44,13 @@ public:
     /// and opens it. Returns false, with the reason shown, if it cannot.
     bool new_project(const std::filesystem::path& folder, const QString& name,
                      bool diorama = false);
+    /// Edits another scene of the project (its path in assets/), saving the open one
+    /// first if it changed. Returns false, showing why, if it cannot.
+    bool open_scene(const QString& path);
+    /// Makes an empty scene named `name` in assets/maps and opens it, saving first.
+    bool new_scene(const QString& name);
+    /// Makes the open scene the one the game starts in.
+    bool start_here();
     /// Selects an entity everywhere: the list, the scene and the inspector.
     void select(engine::Guid entity);
 
@@ -71,6 +78,10 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+
+private:
+    /// Shows the document's scene everywhere, after another was opened.
+    void show_scene();
 
 private:
     void build_actions();

@@ -213,6 +213,31 @@ void MainWindow::build_actions() {
     });
     fresh->setObjectName(QStringLiteral("new_project"));
     fresh->setShortcut(QKeySequence::New);
+    QAction* scene = file->addAction(tr("New &scene…"), this, [this] {
+        bool named = false;
+        const QString name = QInputDialog::getText(this, tr("New scene"), tr("The scene's name:"),
+                                                   QLineEdit::Normal, tr("cave"), &named);
+        if (named) {
+            new_scene(name);
+        }
+    });
+    scene->setObjectName(QStringLiteral("new_scene"));
+    QAction* start =
+        file->addAction(tr("Start the game in this scene"), this, [this] { start_here(); });
+    start->setObjectName(QStringLiteral("start_here"));
+    file->addSeparator();
+    // A scene in the assets, double-clicked, is opened for editing.
+    connect(asset_tree_, &QTreeView::doubleClicked, this, [this](const QModelIndex& index) {
+        if (document_ == nullptr) {
+            return;
+        }
+        const QString file_path = asset_model_->filePath(index);
+        if (!file_path.endsWith(QStringLiteral(".dscene"))) {
+            return;
+        }
+        const QDir assets(path_text(document_->folder() / "assets"));
+        open_scene(assets.relativeFilePath(file_path));
+    });
     QAction* open = file->addAction(tr("&Open project…"), this, [this] {
         const QString folder = QFileDialog::getExistingDirectory(this, tr("Open a project"));
         if (!folder.isEmpty()) {
@@ -248,6 +273,59 @@ bool MainWindow::new_project(const fs::path& folder, const QString& name, bool d
         return false;
     }
     return open_project(folder);
+}
+
+bool MainWindow::open_scene(const QString& path) {
+    if (document_ == nullptr || (document_->dirty() && !save())) {
+        return false;
+    }
+    std::string error;
+    if (!document_->open_scene(path.toStdString(), error)) {
+        report(tr("The scene could not be opened: %1").arg(text_of(error)));
+        return false;
+    }
+    show_scene();
+    statusBar()->showMessage(tr("Editing %1").arg(text_of(document_->scene_path())), 5000);
+    return true;
+}
+
+bool MainWindow::new_scene(const QString& name) {
+    if (document_ == nullptr || (document_->dirty() && !save())) {
+        return false;
+    }
+    std::string error;
+    const std::string path = "maps/" + name.trimmed().toStdString() + ".dscene";
+    if (!document_->create_scene(path, error)) {
+        report(tr("The scene could not be made: %1").arg(text_of(error)));
+        return false;
+    }
+    show_scene();
+    statusBar()->showMessage(tr("Editing %1").arg(text_of(document_->scene_path())), 5000);
+    return true;
+}
+
+bool MainWindow::start_here() {
+    std::string error;
+    if (document_ == nullptr || !document_->set_start_scene(document_->scene_path(), error)) {
+        report(tr("The start scene could not be changed: %1").arg(text_of(error)));
+        return false;
+    }
+    project_->refresh();
+    update_title_and_actions();
+    statusBar()->showMessage(
+        tr("The game starts in %1").arg(text_of(document_->settings().start_scene)), 5000);
+    return true;
+}
+
+void MainWindow::show_scene() {
+    selection_ = engine::Guid{};
+    view_->set_document(document_.get());
+    inspector_->show_entity(document_.get(), selection_);
+    palette_->show_tilemap(document_.get(), selection_);
+    rebuild_outliner();
+    logic_->rebuild();
+    project_->refresh();
+    update_title_and_actions();
 }
 
 bool MainWindow::open_project(const fs::path& folder) {
@@ -338,7 +416,9 @@ void MainWindow::update_title_and_actions() {
     const bool open = document_ != nullptr;
     QString title = tr("Sparxel Editor");
     if (open) {
-        title = text_of(document_->settings().name) +
+        // The game, the scene being edited, a star for unsaved changes.
+        title = text_of(document_->settings().name) + QStringLiteral(": ") +
+                text_of(document_->scene_path()) +
                 (document_->dirty() ? QStringLiteral(" *") : QString()) + QStringLiteral(" — ") +
                 title;
     }

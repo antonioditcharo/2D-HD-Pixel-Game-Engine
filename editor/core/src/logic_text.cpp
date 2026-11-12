@@ -43,6 +43,12 @@ public:
                 }
             }
         }
+        // Not in the open scene: an entity of another scene of the project.
+        for (const reflect::TypeInfo* type : document_.types_elsewhere(object)) {
+            if (auto* found = find_in(*type)) {
+                return found;
+            }
+        }
         return nullptr;
     }
 
@@ -264,7 +270,9 @@ public:
                                          const std::string& event) const {
         if (object.empty()) {
             return event == "game_start" ? std::string("When the game starts")
-                                         : "When " + engine::reflect::display_name_from_id(event);
+                   : event == "scene_start"
+                       ? std::string("When a scene starts")
+                       : "When " + engine::reflect::display_name_from_id(event);
         }
         const reflect::EventInfo* found = members_.find(
             object, [&event](const reflect::TypeInfo& t) { return t.find_event(event); });
