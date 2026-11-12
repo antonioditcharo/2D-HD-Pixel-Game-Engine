@@ -53,6 +53,15 @@ public:
     /// selected with it move by as much, keeping their places around it).
     void set_snap(bool snap) noexcept { snap_ = snap; }
     [[nodiscard]] bool snap() const noexcept { return snap_; }
+    /// The move handles of the selection, in Classic 2D: an arrow across (x) and one down
+    /// (y) from the first selected entity's position. Dragging an arrow's head moves the
+    /// selection along that axis only. Nothing when nothing movable is selected.
+    struct Handles {
+        QRect across;
+        QRect down;
+        QPoint origin;
+    };
+    [[nodiscard]] std::optional<Handles> handles() const;
     /// Draws the scene again (after an edit).
     void refresh();
 
@@ -126,6 +135,10 @@ private:
     bool boxing_ = false;
     bool snap_ = false;
     engine::Guid grabbed_; ///< The entity a drag of entities began on.
+    /// Which way a drag by a handle may go: freely, or along one axis.
+    enum class Axis : std::uint8_t { Free, Across, Down } axis_ = Axis::Free;
+    /// Starts dragging the selection (what of it can move); false if none can.
+    bool start_drag(engine::Guid grabbed, QPoint at);
     QPoint drag_from_;
     QPointF ground_from_; ///< The map point under the cursor when a drag began.
     [[nodiscard]] bool diorama() const;

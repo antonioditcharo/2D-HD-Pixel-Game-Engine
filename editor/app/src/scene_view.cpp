@@ -201,6 +201,15 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
         painter.setPen(QPen(QColor(255, 255, 255), 1, Qt::DashLine));
         painter.drawRect(QRect(drag_from_, rect_to_).normalized());
     }
+    // The move handles: an arrow across and one down.
+    if (const std::optional<Handles> h = handles()) {
+        painter.setPen(QPen(QColor(230, 70, 60), 2));
+        painter.drawLine(h->origin, h->across.center());
+        painter.fillRect(h->across, QColor(230, 70, 60));
+        painter.setPen(QPen(QColor(70, 200, 90), 2));
+        painter.drawLine(h->origin, h->down.center());
+        painter.fillRect(h->down, QColor(70, 200, 90));
+    }
     // Each selected entity's outline (the first brighter): in 3D, around the billboard
     // as the camera sees it.
     for (const engine::Guid guid : group_) {
@@ -226,6 +235,48 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
     }
 }
 
+bool SceneView::start_drag(engine::Guid grabbed, QPoint at) {
+    // Characters and props are dragged; maps stay where they are.
+    dragged_.clear();
+    for (const engine::Guid member : group_) {
+        const engine::world::Entity m = document_->world().find(member);
+        const auto* where =
+            m.is_valid() ? document_->world().get<scene2d::Transform2D>(m) : nullptr;
+        if (where != nullptr && document_->world().get<scene2d::Sprite>(m) != nullptr) {
+            dragged_.emplace_back(member, QPointF(where->x, where->y));
+        }
+    }
+    const std::optional<QPointF> ground = map_point(at);
+    const bool movable =
+        std::any_of(dragged_.begin(), dragged_.end(),
+                    [grabbed](const auto& member) { return member.first == grabbed; });
+    if (!movable || !ground) {
+        return false;
+    }
+    drag_ = Drag::Entity;
+    grabbed_ = grabbed;
+    ground_from_ = *ground;
+    document_->end_merge();
+    return true;
+}
+
+std::optional<SceneView::Handles> SceneView::handles() const {
+    if (document_ == nullptr || image_.isNull() || diorama() || paint_tile_) {
+        return std::nullopt;
+    }
+    const engine::world::Entity e = document_->world().find(selection_);
+    const auto* at = e.is_valid() ? document_->world().get<scene2d::Transform2D>(e) : nullptr;
+    if (at == nullptr || document_->world().get<scene2d::Sprite>(e) == nullptr) {
+        return std::nullopt;
+    }
+    constexpr int length = 34; ///< From the position to the middle of an arrow's head.
+    constexpr int head = 10;
+    const QPoint origin = from_map(at->x, at->y);
+    return Handles{QRect(origin + QPoint(length - (head / 2), -(head / 2)), QSize(head, head)),
+                   QRect(origin + QPoint(-(head / 2), length - (head / 2)), QSize(head, head)),
+                   origin};
+}
+
 void SceneView::mousePressEvent(QMouseEvent* event) {
     setFocus();
     drag_from_ = event->position().toPoint();
@@ -247,6 +298,19 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
         }
         return;
     }
+    // On a move handle's head: the selection moves along that axis only.
+    if (event->button() == Qt::LeftButton && document_ != nullptr && !image_.isNull()) {
+        if (const std::optional<Handles> h = handles()) {
+            const QPoint at = event->position().toPoint();
+            if (h->across.contains(at) || h->down.contains(at)) {
+                if (start_drag(selection_, at)) {
+                    axis_ = h->across.contains(at) ? Axis::Across : Axis::Down;
+                }
+                return;
+            }
+        }
+    }
+    axis_ = Axis::Free;
     if (event->button() == Qt::LeftButton && document_ != nullptr && !image_.isNull()) {
         engine::world::Entity e;
         if (diorama()) {
@@ -277,26 +341,7 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
             group_.assign(guid.is_valid() ? 1U : 0U, guid);
             Q_EMIT selected(guid);
         }
-        // Characters and props are dragged; maps stay where they are.
-        dragged_.clear();
-        for (const engine::Guid member : group_) {
-            const engine::world::Entity m = document_->world().find(member);
-            const auto* at =
-                m.is_valid() ? document_->world().get<scene2d::Transform2D>(m) : nullptr;
-            if (at != nullptr && document_->world().get<scene2d::Sprite>(m) != nullptr) {
-                dragged_.emplace_back(member, QPointF(at->x, at->y));
-            }
-        }
-        const std::optional<QPointF> ground = map_point(drag_from_);
-        const bool movable =
-            std::any_of(dragged_.begin(), dragged_.end(),
-                        [guid](const auto& member) { return member.first == guid; });
-        if (movable && ground) {
-            drag_ = Drag::Entity;
-            grabbed_ = guid;
-            ground_from_ = *ground;
-            document_->end_merge();
-        } else {
+        if (!start_drag(guid, drag_from_)) {
             // Nothing to move here (the ground, or nothing): a drag draws a box to select
             // with; a click stays a click.
             drag_ = Drag::Box;
@@ -344,6 +389,11 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
             return;
         }
         QPointF moved_by = *ground - ground_from_;
+        if (axis_ == Axis::Across) {
+            moved_by.setY(0.0);
+        } else if (axis_ == Axis::Down) {
+            moved_by.setX(0.0);
+        }
         if (snap_) {
             // By as much as puts the grabbed entity on the nearest whole tile.
             for (const auto& [member, from] : dragged_) {

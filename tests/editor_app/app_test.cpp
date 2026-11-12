@@ -347,6 +347,40 @@ TEST_CASE("Clicking in the scene selects what is on top; dragging moves it, in o
     CHECK(transform->y == 9.0);
     CHECK_FALSE(e.window.document()->can_undo()); // the whole drag was one step
 
+    // The move handles: dragging the arrow across moves the hero across only, however the
+    // cursor wanders; the arrow down, down only. Each drag one undo step.
+    REQUIRE(e.window.selection() == hero);
+    REQUIRE(view->handles().has_value());
+    const editor::SceneView::Handles handles =
+        view->handles().value_or(editor::SceneView::Handles{});
+    const auto by_handle = [&](QPoint head, QPoint by) {
+        mouse(view, QEvent::MouseButtonPress, head, Qt::LeftButton);
+        for (int i = 1; i <= 4; ++i) {
+            mouse(view, QEvent::MouseMove, head + (by * i) / 4, Qt::LeftButton);
+        }
+        mouse(view, QEvent::MouseButtonRelease, head + by, Qt::LeftButton);
+    };
+    const QPoint tile = view->from_map(11.0, 10.0) - view->from_map(10.0, 9.0); // one tile each way
+    by_handle(handles.across.center(), QPoint(tile.x() * 2, tile.y()));
+    transform = e.window.document()->world().get<scene2d::Transform2D>(
+        e.window.document()->world().find(hero));
+    CHECK(std::abs(transform->x - 12.0) < 0.07);
+    CHECK(transform->y == 9.0);
+    CHECK(e.window.document()->undo_label() == "Move hero");
+    REQUIRE(view->handles().has_value());
+    const editor::SceneView::Handles moved = view->handles().value_or(editor::SceneView::Handles{});
+    by_handle(moved.down.center(), QPoint(-tile.x() * 3, tile.y()));
+    transform = e.window.document()->world().get<scene2d::Transform2D>(
+        e.window.document()->world().find(hero));
+    CHECK(std::abs(transform->x - 12.0) < 0.07);
+    CHECK(std::abs(transform->y - 10.0) < 0.07);
+    e.window.undo();
+    e.window.undo();
+    transform = e.window.document()->world().get<scene2d::Transform2D>(
+        e.window.document()->world().find(hero));
+    CHECK(transform->x == 10.0);
+    CHECK(transform->y == 9.0);
+
     // Clicking where nothing is drawn selects nothing; the ground is under most places.
     mouse(view, QEvent::MouseButtonPress, view->from_map(3.0, 3.0), Qt::LeftButton);
     mouse(view, QEvent::MouseButtonRelease, view->from_map(3.0, 3.0), Qt::LeftButton);
