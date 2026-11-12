@@ -51,6 +51,9 @@ public:
     bool new_scene(const QString& name);
     /// Makes the open scene the one the game starts in.
     bool start_here();
+    /// Quiet: problems go to the status bar only, never to a dialog that waits for
+    /// someone (for checks that run with no one there).
+    void set_quiet(bool quiet) noexcept { quiet_ = quiet; }
     /// Selects an entity everywhere: the list, the scene and the inspector.
     void select(engine::Guid entity);
 
@@ -82,6 +85,7 @@ protected:
 private:
     /// Shows the document's scene everywhere, after another was opened.
     void show_scene();
+    bool quiet_ = false;
 
 private:
     void build_actions();

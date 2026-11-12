@@ -235,8 +235,12 @@ void MainWindow::build_actions() {
         if (!file_path.endsWith(QStringLiteral(".dscene"))) {
             return;
         }
-        const QDir assets(path_text(document_->folder() / "assets"));
-        open_scene(assets.relativeFilePath(file_path));
+        // Its path in assets/, through the real paths of both: the same folder can be
+        // spelled two ways (a short and a long name on Windows, a link).
+        std::error_code ignored;
+        const fs::path assets = fs::weakly_canonical(document_->folder() / "assets", ignored);
+        const fs::path chosen = fs::weakly_canonical(path_of(file_path), ignored);
+        open_scene(text_of(chosen.lexically_proximate(assets).generic_string()));
     });
     QAction* open = file->addAction(tr("&Open project…"), this, [this] {
         const QString folder = QFileDialog::getExistingDirectory(this, tr("Open a project"));
@@ -440,7 +444,7 @@ void MainWindow::update_title_and_actions() {
 
 void MainWindow::report(const QString& message) {
     statusBar()->showMessage(message.section(QLatin1Char('\n'), 0, 0), 8000);
-    if (!QApplication::platformName().startsWith(QStringLiteral("offscreen"))) {
+    if (!quiet_ && !QApplication::platformName().startsWith(QStringLiteral("offscreen"))) {
         QMessageBox::warning(this, tr("Sparxel Editor"), message);
     }
 }
