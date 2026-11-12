@@ -87,6 +87,17 @@ void register_save_types(reflect::Registry& registry) {
         .tooltip("Whether anything was saved in a slot.")
         .param("slot")
         .range(1.0, 99.0);
+    game.action<&SaveObject::go_to_scene>("go_to_scene", {"scene"})
+        .text("Go to scene {scene}")
+        .tooltip("Leaves this scene for another, such as maps/cave.dscene, when this step of "
+                 "the game ends. Variables and waiting Sequences carry on.");
+    game.action<&SaveObject::go_to_scene_at>("go_to_scene_at", {"scene", "where"})
+        .text("Go to scene {scene}, arriving at {where}")
+        .tooltip("Leaves this scene for another, and puts the player where something of "
+                 "that name is in it: a door, a stair.");
+    game.condition<&SaveObject::in_scene>("in_scene", {"scene"})
+        .text("The scene is {scene}")
+        .tooltip("Whether the scene being played is this one.");
 }
 
 } // namespace engine::game

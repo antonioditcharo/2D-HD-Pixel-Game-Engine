@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,8 +37,9 @@ inline constexpr std::int64_t max_save_slot = 99;
                                          std::string& error);
 
 /// The "game" object logic uses to save and load: "Save the game in slot [n]", "Load slot
-/// [n]" and the condition "Slot [n] has a save". Saving and loading happen at the end of
-/// the step, after logic has run, so a Rule never sees a half-loaded world.
+/// [n]" and the condition "Slot [n] has a save"; and to move between scenes: "Go to scene
+/// [scene]". Saving, loading and changing scene happen at the end of the step, after
+/// logic has run, so a Rule never sees a half-loaded world.
 class SaveObject {
 public:
     using Folder = std::function<std::filesystem::path()>;
@@ -48,6 +50,32 @@ public:
     void save(std::int64_t slot) { requests_.push_back(Request{false, slot}); }
     void load(std::int64_t slot) { requests_.push_back(Request{true, slot}); }
     [[nodiscard]] bool has_save(std::int64_t slot) const;
+
+    /// "Go to scene [scene]": the scene (its path in assets/, or its GUID) replaces the
+    /// one being played at the end of the step. With `where`, the player arrives where
+    /// the entity of that name is in the new scene.
+    void go_to_scene(const std::string& scene) { scene_request_ = SceneRequest{scene, {}}; }
+    void go_to_scene_at(const std::string& scene, const std::string& where) {
+        scene_request_ = SceneRequest{scene, where};
+    }
+    /// "The scene is [scene]": whether `scene` (path or GUID) is the one being played.
+    [[nodiscard]] bool in_scene(const std::string& scene) const {
+        return !scene.empty() && (scene == scene_path_ || scene == scene_guid_);
+    }
+    struct SceneRequest {
+        std::string scene;
+        std::string where;
+    };
+    /// The scene asked for since the last call (the last one asked for wins), if any.
+    [[nodiscard]] std::optional<SceneRequest> take_scene_request() {
+        return std::exchange(scene_request_, std::nullopt);
+    }
+    /// Told by the runtime which scene is being played: its path in assets/ and its GUID.
+    void set_scene(std::string path, std::string guid) {
+        scene_path_ = std::move(path);
+        scene_guid_ = std::move(guid);
+    }
+    [[nodiscard]] const std::string& scene() const noexcept { return scene_path_; }
 
     struct Request {
         bool load = false;
@@ -63,6 +91,9 @@ private:
     mutable std::filesystem::path resolved_;
     mutable bool has_resolved_ = false;
     std::vector<Request> requests_;
+    std::optional<SceneRequest> scene_request_;
+    std::string scene_path_;
+    std::string scene_guid_;
 };
 
 /// Registers SaveObject as "game".

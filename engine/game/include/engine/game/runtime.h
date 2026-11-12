@@ -181,6 +181,16 @@ public:
     bool save_to_slot(std::int64_t slot, std::string& error) const;
     /// load() from a slot of save_folder().
     bool load_from_slot(std::int64_t slot, std::vector<serialize::Issue>& issues);
+    /// Replaces the scene being played with `scene` (its path in assets/, or its GUID),
+    /// and, with `where`, moves the player to the entity of that name in it. The scene is
+    /// checked whole first: if it cannot be used, nothing changes and `issues` says why.
+    /// Variables, waiting Sequences and an open message carry on; Rules listening for
+    /// "scene_start" then run. Must not be called while logic runs; from logic, use the
+    /// "game" object, which changes scene at the end of the step.
+    bool change_scene(std::string_view scene, std::string_view where,
+                      std::vector<serialize::Issue>& issues);
+    /// The scene being played: its path in assets/.
+    [[nodiscard]] const std::string& scene() const noexcept;
     /// Where save slots go (see RuntimeOptions::save_folder).
     [[nodiscard]] std::filesystem::path save_folder() const;
     /// Problems with what logic asked for (saving, loading, playing sounds), oldest first.

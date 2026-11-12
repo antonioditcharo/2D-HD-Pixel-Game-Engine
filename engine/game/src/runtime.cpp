@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <utility>
 #include <variant>
 
@@ -483,6 +484,9 @@ struct Runtime::Impl {
     std::unique_ptr<audio::AudioEngine> audio_engine;
     AudioObject audio_object;
     std::vector<std::string> problems;
+    /// What the entities of the project's other scenes are made of, by each name logic can
+    /// use for them, so Rules about them compile while another scene is played.
+    std::map<std::string, std::vector<const reflect::TypeInfo*>, std::less<>> elsewhere;
     std::unique_ptr<logic::Vm> vm;
     FixedStepClock clock;
     const input::Recording* replay{nullptr};
@@ -578,6 +582,33 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         SDL_free(pref);
         return path;
     });
+    r.save_object.set_scene(scene->path, scene->guid.to_string());
+    // The other scenes' entities, for logic about them.
+    for (const assets::AssetRecord& record : r.assets.assets()) {
+        if (!record.path.ends_with(".dscene") || record.guid == scene->guid) {
+            continue;
+        }
+        const std::optional<std::vector<std::uint8_t>> bytes = r.assets.read(record.guid);
+        std::vector<serialize::Issue> ignored; // told when the scene is gone to
+        const std::optional<serialize::Json> other =
+            bytes ? parse_bytes(*bytes, ignored) : std::nullopt;
+        if (!other) {
+            continue;
+        }
+        world::World scratch(r.registry);
+        scene2d::register_components(scratch);
+        register_behaviour_components(scratch);
+        for (const world::Entity entity : serialize::scene_from_json(*other, scratch).entities) {
+            for (const std::string& name : names_of(scratch, entity)) {
+                std::vector<const reflect::TypeInfo*>& parts = r.elsewhere[name];
+                for (const reflect::TypeInfo* type : scratch.components(entity)) {
+                    if (std::find(parts.begin(), parts.end(), type) == parts.end()) {
+                        parts.push_back(type);
+                    }
+                }
+            }
+        }
+    }
     // Sound: a missing sound output is reported, and the game runs silent.
     if (options.audio != AudioMode::Off) {
         std::string error;
@@ -607,8 +638,13 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     }
     r.vm->set_log_handler(
         [&r](std::string_view, std::string_view text) { r.log.emplace_back(text); });
+    // An object is one of the game's, an entity of this scene, or one of another scene.
     const logic::ObjectTypes types = [&r](std::string_view name) {
-        return r.vm->object_types(name);
+        std::vector<const reflect::TypeInfo*> here = r.vm->object_types(name);
+        if (const auto other = r.elsewhere.find(name); here.empty() && other != r.elsewhere.end()) {
+            return other->second;
+        }
+        return here;
     };
     for (const assets::AssetRecord& record : r.assets.assets()) {
         if (!is_logic_asset(record.path)) {
@@ -812,6 +848,16 @@ void Runtime::step() {
             }
         }
     }
+    // 7. A change of scene that logic asked for.
+    if (const std::optional<SaveObject::SceneRequest> request =
+            r.save_object.take_scene_request()) {
+        std::vector<serialize::Issue> issues;
+        static_cast<void>(change_scene(request->scene, request->where, issues));
+        for (const serialize::Issue& issue : issues) {
+            r.problems.push_back(issue.path.empty() ? issue.message
+                                                    : issue.path + ": " + issue.message);
+        }
+    }
     r.audio_object.update_sources();
     for (std::string& problem : r.audio_object.take_problems()) {
         r.problems.push_back(std::move(problem));
@@ -987,6 +1033,7 @@ serialize::Json Runtime::save() const {
     json["version"] = save_version;
     json["game"] = r.settings.name;
     json["step"] = r.steps;
+    json["scene"] = r.save_object.scene();
     json["world"] = serialize::scene_to_json(*r.world);
     serialize::Json variables = serialize::Json::object();
     for (const std::string& script : r.vm->scripts()) {
@@ -1132,6 +1179,14 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
         }
     }
     r.steps = step->get<std::uint64_t>();
+    // The scene the save was made in (saves made before scenes changed are in the first).
+    if (const auto saved_scene = json.find("scene");
+        saved_scene != json.end() && saved_scene->is_string()) {
+        if (const assets::AssetRecord* record =
+                r.assets.find(saved_scene->get_ref<const std::string&>())) {
+            r.save_object.set_scene(record->path, record->guid.to_string());
+        }
+    }
     // The simulation starts again from the loaded world.
     r.physics->invalidate();
     // Movers already standing in trigger areas are inside, not walking in.
@@ -1170,6 +1225,81 @@ bool Runtime::load_from_slot(std::int64_t slot, std::vector<serialize::Issue>& i
 
 std::filesystem::path Runtime::save_folder() const {
     return impl_->save_object.folder();
+}
+
+bool Runtime::change_scene(std::string_view scene, std::string_view where,
+                           std::vector<serialize::Issue>& issues) {
+    Impl& r = *impl_;
+    const std::optional<Guid> guid = Guid::parse(scene);
+    const assets::AssetRecord* record = guid ? r.assets.find(*guid) : r.assets.find(scene);
+    if (record == nullptr || !record->path.ends_with(".dscene")) {
+        issues.push_back(
+            serialize::Issue{"", "There is no scene " + std::string(scene) + " in assets/."});
+        return false;
+    }
+    const std::string file = "assets/" + record->path;
+    const std::optional<std::vector<std::uint8_t>> bytes = r.assets.read(record->guid);
+    std::vector<serialize::Issue> found;
+    const std::optional<serialize::Json> json = bytes ? parse_bytes(*bytes, found) : std::nullopt;
+    if (!json) {
+        if (found.empty()) {
+            found.push_back(serialize::Issue{"", "The scene cannot be read."});
+        }
+        add_issues(issues, file, std::move(found));
+        return false;
+    }
+    // Checked in a scratch world first, so a broken scene changes nothing.
+    {
+        world::World scratch(r.registry);
+        scene2d::register_components(scratch);
+        register_behaviour_components(scratch);
+        serialize::SceneLoad trial = serialize::scene_from_json(*json, scratch);
+        if (trial.entities.empty() && !trial.issues.empty()) {
+            add_issues(issues, file, std::move(trial.issues));
+            return false;
+        }
+    }
+    for (const world::Entity root : r.world->roots()) {
+        r.world->destroy(root);
+    }
+    serialize::SceneLoad loaded = serialize::scene_from_json(*json, *r.world);
+    add_issues(issues, file, std::move(loaded.issues));
+    r.save_object.set_scene(record->path, record->guid.to_string());
+    // The player arrives where the named entity is.
+    if (!where.empty()) {
+        const world::Entity spot = resolve(*r.world, where);
+        const scene2d::Transform2D* at =
+            spot.is_valid() ? r.world->get<scene2d::Transform2D>(spot) : nullptr;
+        const reflect::TypeInfo* mover_type = r.world->registry().find_type<TopDownMover>();
+        world::Entity player;
+        if (mover_type != nullptr) {
+            r.world->each(*mover_type, [&](world::Entity entity, reflect::ObjectRef) {
+                if (!player.is_valid() && r.world->get<scene2d::Transform2D>(entity) != nullptr) {
+                    player = entity;
+                }
+            });
+        }
+        if (at == nullptr) {
+            issues.push_back(serialize::Issue{file, "There is nothing called " +
+                                                        std::string(where) + " to arrive at."});
+        } else if (player.is_valid()) {
+            const double x = at->x;
+            const double y = at->y;
+            scene2d::Transform2D* feet = r.world->get<scene2d::Transform2D>(player);
+            feet->x = x;
+            feet->y = y;
+        }
+    }
+    // The simulation starts again from the new world; movers already standing in trigger
+    // areas are inside, not walking in.
+    r.physics->invalidate();
+    static_cast<void>(update_triggers(*r.world));
+    r.vm->emit("", "scene_start");
+    return true;
+}
+
+const std::string& Runtime::scene() const noexcept {
+    return impl_->save_object.scene();
 }
 
 const std::vector<std::string>& Runtime::problems() const noexcept {

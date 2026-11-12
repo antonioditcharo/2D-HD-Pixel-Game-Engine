@@ -961,6 +961,128 @@ TEST_CASE("How a Sound Source is heard: by distance, side and its own volume") {
     CHECK(at(0.0, 0.0).volume == 0.0);
 }
 
+TEST_CASE("Logic goes to another scene: the world changes, the rest carries on") {
+    const Project project;
+    // A second scene, a cave: its own hero, stairs to arrive at, and a bat only it has.
+    {
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        const world::Entity hero = w.create("hero");
+        scene2d::Transform2D* feet = w.add<scene2d::Transform2D>(hero);
+        feet->x = 20.0;
+        feet->y = 20.0;
+        w.add<game::TopDownMover>(hero);
+        const world::Entity stairs = w.create("stairs");
+        scene2d::Transform2D* top = w.add<scene2d::Transform2D>(stairs);
+        top->x = 7.0;
+        top->y = 3.0;
+        const world::Entity bat = w.create("bat");
+        w.add<scene2d::Transform2D>(bat)->x = 9.0;
+        w.add<game::Interactable>(bat);
+        write_json(project.folder.path / "assets/maps/cave.dscene", serialize::scene_to_json(w));
+    }
+    // Walking into the door goes to the cave, arriving at its stairs. A Rule about the
+    // bat, which the first scene does not have, and one for every scene's start.
+    {
+        const auto text = [](const char* value) {
+            return ir::literal(reflect::Value{std::string(value)});
+        };
+        logic::LogicAsset rules;
+        rules.name = "cave";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{60},
+                        "door",
+                        "entered",
+                        {},
+                        {ir::do_action(61, "game", "go_to_scene_at",
+                                       {text("maps/cave.dscene"), text("stairs")}),
+                         ir::log(62, text("leaving"))},
+                        {}});
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{63},
+                        "",
+                        "scene_start",
+                        {ir::call("game", "in_scene", {text("maps/cave.dscene")})},
+                        {ir::log(64, text("in the cave"))},
+                        {ir::log(65, text("elsewhere"))}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{66}, "bat", "interacted", {}, {ir::log(67, text("squeak"))}, {}});
+        write_json(project.folder.path / "assets/logic/cave.drules",
+                   serialize::logic_to_json(rules));
+    }
+    input::Recording replay;
+    replay.record(0, key(input::Key::Left), true);
+    const auto runtime = project.open(no_graphics(&replay)); // no issues: the bat's Rule compiles
+    CHECK(runtime->scene() == "maps/start.dscene");
+    const auto logged = [&](std::string_view line) {
+        return std::count(runtime->log().begin(), runtime->log().end(), line);
+    };
+    int steps = 0;
+    while (runtime->scene() == "maps/start.dscene" && steps < 200) {
+        runtime->step();
+        ++steps;
+    }
+    // The door's area starts half a tile east of it, 4.5 tiles from the start: over a second.
+    CHECK(steps > 60);
+    CHECK(steps < 80);
+    REQUIRE(runtime->scene() == "maps/cave.dscene");
+    // The rest of the Rule ran before the scene changed, at the end of the step; then the
+    // new scene started.
+    CHECK(logged("leaving") == 1);
+    CHECK(logged("in the cave") == 1);
+    CHECK(logged("elsewhere") == 0);
+    CHECK(runtime->log().back() == "in the cave");
+    CHECK(logged("start") == 1); // the game started once
+    // The cave's world, and nothing of the first scene's; the hero at the stairs.
+    CHECK(runtime->world().find_named("torch").empty());
+    CHECK(runtime->world().find_named("door").empty());
+    CHECK(runtime->world().find_named("bat").size() == 1);
+    CHECK(transform_of(*runtime, "hero").x == 7.0);
+    CHECK(transform_of(*runtime, "hero").y == 3.0);
+    CHECK(runtime->problems().empty());
+    CHECK(runtime->vm().errors().empty());
+    // The game goes on there: Left is still held.
+    runtime->step();
+    CHECK(transform_of(*runtime, "hero").x < 7.0);
+
+    // A save remembers which scene it was made in.
+    const serialize::Json saved = runtime->save();
+    CHECK(saved.at("scene") == "maps/cave.dscene");
+    std::vector<serialize::Issue> issues;
+    // Back, by GUID; arriving at something that is not there is told, and the scene still
+    // changes.
+    assets::AssetDatabase db(project.folder.path / "assets");
+    db.refresh();
+    const assets::AssetRecord* start = db.find("maps/start.dscene");
+    REQUIRE(start != nullptr);
+    REQUIRE(runtime->change_scene(start->guid.to_string(), "nobody", issues));
+    REQUIRE(issues.size() == 1);
+    CHECK(issues[0].path == "assets/maps/start.dscene");
+    CHECK(issues[0].message == "There is nothing called nobody to arrive at.");
+    CHECK(runtime->scene() == "maps/start.dscene");
+    CHECK(runtime->world().find_named("torch").size() == 1);
+    CHECK(runtime->world().find_named("bat").empty());
+    CHECK(logged("elsewhere") == 1);
+    // What is not a scene, or not there, changes nothing.
+    issues.clear();
+    CHECK_FALSE(runtime->change_scene("maps/nowhere.dscene", "", issues));
+    REQUIRE(issues.size() == 1);
+    CHECK(issues[0].message == "There is no scene maps/nowhere.dscene in assets/.");
+    issues.clear();
+    CHECK_FALSE(runtime->change_scene("art/hero.png", "", issues));
+    CHECK(runtime->scene() == "maps/start.dscene");
+    CHECK(runtime->world().find_named("torch").size() == 1);
+    // Loading the save goes back to the cave.
+    issues.clear();
+    REQUIRE(runtime->load(saved, issues));
+    CHECK(issues.empty());
+    CHECK(runtime->scene() == "maps/cave.dscene");
+    CHECK(runtime->world().find_named("bat").size() == 1);
+}
+
 TEST_CASE("Problems are reported with the file they are in") {
     const Project project;
     std::vector<serialize::Issue> issues;

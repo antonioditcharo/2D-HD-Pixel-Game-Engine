@@ -128,6 +128,8 @@ draws and presents. It returns false when the player closes the window. Each `st
    reached its end sends its entity's **"finished"** event, so *"When the torch's
    animation finishes"* Rules run.
 6. **Saving and loading** that logic asked for during the step (§8).
+7. **A change of scene** that logic asked for (§8), then every Sound Source is set to how
+   the player hears it now ([audio.md](audio.md) §4).
 
 This follows the order in `plan/05` §5 so far; "continuously" Rules take their place in
 it when they arrive.
@@ -285,6 +287,7 @@ A save (`Runtime::save()`, format `"sparxel.save"` version 1, `plan/03` §10) ho
 |---|---|
 | `game` | The project's name: another game's saves are refused |
 | `step` | The step count, so recorded input and timers continue from the same step |
+| `scene` | The scene the save was made in, by its path in `assets/`. Optional: a save without it is in the scene being played |
 | `world` | Every entity and component, as a scene with GUIDs ([serialization.md](serialization.md) §5), including hidden state such as an animation's time |
 | `variables` | Every logic asset's variables, by asset and name (`Vm::variables()`) |
 | `lighting` | The `lighting` object's ambient light, sunlight, sun direction and sun height. Optional: a save without it (or without some of them) keeps the current values |
@@ -303,6 +306,26 @@ same save (tested).
 the game from slot [n]"* and the condition *"Slot [n] has a save"*, for slots 1 to 99.
 Saving and loading happen at the end of the step (step 6), after every script has run,
 so no Rule ever sees a half-loaded world. Problems are collected in `problems()`.
+
+**Scenes.** A game is made of scenes (maps): the project's `start_scene`, and any other
+`.dscene` in `assets/`. The Game object gives logic *"Go to scene [scene]"*, *"Go to scene
+[scene], arriving at [where]"* and the condition *"The scene is [scene]"*; scenes are
+named by path (`maps/cave.dscene`) or GUID.
+
+- The change happens at the end of the step (step 7), like saving: the rest of the Rule
+  that asked for it runs first. `Runtime::change_scene()` does it, and `scene()` says
+  which is being played.
+- The new scene is checked whole in a scratch world first: one that is missing, is not a
+  scene or cannot be loaded **changes nothing** and is reported in `problems()`.
+- The world is replaced; **variables, waiting Sequences, an open message, music and the
+  lighting carry on**. With *arriving at*, the player (the first Top-down Mover of the
+  new scene) is put where the entity of that name is; if there is none, the scene still
+  changes and the problem is reported.
+- Then Rules on the game-wide event **"scene_start"** run (*When a scene starts*). It is
+  not sent for the first scene: that is "game_start".
+- Logic is compiled once, for the whole game: an entity of any scene can be named in
+  Rules, and their events reach those Rules while its scene is played. Acting on an
+  entity of a scene that is not being played is a script error, reported like any other.
 
 - Slot files (`slot-07.sparxel-save`) are JSON, written **atomically**: to a temporary
   file that then replaces the slot in one step, so a crash or power cut while saving
@@ -333,6 +356,7 @@ so no Rule ever sees a half-loaded world. Problems are collected in `problems()`
 | Save files | Slot file names and limits; atomic writes creating folders and replacing files, leaving no temporary file; a failed write reported |
 | Saved games | A save restores a moved hero, a destroyed rock, a variable and the step count; an exact round trip; logic acting on the loaded world and its restored variable; other formats, newer versions, other games and broken worlds refused with nothing changed; a vanished variable reported while the rest loads |
 | Slots from logic | Cancel saves in slot 2 and Menu loads it at the end of their steps, putting the hero back; an empty slot and slot 0 reported |
+| Scenes | A second scene with a bat only it has, whose Rule compiles while the first scene is played; walking into a doorway runs *Go to scene … arriving at stairs*: the rest of that Rule runs first, the world is the cave's alone, the hero is exactly at the stairs, *When a scene starts* runs once (and *The scene is …* is true), the game start is not repeated, and the hero walks on; a save names its scene; going back by GUID with a missing arrival spot changes scene and reports it; a missing scene and a picture change nothing; loading the save returns to the cave |
 
 ## 10. Next increments
 
