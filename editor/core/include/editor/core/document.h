@@ -205,6 +205,13 @@ public:
     /// -16 to 16. Scales of the same entity merge into one step. False, changing nothing,
     /// without a Sprite or for numbers that are not finite.
     bool scale_sprite(engine::Guid entity, double scale_x, double scale_y);
+    /// Moves an entity's Sprite's pivot to (pivot_x, pivot_y), each from 0 (left, top) to 1
+    /// (right, bottom) of the frame, kept within those, leaving the picture where it is:
+    /// its Position moves to the new pivot ("Move the pivot of hero"), so the picture
+    /// turns and scales about it, and the draw order follows it. Merges while dragged.
+    /// False, changing nothing, without a Position, a Sprite with a readable picture, or
+    /// numbers.
+    bool set_sprite_pivot(engine::Guid entity, double pivot_x, double pivot_y);
     /// Where an entity stands and how its Sprite is turned and scaled, for shape_sprites().
     struct SpriteShape {
         engine::Guid entity;
@@ -446,6 +453,14 @@ private:
     explicit Document(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> impl_;
 };
+
+/// Where an entity's sprite picture's corners are on the map, in tiles, as Classic 2D
+/// draws it: the frame's top-left, top-right, bottom-right and bottom-left, scaled and
+/// turned about its pivot. Nothing if it has no sprite with a readable picture.
+[[nodiscard]] std::optional<std::array<std::array<double, 2>, 4>>
+sprite_corners_on_map(const engine::world::World& world,
+                      const engine::assets::AssetDatabase& assets, engine::world::Entity entity,
+                      std::uint32_t ppu);
 
 /// Where an entity's sprite picture covers the map, in tiles, as Classic 2D draws it (the
 /// box around it, when it is turned); nothing if it has no sprite with a readable picture.

@@ -488,6 +488,27 @@ TEST_CASE("Clicking in the scene selects what is on top; dragging moves it, in o
     CHECK(sprite().rotation == 90.0);
     e.window.undo();
     CHECK(sprite().rotation == 0.0);
+
+    // The pivot ring, on the hero's feet, dragged to the middle of its picture with
+    // snapping on: the pivot is the middle, the position goes there, and the picture stays.
+    REQUIRE(view->handles().has_value());
+    const QRect ring = view->handles().value_or(editor::SceneView::Handles{}).pivot;
+    REQUIRE_FALSE(ring.isNull());
+    CHECK(ring.contains(view->from_map(10.0, 9.0)));
+    const QPoint middle_of_picture = view->from_map(10.0, 8.48);
+    mouse(view, QEvent::MouseButtonPress, ring.center(), Qt::LeftButton);
+    mouse(view, QEvent::MouseMove, (ring.center() + middle_of_picture) / 2, Qt::LeftButton);
+    mouse(view, QEvent::MouseMove, middle_of_picture, Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, middle_of_picture, Qt::LeftButton);
+    CHECK(sprite().pivot_x == 0.5);
+    CHECK(sprite().pivot_y == 0.5);
+    transform = e.window.document()->world().get<scene2d::Transform2D>(
+        e.window.document()->world().find(hero));
+    CHECK(transform->x == 10.0);
+    CHECK(transform->y == 8.5);
+    CHECK(e.window.document()->undo_label() == "Move the pivot of hero");
+    e.window.undo();
+    CHECK(sprite().pivot_y == 1.0);
     view->set_snap(false);
 
     // Clicking where nothing is drawn selects nothing; the ground is under most places.

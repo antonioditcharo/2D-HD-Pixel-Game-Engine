@@ -1193,28 +1193,68 @@ std::optional<std::array<double, 2>> sprite_size(const world::World& w,
 
 } // namespace
 
-std::optional<scene2d::Box> sprite_bounds(const world::World& w,
-                                          const engine::assets::AssetDatabase& assets,
-                                          world::Entity entity, std::uint32_t ppu) {
+std::optional<std::array<std::array<double, 2>, 4>>
+sprite_corners_on_map(const world::World& w, const engine::assets::AssetDatabase& assets,
+                      world::Entity entity, std::uint32_t ppu) {
     const scene2d::Sprite* sprite = w.get<scene2d::Sprite>(entity);
     const scene2d::Transform2D* t = w.get<scene2d::Transform2D>(entity);
     const std::optional<std::array<double, 2>> size = sprite_size(w, assets, entity, ppu);
     if (sprite == nullptr || t == nullptr || !size) {
         return std::nullopt;
     }
-    const auto [width, height] = *size;
-    // The box around the picture as drawn: scaled, flipped and turned about its pivot.
-    const std::array<std::array<double, 2>, 4> corners =
-        scene2d::sprite_corners(*sprite, width, height);
-    scene2d::Box box{t->x + corners[0][0], t->y + corners[0][1], t->x + corners[0][0],
-                     t->y + corners[0][1]};
-    for (const auto& [x, y] : corners) {
-        box.left = std::min(box.left, t->x + x);
-        box.top = std::min(box.top, t->y + y);
-        box.right = std::max(box.right, t->x + x);
-        box.bottom = std::max(box.bottom, t->y + y);
+    // Scaled, flipped and turned about its pivot, which is on the position.
+    std::array<std::array<double, 2>, 4> corners =
+        scene2d::sprite_corners(*sprite, (*size)[0], (*size)[1]);
+    for (auto& [x, y] : corners) {
+        x += t->x;
+        y += t->y;
+    }
+    return corners;
+}
+
+std::optional<scene2d::Box> sprite_bounds(const world::World& w,
+                                          const engine::assets::AssetDatabase& assets,
+                                          world::Entity entity, std::uint32_t ppu) {
+    const auto corners = sprite_corners_on_map(w, assets, entity, ppu);
+    if (!corners) {
+        return std::nullopt;
+    }
+    // The box around the picture as drawn.
+    const auto& first = (*corners)[0];
+    scene2d::Box box{first[0], first[1], first[0], first[1]};
+    for (const auto& [x, y] : *corners) {
+        box.left = std::min(box.left, x);
+        box.top = std::min(box.top, y);
+        box.right = std::max(box.right, x);
+        box.bottom = std::max(box.bottom, y);
     }
     return box;
+}
+
+bool Document::set_sprite_pivot(Guid entity, double pivot_x, double pivot_y) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(entity);
+    auto* sprite = e.is_valid() ? d.world->get<scene2d::Sprite>(e) : nullptr;
+    auto* at = e.is_valid() ? d.world->get<scene2d::Transform2D>(e) : nullptr;
+    const std::optional<std::array<double, 2>> size =
+        sprite_size(*d.world, *d.assets, e, d.settings.ppu);
+    if (sprite == nullptr || at == nullptr || !size || !std::isfinite(pivot_x) ||
+        !std::isfinite(pivot_y)) {
+        return false;
+    }
+    // The picture stays where it is: its top-left corner on the same map point.
+    scene2d::Sprite moved = *sprite;
+    moved.pivot_x = std::clamp(pivot_x, 0.0, 1.0);
+    moved.pivot_y = std::clamp(pivot_y, 0.0, 1.0);
+    const auto before_corners = scene2d::sprite_corners(*sprite, (*size)[0], (*size)[1]);
+    const auto after_corners = scene2d::sprite_corners(moved, (*size)[0], (*size)[1]);
+    serialize::Json before = d.snapshot();
+    at->x += before_corners[0][0] - after_corners[0][0];
+    at->y += before_corners[0][1] - after_corners[0][1];
+    sprite->pivot_x = moved.pivot_x;
+    sprite->pivot_y = moved.pivot_y;
+    d.record("Move the pivot of " + d.name_of(entity), std::move(before), entity, "sprite/pivot");
+    return true;
 }
 
 namespace {

@@ -221,6 +221,12 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
         if (!h->stretch.isNull()) {
             painter.fillRect(h->stretch, QColor(240, 200, 60));
         }
+        // The pivot: a white ring round the position, with a dot in it.
+        if (!h->pivot.isNull()) {
+            painter.setPen(QPen(QColor(255, 255, 255), 2));
+            painter.drawEllipse(h->pivot.adjusted(1, 1, -1, -1));
+            painter.fillRect(QRect(h->origin - QPoint(1, 1), QSize(2, 2)), QColor(255, 255, 255));
+        }
     }
     // Each selected entity's outline (the first brighter): in 3D, around the billboard
     // as the camera sees it.
@@ -336,7 +342,7 @@ std::optional<SceneView::Handles> SceneView::handles() const {
     if (!across_head || !down_head) {
         return std::nullopt;
     }
-    Handles found{*across_head, *down_head, *origin, QRect(), QRect()};
+    Handles found{*across_head, *down_head, *origin, QRect(), QRect(), QRect()};
     // Turning and scaling: by the box around the picture as drawn (in 3D, around the
     // billboard as the camera sees it).
     std::optional<std::pair<QPoint, QPoint>> top; // its top's middle and right end
@@ -352,6 +358,10 @@ std::optional<SceneView::Handles> SceneView::handles() const {
                    document_->world(), document_->assets(), e, document_->settings().ppu)) {
         top.emplace(from_map((box->left + box->right) / 2.0, box->top),
                     from_map(box->right, box->top));
+    }
+    if (!diorama()) {
+        constexpr int ring = 12;
+        found.pivot = QRect(found.origin - QPoint(ring / 2, ring / 2), QSize(ring, ring));
     }
     if (top) {
         found.turn = QRect(top->first + QPoint(-(head / 2), -18 - (head / 2)), QSize(head, head));
@@ -391,6 +401,18 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
                     axis_ = h->across.contains(at) ? Axis::Across : Axis::Down;
                 }
                 return;
+            }
+            if (h->pivot.contains(at)) {
+                const engine::world::Entity e = document_->world().find(selection_);
+                if (const auto corners = e.is_valid() ? sprite_corners_on_map(
+                                                            document_->world(), document_->assets(),
+                                                            e, document_->settings().ppu)
+                                                      : std::nullopt) {
+                    corners_ = *corners;
+                    drag_ = Drag::Pivot;
+                    document_->end_merge();
+                    return;
+                }
             }
             if (h->turn.contains(at) || h->stretch.contains(at)) {
                 // Every selected picture, the one the handles belong to first.
@@ -497,6 +519,34 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
             boxing_ = true;
             rect_to_ = event->position().toPoint();
             update();
+        }
+        return;
+    }
+    if (drag_ == Drag::Pivot) {
+        // Where the cursor is in the picture's own frame, from 0 to 1 across its top edge
+        // (a) and down its left edge (b): q - c0 = a (c1 - c0) + b (c3 - c0).
+        const QPointF q = to_map(event->position().toPoint());
+        const auto& c0 = corners_[0]; // top-left
+        const auto& c1 = corners_[1]; // top-right
+        const auto& c3 = corners_[3]; // bottom-left
+        const double ux = c1[0] - c0[0];
+        const double uy = c1[1] - c0[1];
+        const double vx = c3[0] - c0[0];
+        const double vy = c3[1] - c0[1];
+        const double qx = q.x() - c0[0];
+        const double qy = q.y() - c0[1];
+        const double det = (ux * vy) - (uy * vx);
+        if (std::abs(det) > 1e-12) {
+            double a = ((qx * vy) - (qy * vx)) / det;
+            double b = ((ux * qy) - (uy * qx)) / det;
+            if (snap_) {
+                a = std::round(a * 2.0) / 2.0;
+                b = std::round(b * 2.0) / 2.0;
+            }
+            if (document_->set_sprite_pivot(selection_, a, b)) {
+                Q_EMIT moved();
+                refresh();
+            }
         }
         return;
     }
@@ -670,7 +720,7 @@ void SceneView::mouseReleaseEvent(QMouseEvent* event) {
         update();
     }
     if ((drag_ == Drag::Entity || drag_ == Drag::Paint || drag_ == Drag::Turn ||
-         drag_ == Drag::Stretch) &&
+         drag_ == Drag::Stretch || drag_ == Drag::Pivot) &&
         document_ != nullptr) {
         document_->end_merge();
     }

@@ -74,6 +74,10 @@ public:
         QPoint origin;
         QRect turn;
         QRect stretch;
+        /// In Classic 2D, a ring on the pivot (the position): dragged onto another point
+        /// of the picture, it moves the pivot there, the picture staying where it is (to
+        /// halves of the picture with snapping on). Empty in the Diorama style.
+        QRect pivot;
     };
     [[nodiscard]] std::optional<Handles> handles() const;
     /// The point of this widget showing map point (x, y): on the map in Classic 2D, on the
@@ -143,8 +147,11 @@ private:
         Paint,
         Box,
         Turn,
-        Stretch
+        Stretch,
+        Pivot
     } drag_ = Drag::None;
+    /// For a drag by the pivot ring: the picture's corners on the map when it began.
+    std::array<std::array<double, 2>, 4> corners_{};
     /// For a drag by the turning or scaling handle: each selected picture's position,
     /// rotation and scales when it began (the one grabbed first); the middle of their
     /// positions on the map, which a group turns and scales about; and that point (the

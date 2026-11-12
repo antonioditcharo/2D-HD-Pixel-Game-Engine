@@ -1009,6 +1009,56 @@ TEST_CASE("Turning and scaling a sprite, each a step of undo that a drag merges"
     CHECK_FALSE(d->can_undo());
 }
 
+TEST_CASE("Moving a sprite's pivot leaves the picture where it is") {
+    const Sample sample;
+    const auto d = sample.open();
+    const world::Entity hero_entity = d->world().find_named("hero").at(0);
+    const Guid hero = d->world().guid(hero_entity);
+    const auto at = [&] { return *d->world().get<scene2d::Transform2D>(d->world().find(hero)); };
+    const auto sprite = [&] { return *d->world().get<scene2d::Sprite>(d->world().find(hero)); };
+    const auto box = [&] {
+        return editor::sprite_bounds(d->world(), d->assets(), d->world().find(hero),
+                                     d->settings().ppu)
+            .value_or(scene2d::Box{});
+    };
+    // The hero's 1-tile picture covers (9.5, 8) to (10.5, 9), its feet the pivot.
+    REQUIRE(box().left == 9.5);
+    // The pivot to its middle: the position goes there, the picture stays.
+    CHECK(d->set_sprite_pivot(hero, 0.5, 0.25));
+    CHECK(d->set_sprite_pivot(hero, 0.5, 0.5)); // the same drag: merged
+    CHECK(d->undo_label() == "Move the pivot of hero");
+    CHECK(at().x == 10.0);
+    CHECK(at().y == 8.5);
+    CHECK(box().left == 9.5);
+    CHECK(box().top == 8.0);
+    CHECK(box().bottom == 9.0);
+    // Turned a quarter about its middle, a square picture covers the same place.
+    d->end_merge();
+    REQUIRE(d->turn_sprite(hero, 90.0));
+    CHECK(box().left == doctest::Approx(9.5));
+    CHECK(box().top == doctest::Approx(8.0));
+    // Turned, the pivot still moves without moving the picture; outside 0 to 1 is kept in.
+    d->end_merge();
+    CHECK(d->set_sprite_pivot(hero, 2.0, -1.0));
+    CHECK(sprite().pivot_x == 1.0);
+    CHECK(sprite().pivot_y == 0.0);
+    CHECK(box().left == doctest::Approx(9.5));
+    CHECK(box().bottom == doctest::Approx(9.0));
+    // Refused: no number, no Sprite.
+    CHECK_FALSE(d->set_sprite_pivot(hero, std::nan(""), 0.5));
+    CHECK_FALSE(
+        d->set_sprite_pivot(d->world().guid(d->world().find_named("ground").at(0)), 0.5, 0.5));
+    // Three steps back to the start.
+    d->undo();
+    d->undo();
+    d->undo();
+    CHECK(at().x == 10.0);
+    CHECK(at().y == 9.0);
+    CHECK(sprite().pivot_y == 1.0);
+    CHECK(sprite().rotation == 0.0);
+    CHECK_FALSE(d->can_undo());
+}
+
 TEST_CASE("The preview draws the scene as the game would") {
     if (test_support::gpu() == nullptr) {
         return;
