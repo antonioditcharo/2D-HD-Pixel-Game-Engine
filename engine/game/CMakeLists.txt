@@ -6,6 +6,7 @@ add_library(engine_game STATIC
     src/behaviours.cpp
     src/clock.cpp
     src/dialogue.cpp
+    src/inventory.cpp
     src/logic_world.cpp
     src/runtime.cpp
     src/save.cpp

@@ -1549,11 +1549,12 @@ BlockId Document::add_logic_comparison(std::string_view path, BlockId block,
         return BlockId{};
     }
     const BlockId id = next_id(file->asset);
-    logic::Expr value = found->kind == LogicSource::Kind::Variable
-                            ? logic::ir::variable(found->member)
-                        : found->kind == LogicSource::Kind::Property
-                            ? logic::ir::property(found->object, found->member)
-                            : logic::ir::event_value(found->member);
+    logic::Expr value =
+        found->kind == LogicSource::Kind::Variable ? logic::ir::variable(found->member)
+        : found->kind == LogicSource::Kind::Property
+            ? logic::ir::property(found->object, found->member)
+        : found->kind == LogicSource::Kind::Getter ? logic::ir::call(found->object, found->member)
+                                                   : logic::ir::event_value(found->member);
     logic::Expr test = logic::ir::compare(logic::CompareOp::Equal, std::move(value),
                                           logic::ir::literal(zero_of(found->value)));
     // On a Rule or a "Go to" (or one of their conditions or groups): a condition of it.
@@ -1641,6 +1642,15 @@ std::vector<LogicSource> Document::sources_of(std::string_view path, BlockId blo
                                                   p.meta.display_name + " of " + object, p.kind});
                 }
             }
+            // Values it gives with nothing to fill in (the answer chosen, ...).
+            for (const reflect::FunctionInfo& f : type->functions) {
+                if (f.role == reflect::FunctionRole::Getter && f.parameters.empty() &&
+                    f.result_kind && fits(*f.result_kind)) {
+                    sources.push_back(LogicSource{LogicSource::Kind::Getter, object, f.id,
+                                                  reflect::block_text(f) + " (" + object + ")",
+                                                  *f.result_kind});
+                }
+            }
         }
     }
     return sources;
@@ -1682,6 +1692,9 @@ bool Document::set_logic_source(std::string_view path, BlockId block, std::size_
         break;
     case LogicSource::Kind::Property:
         *value = logic::ir::property(source.object, source.member);
+        break;
+    case LogicSource::Kind::Getter:
+        *value = logic::ir::call(source.object, source.member);
         break;
     }
     value->id = id;
@@ -1840,6 +1853,9 @@ bool Document::set_logic_sum_with(std::string_view path, BlockId block, std::siz
         break;
     case LogicSource::Kind::Property:
         second = logic::ir::property(with.object, with.member);
+        break;
+    case LogicSource::Kind::Getter:
+        second = logic::ir::call(with.object, with.member);
         break;
     }
     d.record("Change a value's sum", std::move(before));

@@ -12,6 +12,7 @@
 #include "engine/game/behaviours.h"
 #include "engine/game/clock.h"
 #include "engine/game/dialogue.h"
+#include "engine/game/inventory.h"
 #include "engine/game/lighting.h"
 #include "engine/game/save.h"
 #include "engine/game/sound.h"
@@ -204,6 +205,8 @@ public:
     [[nodiscard]] const DialogueObject& dialogue() const noexcept;
     /// The Diorama style's ambient and sun light, as logic last set them.
     [[nodiscard]] const LightingObject& lighting() const noexcept;
+    /// What the player carries, as logic gives and takes it.
+    [[nodiscard]] const InventoryObject& inventory() const noexcept;
     [[nodiscard]] DialogueObject& dialogue() noexcept;
     /// The audio engine; null with AudioMode::Off or when no sound output was found.
     [[nodiscard]] audio::AudioEngine* audio() noexcept;

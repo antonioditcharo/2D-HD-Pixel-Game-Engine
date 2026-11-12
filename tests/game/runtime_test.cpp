@@ -1879,3 +1879,85 @@ TEST_CASE("The project's look: read and written, checked, and applied under the 
     const render::Color sharp = pixel(pixels, 32, 15, 14);
     CHECK((sharp == hero_colour || sharp == rock_colour));
 }
+
+TEST_CASE("The inventory: logic gives, takes and checks things, and saves keep them") {
+    // On its own: by name (spaces around it dropped), never below none, up to the most.
+    game::InventoryObject bag;
+    bag.give(" key ", 1);
+    CHECK(bag.count_of("key") == 1);
+    CHECK(bag.has("key"));
+    bag.give("coin", 5);
+    bag.take("coin", 2);
+    CHECK(bag.count_of("coin") == 3);
+    bag.take("coin", 10);
+    CHECK_FALSE(bag.has("coin"));
+    CHECK(bag.kinds() == 1);
+    bag.give("", 3);     // no name
+    bag.give("gem", 0);  // none
+    bag.take("key", -1); // nothing taken
+    CHECK(bag.kinds() == 1);
+    CHECK(bag.count_of("key") == 1);
+    bag.give("coin", game::InventoryObject::most);
+    bag.give("coin", game::InventoryObject::most);
+    CHECK(bag.count_of("coin") == game::InventoryObject::most);
+
+    // In a game: on starting, a Rule gives 4 coins and a key and takes a coin back; then,
+    // as the player has the key, another logs how many coins there are (3) and how many
+    // different things (2).
+    const Project project;
+    {
+        logic::LogicAsset rules;
+        rules.name = "bag";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "",
+            "game_start",
+            {},
+            {ir::do_action(2, "inventory", "give", {Project::text("coin"), Project::whole(4)}),
+             ir::do_action(3, "inventory", "give", {Project::text("key"), Project::whole(1)}),
+             ir::do_action(4, "inventory", "take", {Project::text("coin"), Project::whole(1)})},
+            {}});
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{5},
+                        "",
+                        "game_start",
+                        {ir::call("inventory", "has", {Project::text("key")})},
+                        {ir::log(6, ir::call("inventory", "count_of", {Project::text("coin")})),
+                         ir::log(7, ir::call("inventory", "kinds"))},
+                        {}});
+        write_json(project.folder.path / "assets/logic/bag.drules",
+                   serialize::logic_to_json(rules));
+    }
+    const auto runtime = project.open(no_graphics(nullptr)); // no issues: it compiles
+    runtime->step();
+    CHECK(runtime->inventory().count_of("coin") == 3);
+    CHECK(runtime->inventory().has("key"));
+    const auto logged = [&](std::string_view line) {
+        return std::count(runtime->log().begin(), runtime->log().end(), line);
+    };
+    CHECK(logged("3") == 1);
+    CHECK(logged("2") == 1);
+
+    // Saved with the game and restored; loading empties it first. Counts that are not
+    // whole numbers above 0 are left out, with a note; a save without it (made before it
+    // was saved) leaves the player carrying nothing.
+    serialize::Json saved = runtime->save();
+    CHECK(saved["inventory"]["coin"] == 3);
+    CHECK(saved["inventory"]["key"] == 1);
+    const auto other = project.open(no_graphics(nullptr));
+    std::vector<serialize::Issue> load_issues;
+    REQUIRE(other->load(saved, load_issues));
+    CHECK(load_issues.empty());
+    CHECK(other->inventory().count_of("coin") == 3);
+    CHECK(other->inventory().count_of("key") == 1);
+    saved["inventory"]["gem"] = -4;
+    saved["inventory"]["key"] = "one";
+    REQUIRE(other->load(saved, load_issues));
+    CHECK(load_issues.size() == 2);
+    CHECK(other->inventory().kinds() == 1); // the coins
+    saved.erase("inventory");
+    load_issues.clear();
+    REQUIRE(other->load(saved, load_issues));
+    CHECK(load_issues.empty());
+    CHECK(other->inventory().kinds() == 0);
+}

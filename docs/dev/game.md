@@ -278,6 +278,21 @@ GUIDs never change, so the editor will write them into logic assets. Names are f
 people, and for logic written by hand while they are unique. The runtime also binds the
 `input` object, for conditions such as *"Interact is held"*.
 
+### The inventory
+
+The **Inventory** object (`inventory`, `inventory.h`) is what the player carries: keys,
+coins, potions, each by name (spaces around it dropped) with how many, up to 999,999 of
+each. It is saved with the game (§8).
+
+| Block | Reads | What it does |
+|---|---|---|
+| `give(item, count)` | *Give {count} {item}* | Adds that many (from 1) |
+| `take(item, count)` | *Take {count} {item}* | Takes that many away, never below none; at none the player no longer has it |
+| `has(item)` | *The player has {item}* | At least one |
+| `has_at_least(item, count)` | *The player has at least {count} {item}* | That many or more |
+| `count_of(item)` | *The number of {item}* | How many; 0 for none |
+| `kinds()` | *The number of different things carried* | How many different things |
+
 The VM matches an event by the exact name a Rule was written with. So when the engine
 sends an entity's own event, such as an animation's "finished", `game::emit()` sends it
 under each name that reaches the entity (`names_of()`): its GUID, then its name if no
@@ -320,6 +335,7 @@ A save (`Runtime::save()`, format `"sparxel.save"` version 1, `plan/03` §10) ho
 | `world` | Every entity and component, as a scene with GUIDs ([serialization.md](serialization.md) §5), including hidden state such as an animation's time |
 | `variables` | Every logic asset's variables, by asset and name (`Vm::variables()`) |
 | `lighting` | The `lighting` object's ambient light, sunlight, sun direction and sun height. Optional: a save without it (or without some of them) keeps the current values |
+| `inventory` | What the player carries: each thing's name and how many (a whole number above 0). Loading empties the inventory first; anything else is left out with a note. Optional: a save without it leaves the player carrying nothing |
 
 **Loading** (`Runtime::load()`) checks the whole save first, loading its world into a
 scratch world. A save from another game or a newer version, or a broken world, is
@@ -384,6 +400,7 @@ named by path (`maps/cave.dscene`) or GUID.
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |
 | Look | Read and written exactly; a value out of range, one of the wrong kind and a look that is not a group refuse the project, an unknown name is reported; on the GPU, exposure 2 doubles the world's colours while the message box keeps its exact border; in Classic 2D, even the strongest tilt-shift leaves every pixel as it was |
+| Inventory | On its own: names with spaces around them, giving and taking, never below none, nothing for no name or a count below 1, at most 999,999. In a game: Rules on starting give 4 coins and a key and take a coin back, and another, as the player has the key, logs 3 coins and 2 kinds of thing; saved and restored; a save with a negative count and a count that is not a number leaves both out with two notes; a save without it leaves nothing carried |
 | Lighting | The project's light, sun position and shadow settings round-trip; out-of-range values and an unknown shadow shape are refused; the `lighting` object starts from them, the light drawn with matches them, and a Rule sets all four; values logic sets out of range are brought back into range when drawn; all four are saved and restored |
 | Camera on the map (GPU) | The hero in a map's corner drawn off-centre where the clamped camera puts it, and centred with `camera_clamp` off; the sample village in the Diorama style with no background on any edge of the screen (this fails without the clamp) |
 | Diorama (GPU) | The same project in the Diorama style: the hero drawn as a billboard above the centre, lit as `brightness()` says; the settings round-trip; an unknown style and an out-of-range camera refused |

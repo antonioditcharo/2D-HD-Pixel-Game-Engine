@@ -97,6 +97,19 @@ std::string fill_in(const std::string& text, Fill fill) {
     return out;
 }
 
+/// Which of `f`'s parameters a block text's "{name}" is, by its position, so values go
+/// where the text names them ("Give {count} {item}" for give(item, count)); the next one in
+/// order if the name is not a parameter's.
+std::size_t parameter_at(const reflect::FunctionInfo& f, const std::string& name,
+                         std::size_t& next) {
+    for (std::size_t i = 0; i < f.parameters.size(); ++i) {
+        if (f.parameters[i].id == name) {
+            return i;
+        }
+    }
+    return next++;
+}
+
 class Writer {
 public:
     Writer(const Document& document, std::vector<LogicLine>& lines)
@@ -118,8 +131,9 @@ public:
                 return e.member + " of " + e.object;
             }
             std::size_t next = 0;
-            const std::string said = fill_in(reflect::block_text(*f), [&](const std::string&) {
-                return next < e.operands.size() ? expr(e.operands[next++]) : std::string("…");
+            const std::string said = fill_in(reflect::block_text(*f), [&](const std::string& name) {
+                const std::size_t i = parameter_at(*f, name, next);
+                return i < e.operands.size() ? expr(e.operands[i]) : std::string("…");
             });
             return inside(said) + " (" + e.object + ")";
         }
@@ -233,9 +247,10 @@ public:
                 s.object, [&s](const reflect::TypeInfo& t) { return t.find_function(s.member); });
             std::size_t next = 0;
             const std::string said =
-                f == nullptr ? s.member : fill_in(reflect::block_text(*f), [&](const std::string&) {
-                    return arg(next++);
-                });
+                f == nullptr ? s.member
+                             : fill_in(reflect::block_text(*f), [&](const std::string& name) {
+                                   return arg(parameter_at(*f, name, next));
+                               });
             line(depth, said + " (" + s.object + ")", s.id);
             return;
         }

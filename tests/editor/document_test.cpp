@@ -1922,6 +1922,84 @@ TEST_CASE("Logic branches and loops: If, Wait until and Repeat, with steps insid
     CHECK(d->check_logic(file).empty());
 }
 
+TEST_CASE("The inventory in logic: give, take, check, and values with nothing to fill in") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view file = "logic/bag.drules";
+    REQUIRE(d->create_logic_file(file, error));
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        for (const editor::LogicLine& line : editor::describe(found->asset, *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        }
+        return shown;
+    };
+    // Offered like the game's other objects: its actions and its conditions.
+    const auto offered = [](const auto& list, std::string_view member) {
+        return std::any_of(list.begin(), list.end(), [&](const auto& a) {
+            return a.object == "inventory" && a.member == member;
+        });
+    };
+    CHECK(offered(d->logic_actions(), "give"));
+    CHECK(offered(d->logic_actions(), "take"));
+    CHECK(offered(d->logic_conditions(), "has"));
+    CHECK(offered(d->logic_conditions(), "has_at_least"));
+    // When the game starts: give a key, and if the player has at least 3 coins, take them.
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);
+    const engine::logic::BlockId give =
+        d->add_logic_step(file, rule, editor::LogicAction{"inventory", "give", ""}, error);
+    REQUIRE(give.is_valid());
+    REQUIRE(d->set_logic_slot(file, give, 0, reflect::Value{std::string("key")}, error));
+    const engine::logic::BlockId coins = d->add_logic_branch(
+        file, give, editor::LogicAction{"inventory", "has_at_least", ""}, false, error);
+    REQUIRE(coins.is_valid());
+    REQUIRE(d->set_logic_slot(file, coins, 0, reflect::Value{std::string("coin")}, error));
+    REQUIRE(d->set_logic_slot(file, coins, 1, reflect::Value{std::int64_t{3}}, error));
+    const engine::logic::BlockId take =
+        d->add_logic_step(file, coins, editor::LogicAction{"inventory", "take", ""}, error);
+    REQUIRE(take.is_valid());
+    REQUIRE(d->set_logic_slot(file, take, 0, reflect::Value{std::string("coin")}, error));
+    REQUIRE(d->set_logic_slot(file, take, 1, reflect::Value{std::int64_t{3}}, error));
+    // A value with nothing to fill in, from an object: how many different things are
+    // carried, set into a variable and compared.
+    REQUIRE(d->add_logic_variable(file, reflect::ValueKind::Int, error));
+    const engine::logic::BlockId set =
+        d->add_logic_step(file, take, editor::LogicAction{"", "set_variable", ""}, error);
+    REQUIRE(set.is_valid());
+    using Kind = editor::LogicSource::Kind;
+    const std::vector<editor::LogicSource> sources = d->logic_sources(file, set, 0);
+    const auto kinds = std::find_if(sources.begin(), sources.end(), [](const auto& s) {
+        return s.kind == Kind::Getter && s.object == "inventory" && s.member == "kinds";
+    });
+    REQUIRE(kinds != sources.end());
+    CHECK(kinds->text == "The number of different things carried (inventory)");
+    CHECK(kinds->value == reflect::ValueKind::Int);
+    // Only values with nothing to fill in: not the number of a thing, which needs its name.
+    CHECK(std::none_of(sources.begin(), sources.end(),
+                       [](const auto& s) { return s.member == "count_of"; }));
+    REQUIRE(d->set_logic_source(file, set, 0, *kinds, error));
+    const std::vector<editor::LogicSource> comparable = d->logic_comparables(file, rule);
+    const auto answer_text = std::find_if(comparable.begin(), comparable.end(), [](const auto& s) {
+        return s.kind == Kind::Getter && s.object == "dialogue" && s.member == "answer_text";
+    });
+    REQUIRE(answer_text != comparable.end());
+    REQUIRE(d->add_logic_comparison(file, rule, *answer_text, error).is_valid());
+    const std::string set_line =
+        std::string("    Set variable_1 to the number of different things carried") +
+        " (inventory)";
+    CHECK(lines() == std::vector<std::string>{"When the game starts",
+                                              "  If the answer's text (dialogue) = “”",
+                                              "  Give 1 “key” (inventory)",
+                                              "  If the player has at least 3 “coin” (inventory):",
+                                              "    Take 3 “coin” (inventory)", set_line});
+    CHECK(d->check_logic(file).empty());
+}
+
 TEST_CASE("Logic conditions turned around, matched any of, and Otherwise branches") {
     const Sample sample;
     const auto d = sample.open();

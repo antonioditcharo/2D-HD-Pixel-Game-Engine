@@ -456,6 +456,7 @@ void register_types(reflect::Registry& registry) {
     register_audio_types(registry);
     register_dialogue_types(registry);
     register_lighting_types(registry);
+    register_inventory_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -480,6 +481,7 @@ struct Runtime::Impl {
     SaveObject save_object;
     DialogueObject dialogue;
     LightingObject lighting;
+    InventoryObject inventory;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
     input::InputState idle; ///< No controls held: what movement sees while a message is open.
@@ -635,6 +637,10 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     if (!r.vm->bind("lighting", reflect::ObjectRef::of(r.lighting))) {
         issues.push_back(
             serialize::Issue{"", "The lighting object could not be made available to logic."});
+    }
+    if (!r.vm->bind("inventory", reflect::ObjectRef::of(r.inventory))) {
+        issues.push_back(
+            serialize::Issue{"", "The inventory object could not be made available to logic."});
     }
     if (!r.vm->bind("dialogue", reflect::ObjectRef::of(r.dialogue))) {
         issues.push_back(
@@ -1101,6 +1107,11 @@ serialize::Json Runtime::save() const {
                                        {"sun", r.lighting.sun},
                                        {"sun_angle", r.lighting.sun_angle},
                                        {"sun_height", r.lighting.sun_height}};
+    serialize::Json carried = serialize::Json::object();
+    for (const auto& [item, count] : r.inventory.items()) {
+        carried[item] = count;
+    }
+    json["inventory"] = std::move(carried);
     return json;
 }
 
@@ -1200,6 +1211,22 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
                     std::move(where),
                     "This variable no longer exists or holds another kind of value. It "
                     "keeps its current value."});
+            }
+        }
+    }
+    // What the player carries, if the save has it (saves made before it was saved do not):
+    // whole numbers above 0 by name; anything else is passed over, with a note.
+    r.inventory.clear();
+    if (const auto carried = json.find("inventory");
+        carried != json.end() && carried->is_object()) {
+        for (const auto& [item, count] : carried->items()) {
+            if (count.is_number_integer() && count.get<std::int64_t>() > 0) {
+                r.inventory.set(item, count.get<std::int64_t>());
+            } else {
+                issues.push_back(serialize::Issue{
+                    "/inventory/" + item,
+                    "How many of it the player carries must be a whole number above 0. It "
+                    "was left out."});
             }
         }
     }
@@ -1361,6 +1388,10 @@ const std::vector<std::string>& Runtime::problems() const noexcept {
 
 const LightingObject& Runtime::lighting() const noexcept {
     return impl_->lighting;
+}
+
+const InventoryObject& Runtime::inventory() const noexcept {
+    return impl_->inventory;
 }
 
 const DialogueObject& Runtime::dialogue() const noexcept {

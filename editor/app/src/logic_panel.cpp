@@ -595,7 +595,8 @@ void LogicPanel::show_fields() {
             std::map<std::string, QMenu*> objects;
             for (const LogicSource& source : sources) {
                 QMenu* into = menu;
-                if (source.kind == LogicSource::Kind::Property) {
+                if (source.kind == LogicSource::Kind::Property ||
+                    source.kind == LogicSource::Kind::Getter) {
                     QMenu*& sub = objects[source.object];
                     if (sub == nullptr) {
                         sub = menu->addMenu(text_of(source.object));
@@ -854,7 +855,8 @@ void LogicPanel::fill_add_menu() {
         std::map<std::string, QMenu*> compared;
         for (const LogicSource& source : document_->logic_comparables(path, block)) {
             QMenu* into = compare;
-            if (source.kind == LogicSource::Kind::Property) {
+            if (source.kind == LogicSource::Kind::Property ||
+                source.kind == LogicSource::Kind::Getter) {
                 QMenu*& sub = compared[source.object];
                 if (sub == nullptr) {
                     sub = compare->addMenu(text_of(source.object));

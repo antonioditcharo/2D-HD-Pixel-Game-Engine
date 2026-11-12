@@ -59,10 +59,12 @@ struct LogicSlot {
 /// Where a value can come from instead of being written: a variable of the file, a value
 /// the Rule's event carries, or a property of one of the game's objects or entities.
 struct LogicSource {
-    enum class Kind : std::uint8_t { Written, Variable, EventValue, Property };
+    /// Getter: a value an object gives with nothing to fill in, such as the answer chosen
+    /// (dialogue) or how many different things the player carries (inventory).
+    enum class Kind : std::uint8_t { Written, Variable, EventValue, Property, Getter };
     Kind kind = Kind::Written;
-    std::string object; ///< For a property.
-    std::string member; ///< The variable, the event value's id, or the property.
+    std::string object; ///< For a property or a getter.
+    std::string member; ///< The variable, the event value's id, the property or the getter.
     std::string text;   ///< In plain language, for menus.
     /// The kind of value it gives.
     engine::reflect::ValueKind value = engine::reflect::ValueKind::Text;
@@ -85,8 +87,8 @@ struct LogicEvent {
 
 /// The objects a game gives its logic besides its entities, each bound by the runtime to
 /// the registered type of the same name.
-inline constexpr std::array<std::string_view, 5> game_objects{"audio", "dialogue", "game", "input",
-                                                              "lighting"};
+inline constexpr std::array<std::string_view, 6> game_objects{"audio",     "dialogue", "game",
+                                                              "inventory", "input",    "lighting"};
 
 class Document {
 public:
