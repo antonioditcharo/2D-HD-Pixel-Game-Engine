@@ -225,8 +225,44 @@ void Inspector::rebuild_many(QVBoxLayout& column) {
                                  : text_of(property.meta.display_name),
                          editor);
         }
+        auto* remove = new QPushButton(
+            tr("Remove %1 from all").arg(text_of(component->meta.display_name)), group);
+        remove->setObjectName(text_of("remove:" + component->name));
+        connect(remove, &QPushButton::clicked, this, [this, component] {
+            if (document_->remove_component_many(entities_, *component)) {
+                Q_EMIT edited(true);
+                rebuild();
+            }
+        });
+        form->addRow(remove);
         column.addWidget(group);
     }
+    // Adding a component to all of them: those not every one has yet.
+    auto* add = new QComboBox(content_);
+    add->setObjectName(QStringLiteral("add_component"));
+    add->setAccessibleName(tr("Add a component to all"));
+    add->addItem(tr("Add a component to all…"));
+    for (const reflect::TypeInfo* type : document_->component_types()) {
+        const bool everyone = std::all_of(entities_.begin(), entities_.end(), [&](engine::Guid g) {
+            const engine::world::Entity e = world.find(g);
+            return e.is_valid() && !world.get(e, *type).is_null();
+        });
+        if (!everyone) {
+            add->addItem(text_of(type->meta.display_name), text_of(type->name));
+        }
+    }
+    connect(add, qOverload<int>(&QComboBox::activated), this, [this, add](int index) {
+        if (index <= 0) {
+            return;
+        }
+        const std::string type_name = add->itemData(index).toString().toStdString();
+        if (const reflect::TypeInfo* type = document_->registry().find_type(type_name);
+            type != nullptr && document_->add_component_many(entities_, *type)) {
+            Q_EMIT edited(true);
+            rebuild();
+        }
+    });
+    column.addWidget(add);
     column.addStretch();
 }
 

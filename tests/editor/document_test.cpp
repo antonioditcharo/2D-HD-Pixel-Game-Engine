@@ -307,6 +307,20 @@ TEST_CASE("A property of several entities changes for all of them, as one step")
     REQUIRE(d->set_property_many({hero}, *transform, property(*transform, "x"), reflect::Value{2.0},
                                  error));
     CHECK(d->undo_label() == "Change Across of hero");
+
+    // Components added to and removed from several: those lacking or having them.
+    REQUIRE(d->add_component_many({lantern, lamp, hero}, *sprite));
+    CHECK(d->undo_label() == "Add Sprite to 2 entities");
+    CHECK(d->world().get<scene2d::Sprite>(d->world().find(lamp)) != nullptr);
+    CHECK_FALSE(d->add_component_many({lantern, lamp}, *sprite)); // all have it now
+    REQUIRE(d->remove_component_many({lantern, lamp, hero}, *sprite));
+    CHECK(d->undo_label() == "Remove Sprite from 3 entities");
+    CHECK(d->world().get<scene2d::Sprite>(d->world().find(hero)) == nullptr);
+    CHECK_FALSE(d->remove_component_many({lantern, lamp}, *sprite)); // none has it
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    CHECK(d->world().get<scene2d::Sprite>(d->world().find(hero)) != nullptr);
+    CHECK(d->world().get<scene2d::Sprite>(d->world().find(lamp)) == nullptr);
 }
 
 TEST_CASE("Placing a picture from the assets makes a sprite there, as one step") {

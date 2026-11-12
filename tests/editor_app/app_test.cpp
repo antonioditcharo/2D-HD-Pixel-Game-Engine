@@ -400,7 +400,6 @@ TEST_CASE("Several entities selected: Ctrl-click and the list, dragged and delet
     REQUIRE(many != nullptr);
     CHECK(many->text() == QStringLiteral("2 selected. A change here changes them all."));
     CHECK(inspector->findChild<QLineEdit*>(QStringLiteral("name")) == nullptr);
-    CHECK(inspector->findChild<QComboBox*>(QStringLiteral("add_component")) == nullptr);
     CHECK(inspector->findChild<QGroupBox*>(QStringLiteral("component:sprite")) != nullptr);
     CHECK(inspector->findChild<QGroupBox*>(QStringLiteral("component:top_down_mover")) ==
           nullptr); // the elder has none
@@ -422,6 +421,36 @@ TEST_CASE("Several entities selected: Ctrl-click and the list, dragged and delet
     CHECK(at(hero).x == 10.0);
     CHECK(at(elder).x == 6.0);
     CHECK(e.window.selected() == std::vector<Guid>{hero, elder});
+    // A component added to both at once (only the elder lacked a Top-down Mover), then
+    // removed from both: one undo step each.
+    const auto has_mover = [&](Guid g) {
+        return e.window.document()->world().get<engine::game::TopDownMover>(
+                   e.window.document()->world().find(g)) != nullptr;
+    };
+    auto* add = inspector->findChild<QComboBox*>(QStringLiteral("add_component"));
+    REQUIRE(add != nullptr);
+    CHECK(add->itemText(0) == QStringLiteral("Add a component to all\u2026"));
+    CHECK(add->findText(QStringLiteral("Sprite")) < 0); // both have one
+    const int mover = add->findText(QStringLiteral("Top-down Mover"));
+    REQUIRE(mover > 0);
+    Q_EMIT add->activated(mover);
+    QApplication::processEvents();
+    CHECK(has_mover(hero));
+    CHECK(has_mover(elder));
+    CHECK(e.window.document()->undo_label() == "Add Top-down Mover to elder");
+    auto* remove = inspector->findChild<QPushButton*>(QStringLiteral("remove:top_down_mover"));
+    REQUIRE(remove != nullptr);
+    CHECK(remove->text() == QStringLiteral("Remove Top-down Mover from all"));
+    remove->click();
+    QApplication::processEvents();
+    CHECK_FALSE(has_mover(hero));
+    CHECK_FALSE(has_mover(elder));
+    CHECK(e.window.document()->undo_label() == "Remove Top-down Mover from 2 entities");
+    e.window.undo();
+    e.window.undo();
+    QApplication::processEvents();
+    CHECK(has_mover(hero));
+    CHECK_FALSE(has_mover(elder));
     CHECK(at(hero).x == 10.0); // selecting moved nothing
     CHECK(at(elder).x == 6.0);
     drag_box(QPointF(13.0, 2.0), QPointF(15.0, 3.5));

@@ -191,6 +191,14 @@ public:
     bool rename(engine::Guid entity, std::string_view name);
     bool add_component(engine::Guid entity, const engine::reflect::TypeInfo& component);
     bool remove_component(engine::Guid entity, const engine::reflect::TypeInfo& component);
+    /// Adds `component` to every one of `entities` that lacks it, as one step of undo ("Add
+    /// Light to 2 entities"). False, changing nothing, if all of them have it already.
+    bool add_component_many(const std::vector<engine::Guid>& entities,
+                            const engine::reflect::TypeInfo& component);
+    /// Removes `component` from every one of `entities` that has it, as one step of undo.
+    /// False, changing nothing, if none has it.
+    bool remove_component_many(const std::vector<engine::Guid>& entities,
+                               const engine::reflect::TypeInfo& component);
 
     // ----- Logic. Its edits are steps of the same undo, and saved with the scene. -----
 

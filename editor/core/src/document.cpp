@@ -842,6 +842,49 @@ bool Document::remove_component(Guid entity, const reflect::TypeInfo& component)
     return true;
 }
 
+bool Document::add_component_many(const std::vector<Guid>& entities,
+                                  const reflect::TypeInfo& component) {
+    Impl& d = *impl_;
+    serialize::Json before = d.snapshot();
+    std::vector<Guid> changed;
+    for (const Guid guid : entities) {
+        const world::Entity e = d.find(guid);
+        if (e.is_valid() && d.world->get(e, component).is_null() &&
+            !d.world->add(e, component).is_null()) {
+            changed.push_back(guid);
+        }
+    }
+    if (changed.empty()) {
+        return false;
+    }
+    d.record("Add " + component.meta.display_name + " to " +
+                 (changed.size() == 1 ? d.name_of(changed.front())
+                                      : std::to_string(changed.size()) + " entities"),
+             std::move(before));
+    return true;
+}
+
+bool Document::remove_component_many(const std::vector<Guid>& entities,
+                                     const reflect::TypeInfo& component) {
+    Impl& d = *impl_;
+    serialize::Json before = d.snapshot();
+    std::vector<Guid> changed;
+    for (const Guid guid : entities) {
+        const world::Entity e = d.find(guid);
+        if (e.is_valid() && d.world->remove(e, component)) {
+            changed.push_back(guid);
+        }
+    }
+    if (changed.empty()) {
+        return false;
+    }
+    d.record("Remove " + component.meta.display_name + " from " +
+                 (changed.size() == 1 ? d.name_of(changed.front())
+                                      : std::to_string(changed.size()) + " entities"),
+             std::move(before));
+    return true;
+}
+
 bool Document::can_undo() const noexcept {
     return !impl_->undo.empty();
 }
