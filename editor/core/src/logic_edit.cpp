@@ -408,13 +408,26 @@ bool is_comparison(const logic::Expr& e) {
 /// The written number inside a value: the value itself if it is written, or the number
 /// added to (or taken from...) something, as set_logic_arithmetic() makes it. Null if
 /// nothing in it is written.
+/// The sum a value's "last part" belongs to: the value itself, or, when its last part is a
+/// bracket of its own (talks × (a + 1)), that bracket's, innermost first.
+logic::Expr& open_sum(logic::Expr& e) {
+    logic::Expr* sum = &e;
+    while (sum->kind == logic::ExprKind::Arithmetic && sum->operands.size() == 2 &&
+           sum->operands[1].kind == logic::ExprKind::Arithmetic &&
+           sum->operands[1].operands.size() == 2) {
+        sum = &sum->operands[1];
+    }
+    return *sum;
+}
+
 logic::Expr* written(logic::Expr& e) {
     if (e.kind == logic::ExprKind::Literal) {
         return &e;
     }
-    if (e.kind == logic::ExprKind::Arithmetic && e.operands.size() == 2 &&
-        e.operands[1].kind == logic::ExprKind::Literal) {
-        return &e.operands[1];
+    logic::Expr& sum = open_sum(e);
+    if (sum.kind == logic::ExprKind::Arithmetic && sum.operands.size() == 2 &&
+        sum.operands[1].kind == logic::ExprKind::Literal) {
+        return &sum.operands[1];
     }
     return nullptr;
 }
@@ -827,7 +840,7 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId bloc
             slot.typed = true;
             slot.value = number->literal;
             if (number != value) {
-                slot.from = describe_sum_start(*value, *this);
+                slot.from = describe_open_sum(*value, *this);
             }
         } else {
             slot.typed = false;
@@ -1699,6 +1712,9 @@ bool Document::set_logic_arithmetic(std::string_view path, BlockId block, std::s
         return false;
     }
     engine::serialize::Json before = d.snapshot();
+    if (arithmetic) {
+        value = &open_sum(*value); // the last part's sum: the innermost bracket's
+    }
     const BlockId id = value->id;
     if (!op) {
         if (!arithmetic) {
@@ -1753,6 +1769,38 @@ bool Document::extend_logic_sum(std::string_view path, BlockId block, std::size_
     return true;
 }
 
+bool Document::bracket_logic_sum(std::string_view path, BlockId block, std::size_t argument,
+                                 logic::ArithmeticOp op, std::string& error) {
+    Impl& d = *impl_;
+    LogicFile* file = d.logic_file(path);
+    logic::Expr* value = file != nullptr ? slot_target(file->asset, block, argument) : nullptr;
+    if (value == nullptr || value->kind != logic::ExprKind::Arithmetic ||
+        value->operands.size() != 2) {
+        error = "Add a sum to the value first.";
+        return false;
+    }
+    const std::vector<LogicSlot> slots = logic_slots(path, block);
+    const auto slot = std::find_if(slots.begin(), slots.end(), [argument](const LogicSlot& s) {
+        return s.argument == argument;
+    });
+    if (slot == slots.end() ||
+        (slot->kind != reflect::ValueKind::Int && slot->kind != reflect::ValueKind::Float)) {
+        error = "Only numbers can be added to.";
+        return false;
+    }
+    engine::serialize::Json before = d.snapshot();
+    // The last part becomes the first of its own bracket: talks × a → talks × (a + 1).
+    logic::Expr& sum = open_sum(*value);
+    logic::Expr last = std::move(sum.operands[1]);
+    last.id = BlockId{};
+    sum.operands[1] = logic::ir::arithmetic(op, std::move(last),
+                                            logic::ir::literal(slot->kind == reflect::ValueKind::Int
+                                                                   ? reflect::Value{std::int64_t{1}}
+                                                                   : reflect::Value{1.0}));
+    d.record("Change a value's sum", std::move(before));
+    return true;
+}
+
 bool Document::set_logic_sum_with(std::string_view path, BlockId block, std::size_t argument,
                                   const LogicSource& with, std::string& error) {
     Impl& d = *impl_;
@@ -1777,7 +1825,7 @@ bool Document::set_logic_sum_with(std::string_view path, BlockId block, std::siz
         return false;
     }
     engine::serialize::Json before = d.snapshot();
-    logic::Expr& second = value->operands[1];
+    logic::Expr& second = open_sum(*value).operands[1];
     switch (with.kind) {
     case LogicSource::Kind::Written:
         second = logic::ir::literal(slot->kind == reflect::ValueKind::Int

@@ -660,6 +660,26 @@ void LogicPanel::show_fields() {
                                 });
                             });
                 }
+                // The last part as a bracket of its own: talks × (a + 1).
+                QMenu* bracket = menu->addMenu(tr("In brackets"));
+                bracket->setObjectName(QStringLiteral("sum_bracket:%1").arg(argument));
+                for (const auto& [label, id, op] :
+                     {std::tuple{tr("Plus a number"), "add", Op::Add},
+                      std::tuple{tr("Minus a number"), "subtract", Op::Subtract},
+                      std::tuple{tr("Times a number"), "multiply", Op::Multiply},
+                      std::tuple{tr("Divided by a number"), "divide", Op::Divide}}) {
+                    QAction* item = bracket->addAction(label);
+                    item->setObjectName(QStringLiteral("bracket:%1:").arg(argument) +
+                                        QString::fromLatin1(id));
+                    const Op chosen = op;
+                    connect(item, &QAction::triggered, this,
+                            [this, file, block, argument, chosen, later] {
+                                later([this, file, block, argument, chosen](std::string& error) {
+                                    return document_->bracket_logic_sum(file, block, argument,
+                                                                        chosen, error);
+                                });
+                            });
+                }
             }
             // A sum's last part: written, or from elsewhere (talks + bonus).
             if (slot.kind == reflect::ValueKind::Int || slot.kind == reflect::ValueKind::Float) {

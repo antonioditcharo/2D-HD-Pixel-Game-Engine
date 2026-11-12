@@ -39,6 +39,11 @@ struct LogicLine {
 /// "(talks + [answer]) ×" when the parts so far are worked out first.
 [[nodiscard]] std::string describe_sum_start(const engine::logic::Expr& sum,
                                              const Document& document);
+/// Everything of a sum before the part a slot's field edits, which is inside its innermost
+/// bracket (Document::bracket_logic_sum()): "talks × (a +" for talks × (a + 1). For a sum
+/// with no bracket, describe_sum_start().
+[[nodiscard]] std::string describe_open_sum(const engine::logic::Expr& sum,
+                                            const Document& document);
 
 /// `asset` as lines: its Rules, then Sequences, then Brains, each with its steps below
 /// it. Objects are looked up in `document`: the game's own (audio, dialogue, game, input,

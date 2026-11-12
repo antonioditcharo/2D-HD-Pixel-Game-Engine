@@ -360,6 +360,13 @@ public:
     /// The parts work in order, each on the result so far.
     bool extend_logic_sum(std::string_view path, engine::logic::BlockId block, std::size_t argument,
                           engine::logic::ArithmeticOp op, std::string& error);
+    /// Makes a sum's last part a bracket of its own, with one more part in it: talks × a
+    /// becomes talks × (a + 1). Until the bracket is taken away, the "last part" that
+    /// set_logic_arithmetic(), set_logic_sum_with() and the slot's written number act on
+    /// is the bracket's own last part; extend_logic_sum() still adds after everything.
+    bool bracket_logic_sum(std::string_view path, engine::logic::BlockId block,
+                           std::size_t argument, engine::logic::ArithmeticOp op,
+                           std::string& error);
     /// What a sum's last part is: a written number again, or a variable, event value or
     /// property of the value's kind (talks + bonus). The value must have a sum already.
     bool set_logic_sum_with(std::string_view path, engine::logic::BlockId block,

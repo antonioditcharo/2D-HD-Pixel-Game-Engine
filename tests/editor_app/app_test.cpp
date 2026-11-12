@@ -1737,6 +1737,28 @@ TEST_CASE("The Logic view takes values from the event, variables and sums") {
         beside = beside || label->text() == QStringLiteral("(variable_1 + 1) \u00d7");
     }
     CHECK(beside);
+    // The last part in brackets of its own: the field and Sum with now work inside them.
+    REQUIRE(source_menu()->findChild<QMenu*>(QStringLiteral("sum_bracket:0")) != nullptr);
+    from(QStringLiteral("bracket:0:add"));
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to (variable_1 + 1) × (4 + 1)"));
+    number = panel->findChild<QSpinBox*>(QStringLiteral("logic_slot:0"));
+    REQUIRE(number != nullptr);
+    number->setValue(2);
+    QApplication::processEvents();
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to (variable_1 + 1) × (4 + 2)"));
+    beside = false;
+    for (const QLabel* label : panel->findChildren<QLabel*>()) {
+        beside = beside || label->text() == QStringLiteral("(variable_1 + 1) × (4 +");
+    }
+    CHECK(beside);
+    from(QStringLiteral("with:0:/answer"));
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to (variable_1 + 1) × (4 + [answer])"));
+    // Without the last part takes the bracket's away first, then the sum's.
+    from(QStringLiteral("sum:0:none"));
+    CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to (variable_1 + 1) × 4"));
     // Without the last part: back to two.
     QAction* drop = source_menu()->findChild<QAction*>(QStringLiteral("sum:0:none"));
     REQUIRE(drop != nullptr);

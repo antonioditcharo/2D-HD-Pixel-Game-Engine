@@ -166,6 +166,18 @@ public:
                signs.at(static_cast<std::size_t>(sum.arithmetic));
     }
 
+    /// sum_start() down to the innermost bracket's last part: "talks × (a +".
+    [[nodiscard]] std::string open_start(const Expr& sum) const {
+        if (sum.operands.size() != 2 || sum.operands[1].kind != ExprKind::Arithmetic) {
+            return sum_start(sum);
+        }
+        const std::string outer = sum_start(sum);
+        const std::string inner = open_start(sum.operands[1]);
+        // Bracketed as part() would bracket the whole of it.
+        const std::string whole = part(sum.operands[1], sum, false);
+        return outer + " " + (whole.starts_with("(") ? "(" + inner : inner);
+    }
+
     /// One part of `sum`, in brackets when it is a sum that would otherwise read as
     /// working differently: (a + b) × c, a − (b + c).
     [[nodiscard]] std::string part(const Expr& e, const Expr& sum, bool first) const {
@@ -303,6 +315,11 @@ std::string describe_value(const Expr& value, const Document& document) {
 std::string describe_sum_start(const Expr& sum, const Document& document) {
     std::vector<LogicLine> unused;
     return Writer(document, unused).sum_start(sum);
+}
+
+std::string describe_open_sum(const Expr& sum, const Document& document) {
+    std::vector<LogicLine> unused;
+    return Writer(document, unused).open_start(sum);
 }
 
 std::vector<LogicLine> describe(const logic::LogicAsset& asset, const Document& document) {

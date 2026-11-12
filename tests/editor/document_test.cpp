@@ -2389,6 +2389,42 @@ TEST_CASE("Logic values from variables, event values and properties, with sums")
     REQUIRE(
         d->set_logic_sum_with(file, set, 0, editor::LogicSource{Kind::Written, "", "", ""}, error));
     CHECK(lines()[1] == "  Set talks to talks × 1");
+    // The last part as a bracket of its own: talks × (1 + 1). Its own last part is the
+    // field, beside everything before it; Sum with and the sign work inside it; a bracket
+    // can hold another; and taking the last part away closes them one at a time.
+    REQUIRE(d->bracket_logic_sum(file, set, 0, Op::Add, error));
+    CHECK(lines()[1] == "  Set talks to talks × (1 + 1)");
+    slots = d->logic_slots(file, set);
+    CHECK(value_slot().typed);
+    CHECK(value_slot().from == "talks × (1 +");
+    REQUIRE(d->set_logic_slot(file, set, 0, reflect::Value{std::int64_t{5}}, error));
+    CHECK(lines()[1] == "  Set talks to talks × (1 + 5)");
+    REQUIRE(d->set_logic_sum_with(file, set, 0, source(set, 0, Kind::EventValue, "answer"), error));
+    CHECK(lines()[1] == "  Set talks to talks × (1 + [answer])");
+    REQUIRE(d->set_logic_arithmetic(file, set, 0, Op::Subtract, error));
+    CHECK(lines()[1] == "  Set talks to talks × (1 − [answer])");
+    CHECK(d->check_logic(file).empty());
+    REQUIRE(d->bracket_logic_sum(file, set, 0, Op::Multiply, error));
+    CHECK(lines()[1] == "  Set talks to talks × (1 − [answer] × 1)");
+    slots = d->logic_slots(file, set);
+    CHECK(value_slot().from == "talks × (1 − [answer] ×");
+    CHECK(d->check_logic(file).empty());
+    {
+        // In the asset: talks × (1 − ([answer] × 1)), the brackets on the right.
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        const engine::logic::Expr& value = found->asset.rules.at(0).actions.at(0).arguments.at(0);
+        CHECK(value.arithmetic == Op::Multiply);
+        CHECK(value.operands.at(0).kind == engine::logic::ExprKind::Variable);
+        const engine::logic::Expr& bracket = value.operands.at(1);
+        CHECK(bracket.arithmetic == Op::Subtract);
+        CHECK(bracket.operands.at(1).arithmetic == Op::Multiply);
+    }
+    REQUIRE(d->set_logic_arithmetic(file, set, 0, std::nullopt, error));
+    CHECK(lines()[1] == "  Set talks to talks × (1 − [answer])");
+    REQUIRE(d->set_logic_arithmetic(file, set, 0, std::nullopt, error));
+    CHECK(lines()[1] == "  Set talks to talks × 1");
     CHECK(d->check_logic(file).empty());
     REQUIRE(d->set_logic_arithmetic(file, set, 0, std::nullopt, error));
     CHECK(lines()[1] == "  Set talks to talks");
@@ -2397,6 +2433,8 @@ TEST_CASE("Logic values from variables, event values and properties, with sums")
     CHECK(lines()[1] == "  Set talks to 7");
     CHECK_FALSE(d->set_logic_arithmetic(file, set, 0, engine::logic::ArithmeticOp::Add, error));
     CHECK_FALSE(d->extend_logic_sum(file, set, 0, Op::Add, error));
+    CHECK(error == "Add a sum to the value first.");
+    CHECK_FALSE(d->bracket_logic_sum(file, set, 0, Op::Add, error));
     CHECK(error == "Add a sum to the value first.");
 
     // A number from a property: wait as many seconds as the hero's speed.
