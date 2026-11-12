@@ -20,6 +20,7 @@ and the same game works with keyboard and gamepad without any extra logic.
 |---|---|---|
 | `move_up`, `move_down`, `move_left`, `move_right` | Arrows and WASD | D-pad |
 | `interact` | Z, Enter, Space | South (A / Cross) |
+| `jump` (games seen from the side: [game.md](game.md), Jumping; Up jumps too) | Space | South (A / Cross) |
 | `cancel` | X, Backspace | East (B / Circle) |
 | `menu` | Escape | Start |
 

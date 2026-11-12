@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -39,6 +40,26 @@ struct TopDownMover {
     Facing facing = Facing::Down;
     bool moving = false; ///< A move action was held in the last step (read-only).
 };
+
+/// "Jumping": the game seen from the side. With a Top-down Mover on the same entity, the
+/// move actions walk it left and right only; it falls, lands on solid tiles and Solid
+/// Bodies, and jumps when Jump (or Up) is pressed while it stands on something. Make its
+/// mover's hitbox as tall as the character, since it bumps its head too.
+struct Jumping {
+    double gravity = 40.0;        ///< How fast falling speeds up, in tiles per second, per second.
+    double jump_height = 3.0;     ///< How high a jump reaches, in tiles.
+    double max_fall_speed = 20.0; ///< In tiles per second.
+    double fall_speed = 0.0;      ///< Downwards, in tiles per second; below 0 rising (hidden).
+    bool on_ground = false;       ///< Standing on something, after the last step (read-only).
+};
+
+/// One step of `seconds` for `jumping`: if `jump` and it stands on something, it leaps up
+/// fast enough to rise jump_height; then gravity speeds its fall (up to max_fall_speed)
+/// and it moves down by that much (up, rising) through `move`, which moves it as far as it
+/// can towards a distance and returns how far it went. Stopped going down, it has landed:
+/// on_ground, and no longer falling. Stopped going up, it bumped its head and falls.
+/// Numbers that are not finite count as 0 (gravity, height, fall speed) or no limit.
+void fall(Jumping& jumping, bool jump, double seconds, const std::function<double(double)>& move);
 
 /// The direction to face when moving by (dx, dy), from `current`: unchanged when not
 /// moving; on a diagonal, unchanged if `current` is one of its two directions, otherwise

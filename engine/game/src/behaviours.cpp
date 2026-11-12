@@ -47,6 +47,36 @@ void register_behaviours(reflect::Registry& registry) {
         .flags(reflect::property_flag::read_only)
         .tooltip("Whether it is walking.");
 
+    auto jumping = registry.add_type<Jumping>("jumping")
+                       .display_name("Jumping")
+                       .category("Movement")
+                       .tooltip("Seen from the side: with a Top-down Mover, it walks left and "
+                                "right, falls, lands and jumps.");
+    jumping.property<&Jumping::gravity>("gravity")
+        .range(0.0, 400.0)
+        .step(5.0)
+        .tooltip("How fast it falls faster, in tiles per second, every second.");
+    jumping.property<&Jumping::jump_height>("jump_height")
+        .range(0.0, 64.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .display_name("Jump height")
+        .tooltip("How high a jump reaches.");
+    jumping.property<&Jumping::max_fall_speed>("max_fall_speed")
+        .range(0.0, 400.0)
+        .step(1.0)
+        .flags(reflect::property_flag::advanced)
+        .display_name("Fastest fall")
+        .tooltip("The fastest it falls, in tiles per second.");
+    jumping.property<&Jumping::fall_speed>("fall_speed")
+        .range(-400.0, 400.0)
+        .flags(reflect::property_flag::hidden)
+        .tooltip("How fast it is falling, in tiles per second (rising below 0).");
+    jumping.property<&Jumping::on_ground>("on_ground")
+        .flags(reflect::property_flag::read_only)
+        .display_name("On the ground")
+        .tooltip("Whether it stands on something.");
+
     auto walk = registry.add_type<WalkAnimation>("walk_animation")
                     .display_name("Walk Animation")
                     .category("Movement")
@@ -244,12 +274,37 @@ bool register_behaviour_components(world::World& world) {
     const bool interactable = world.register_component<Interactable>();
     const bool simulated = world.register_component<PhysicsBody>();
     const bool sound = world.register_component<SoundSource>();
-    return mover && walk && body && trigger && interactable && simulated && sound;
+    const bool jumping = world.register_component<Jumping>();
+    return mover && walk && body && trigger && interactable && simulated && sound && jumping;
 }
 
 // ---------------------------------------------------------------------------------------
 // Movement
 // ---------------------------------------------------------------------------------------
+
+void fall(Jumping& jumping, bool jump, double seconds, const std::function<double(double)>& move) {
+    const auto finite_or = [](double value, double otherwise) {
+        return std::isfinite(value) ? value : otherwise;
+    };
+    const double gravity = std::max(finite_or(jumping.gravity, 0.0), 0.0);
+    const double height = std::max(finite_or(jumping.jump_height, 0.0), 0.0);
+    const double fastest = std::max(finite_or(jumping.max_fall_speed, 0.0), 0.0);
+    double speed = finite_or(jumping.fall_speed, 0.0);
+    if (jump && jumping.on_ground) {
+        speed = -std::sqrt(2.0 * gravity * height); // v^2 = 2 g h: it rises `height`
+    }
+    speed = std::min(speed + (gravity * seconds), fastest);
+    const double wanted = speed * seconds;
+    const double moved = wanted != 0.0 ? move(wanted) : 0.0;
+    // Short of the way by more than rounding: something is in the way.
+    const bool stopped = std::abs(moved) < std::abs(wanted) - 1e-9;
+    if (wanted > 0.0) {
+        jumping.on_ground = stopped; // landed, or still standing
+    } else if (wanted < 0.0) {
+        jumping.on_ground = false; // rising
+    } // not moving at all (no gravity): as it was
+    jumping.fall_speed = stopped ? 0.0 : speed;
+}
 
 Facing facing_for(Facing current, double dx, double dy) noexcept {
     const bool left = dx < 0.0;
@@ -338,31 +393,57 @@ void move_characters(world::World& world, const input::InputState& input, double
         }
         WalkAnimation* walk = world.get<WalkAnimation>(entity);
         scene2d::Sprite* sprite = world.get<scene2d::Sprite>(entity);
-        mover->moving = mover->enabled && length > 0.0;
         // A mover with a dynamic Physics Body is moved by the simulation (PhysicsLink).
         const PhysicsBody* simulated = world.get<PhysicsBody>(entity);
         const bool by_physics =
             simulated != nullptr && simulated->type == physics::BodyType::Dynamic;
-        if (mover->moving) {
-            mover->facing = facing_for(mover->facing, dx, dy);
-        }
-        if (mover->moving && !by_physics) {
-            std::vector<scene2d::Box> others;
+        std::vector<scene2d::Box> others;
+        if (!by_physics) {
             others.reserve(obstacles.size());
             for (const Obstacle& obstacle : obstacles) {
                 if (obstacle.entity != entity) {
                     others.push_back(obstacle.box);
                 }
             }
+        }
+        const auto sweep_by = [&](scene2d::Axis axis, double wanted) {
+            const scene2d::Box box = hitbox(*mover, transform->x, transform->y);
+            const double allowed = scene2d::sweep_boxes(
+                box, axis, scene2d::sweep(world, box, axis, wanted, ppu), others);
+            (axis == scene2d::Axis::X ? transform->x : transform->y) += allowed;
+            return allowed;
+        };
+        if (Jumping* jumping = world.get<Jumping>(entity); jumping != nullptr) {
+            // Seen from the side: left and right with the move actions, up and down by
+            // falling and jumping.
+            mover->moving = mover->enabled && dx != 0.0;
+            if (mover->moving) {
+                mover->facing = facing_for(mover->facing, dx, 0.0);
+            }
+            if (by_physics) {
+                jumping->on_ground = false;
+            } else {
+                if (mover->moving) {
+                    sweep_by(scene2d::Axis::X, dx * mover->speed * seconds);
+                }
+                fall(*jumping,
+                     mover->enabled && (input.pressed("jump") || input.pressed("move_up")), seconds,
+                     [&](double wanted) { return sweep_by(scene2d::Axis::Y, wanted); });
+            }
+            if (walk != nullptr && sprite != nullptr) {
+                update_walk(*mover, *walk, *sprite, seconds);
+            }
+            return;
+        }
+        mover->moving = mover->enabled && length > 0.0;
+        if (mover->moving) {
+            mover->facing = facing_for(mover->facing, dx, dy);
+        }
+        if (mover->moving && !by_physics) {
             const double step = mover->speed * seconds / length;
             // One axis at a time, so a diagonal into a wall slides along it.
             for (const scene2d::Axis axis : {scene2d::Axis::X, scene2d::Axis::Y}) {
-                const bool x_axis = axis == scene2d::Axis::X;
-                const scene2d::Box box = hitbox(*mover, transform->x, transform->y);
-                const double wanted = (x_axis ? dx : dy) * step;
-                const double allowed = scene2d::sweep_boxes(
-                    box, axis, scene2d::sweep(world, box, axis, wanted, ppu), others);
-                (x_axis ? transform->x : transform->y) += allowed;
+                sweep_by(axis, (axis == scene2d::Axis::X ? dx : dy) * step);
             }
         }
         if (walk != nullptr && sprite != nullptr) {

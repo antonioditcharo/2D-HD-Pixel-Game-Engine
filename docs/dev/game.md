@@ -191,6 +191,34 @@ slides along it at the diagonal speed (tested).
 if it is one of the two directions (so walking up-right while facing up still faces up),
 and otherwise faces left or right.
 
+### Jumping (seen from the side)
+
+**Jumping** (`jumping`) turns the Top-down Mover on the same entity into a character seen
+from the side, for platformers. The camera still follows it, and doorways, talking and
+saves work as before, since it is still that mover.
+
+| Property | Meaning |
+|---|---|
+| `gravity` | How fast falling speeds up, in tiles per second, every second (default 40) |
+| `jump_height` | How high a jump reaches, in tiles (default 3) |
+| `max_fall_speed` (advanced) | The fastest it falls, in tiles per second (default 20) |
+| `fall_speed` (hidden) | How fast it is falling; below 0 it is rising. Saved with the game |
+| `on_ground` (read-only) | Whether it stood on something after the last step |
+
+- **Walking:** `move_left` and `move_right` walk it at the mover's speed and turn it to
+  face that way; `move_up` and `move_down` do not move it.
+- **Falling** (`fall()`): every step gravity speeds its fall, up to the fastest fall, and
+  it moves down by that much, stopped by solid tiles and Solid Bodies as walking is.
+  Stopped going down, it has landed (`on_ground`); stopped going up, it bumped its head
+  and starts falling. It falls even when the mover is disabled, but it takes no input
+  then; nor while a message is open or the scene fades.
+- **Jumping:** pressing `jump` (Space, or the gamepad's South button) or `move_up` while
+  on the ground leaps up at √(2 × gravity × height), which rises `jump_height` (a few
+  hundredths less with whole steps of 1/60 s: 2.87 of 3 tiles; tested). Holding it does
+  not jump again in the air.
+- **The hitbox** is the mover's: make it as tall as the character (the platformer
+  template uses 1 tile), since it bumps its head too.
+
 ### Walk Animation
 
 The **Walk Animation** component (`walk_animation`) shows a character sheet: one row per
@@ -351,6 +379,7 @@ named by path (`maps/cave.dscene`) or GUID.
 | Walls | Walking right stops with the hitbox on the wall (x = 2.625 for a wall at 3); adding down slides along it at the diagonal speed |
 | Bodies, triggers, interaction | Boxes touching versus overlapping; sweeping against boxes in every direction; a villager stopping the hero at its edge, and not when disabled; a doorway reporting a mover already inside, a mover walking in and out once each, exits in GUID order, and everyone leaving when disabled; the reach in each facing, the nearest of two, disabled ones and the mover itself skipped |
 | Talking and doorways | In the runtime: Interact facing the elder runs its "interacted" Rule after the Interact input Rule, and the next Interact closes what the elder said; walking left runs the doorway's "entered" Rule with `who` = "hero" at exactly 4.2 tiles, and "exited" after leaving it |
+| Falling and jumping | `fall()` on its own: pressed against the floor it is on the ground; a jump rises between 2.8 and 3 tiles and lands in 44 to 48 steps (0.77 s); held, it does not jump again in the air; a ceiling a tile up stops the rise and it falls back; it falls no faster than 20 tiles a second; gravity that is not a number moves nothing. In a world: a hero with Jumping falls onto a solid floor and stands on it; Down does nothing; Right walks 2 tiles in half a second facing right; Space and Up jump it off the floor and it lands again; it lands on a Solid Body's top and falls back to the floor walking off it; disabled, it neither walks nor jumps but still falls |
 | Facing and walking | Every facing rule; exact frames of the cycle, back and forth and starting over, at 6 frames per second; the standing frame; clamped settings; the runtime turning the hero left and animating it |
 | Problems | A Rules asset naming a missing object is reported at its block and left out, and the game still runs; a missing start scene stops it |
 | Drawing (GPU) | Exact pixels: the hero centred, and after walking one tile the rock drawn 8 pixels to the left |

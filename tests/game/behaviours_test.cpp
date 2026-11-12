@@ -5,6 +5,9 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <initializer_list>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -173,4 +176,146 @@ TEST_CASE("Interact reaches the nearest interactable the mover faces") {
     CHECK(trigger->find_event("entered") != nullptr);
     CHECK(f.registry.find_type<game::Interactable>()->find_event("interacted") != nullptr);
     CHECK(f.registry.find_type<game::Body>()->meta.display_name == "Solid Body");
+}
+
+TEST_CASE("Falling and jumping, one step at a time") {
+    // A floor at y = 0 below a ceiling at y = -10: `move` goes as far as it can.
+    double y = 0.0;
+    double ceiling = -10.0;
+    const auto move = [&](double wanted) {
+        const double to = std::clamp(y + wanted, ceiling, 0.0);
+        const double moved = to - y;
+        y = to;
+        return moved;
+    };
+    constexpr double dt = 1.0 / 60.0;
+    game::Jumping jumping; // gravity 40, height 3
+    game::fall(jumping, false, dt, move);
+    CHECK(jumping.on_ground); // pressed against the floor
+    CHECK(jumping.fall_speed == 0.0);
+    CHECK(y == 0.0);
+
+    // A jump rises its height (less half a step's rise, for whole steps), then lands.
+    game::fall(jumping, true, dt, move);
+    CHECK_FALSE(jumping.on_ground);
+    CHECK(jumping.fall_speed < 0.0);
+    double highest = 0.0;
+    int steps = 1;
+    while (!jumping.on_ground && steps < 600) {
+        game::fall(jumping, true, dt, move); // held: no jumping again in the air
+        highest = std::min(highest, y);
+        ++steps;
+    }
+    CAPTURE(highest);
+    CHECK(highest < -2.8);
+    CHECK(highest > -3.0);
+    CHECK(y == 0.0);
+    CHECK(jumping.fall_speed == 0.0);
+    // Up and down in about 2 * sqrt(2 h / g) = 0.77 seconds.
+    CHECK(steps >= 44);
+    CHECK(steps <= 48);
+
+    // A ceiling 1 tile up stops the rise; it falls back from there.
+    ceiling = -1.0;
+    game::fall(jumping, true, dt, move);
+    while (jumping.fall_speed < 0.0) {
+        game::fall(jumping, false, dt, move);
+    }
+    CHECK(y == -1.0); // bumped its head
+    CHECK_FALSE(jumping.on_ground);
+    for (int i = 0; i < 60 && !jumping.on_ground; ++i) {
+        game::fall(jumping, false, dt, move);
+    }
+    CHECK(jumping.on_ground);
+    CHECK(y == 0.0);
+
+    // From high up, it falls no faster than its fastest fall.
+    ceiling = -1000.0;
+    y = -500.0;
+    jumping.on_ground = false;
+    for (int i = 0; i < 120; ++i) {
+        game::fall(jumping, false, dt, move);
+    }
+    CHECK(jumping.fall_speed == 20.0);
+    // No gravity, or gravity that is not a number: it stays where it is.
+    jumping.fall_speed = 0.0;
+    jumping.gravity = std::numeric_limits<double>::quiet_NaN();
+    const double before = y;
+    game::fall(jumping, false, dt, move);
+    CHECK(y == before);
+}
+
+TEST_CASE("Jumping: walking left and right, landing on solid tiles and bodies, and jumping") {
+    Fixture f;
+    f.w->add<game::Jumping>(f.hero);
+    // Only now: adding a component moves the entity's others in memory.
+    game::TopDownMover* mover = f.w->get<game::TopDownMover>(f.hero);
+    mover->hitbox_height = 1.0; // the whole character, seen from the side
+    // A solid floor whose top is y = 4, from x = -5 to 15.
+    const world::Entity floor = f.place("floor", -5.0, 4.0);
+    scene2d::Tilemap* tiles = f.w->add<scene2d::Tilemap>(floor);
+    tiles->solid = true;
+    tiles->tiles = "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0";
+    const auto run = [&](int steps, std::initializer_list<input::Key> keys) {
+        for (int i = 0; i < steps; ++i) {
+            f.state.begin_step();
+            for (const input::Key k : {input::Key::Left, input::Key::Right, input::Key::Up,
+                                       input::Key::Down, input::Key::Space}) {
+                bool down = false;
+                for (const input::Key held : keys) {
+                    down = down || held == k;
+                }
+                f.state.set(input::Binding::key(k), down);
+            }
+            game::move_characters(*f.w, f.state, 1.0 / 60.0, 16);
+        }
+    };
+    const game::Jumping& jumping = *f.w->get<game::Jumping>(f.hero);
+
+    // It falls from y = 0 and lands with its feet on the floor.
+    run(60, {});
+    CHECK(f.at(f.hero).y == 4.0);
+    CHECK(jumping.on_ground);
+    CHECK(f.at(f.hero).x == 0.0);
+    // Down does nothing; Right walks right only, facing right.
+    run(30, {input::Key::Down});
+    CHECK(f.at(f.hero).y == 4.0);
+    run(30, {input::Key::Right});
+    CHECK(f.at(f.hero).x == doctest::Approx(2.0)); // half a second at 4 tiles a second
+    CHECK(f.at(f.hero).y == 4.0);
+    CHECK(mover->facing == game::Facing::Right);
+    // Space jumps: it rises off the floor, then lands again.
+    run(1, {});
+    run(1, {input::Key::Space});
+    CHECK(f.at(f.hero).y < 4.0);
+    CHECK_FALSE(jumping.on_ground);
+    run(10, {input::Key::Space});
+    const double up_high = f.at(f.hero).y;
+    CHECK(up_high < 2.5);
+    run(60, {});
+    CHECK(f.at(f.hero).y == 4.0);
+    CHECK(jumping.on_ground);
+    // Up jumps too.
+    run(1, {input::Key::Up});
+    CHECK(f.at(f.hero).y < 4.0);
+    run(60, {});
+    // A Solid Body is something to stand on.
+    const world::Entity crate = f.place("crate", 2.0, 4.0);
+    game::Body* box = f.w->add<game::Body>(crate);
+    box->width = 1.0;
+    box->height = 1.0; // its top is y = 3
+    run(1, {input::Key::Space});
+    run(60, {});
+    CHECK(f.at(f.hero).y == 3.0);
+    CHECK(jumping.on_ground);
+    // Walking off it, it falls back to the floor.
+    run(30, {input::Key::Right});
+    run(30, {});
+    CHECK(f.at(f.hero).y == 4.0);
+    // Disabled, it does not walk or jump, but it still falls.
+    mover->enabled = false;
+    f.at(f.hero).y = 1.0;
+    run(60, {input::Key::Space, input::Key::Left});
+    CHECK(f.at(f.hero).y == 4.0);
+    CHECK(f.at(f.hero).x == doctest::Approx(4.0));
 }
