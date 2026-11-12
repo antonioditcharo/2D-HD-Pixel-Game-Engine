@@ -209,6 +209,18 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
         painter.setPen(QPen(QColor(70, 200, 90), 2));
         painter.drawLine(h->origin, h->down.center());
         painter.fillRect(h->down, QColor(70, 200, 90));
+        // Turning: a blue knob on a stalk from the position; scaling: a yellow square.
+        if (!h->turn.isNull()) {
+            painter.setPen(QPen(QColor(80, 150, 240), 1, Qt::DotLine));
+            painter.drawLine(h->origin, h->turn.center());
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(80, 150, 240));
+            painter.drawEllipse(h->turn);
+            painter.setBrush(Qt::NoBrush);
+        }
+        if (!h->stretch.isNull()) {
+            painter.fillRect(h->stretch, QColor(240, 200, 60));
+        }
     }
     // Each selected entity's outline (the first brighter): in 3D, around the billboard
     // as the camera sees it.
@@ -318,7 +330,20 @@ std::optional<SceneView::Handles> SceneView::handles() const {
     if (!across_head || !down_head) {
         return std::nullopt;
     }
-    return Handles{*across_head, *down_head, *origin};
+    Handles found{*across_head, *down_head, *origin, QRect(), QRect()};
+    // Turning and scaling, in Classic 2D: by the box around the picture as drawn.
+    if (!diorama()) {
+        if (const std::optional<scene2d::Box> box = sprite_bounds(
+                document_->world(), document_->assets(), e, document_->settings().ppu)) {
+            const QPoint top_middle = from_map((box->left + box->right) / 2.0, box->top);
+            const QPoint top_right = from_map(box->right, box->top);
+            found.turn =
+                QRect(top_middle + QPoint(-(head / 2), -18 - (head / 2)), QSize(head, head));
+            found.stretch =
+                QRect(top_right + QPoint(6 - (head / 2), -6 - (head / 2)), QSize(head, head));
+        }
+    }
+    return found;
 }
 
 void SceneView::mousePressEvent(QMouseEvent* event) {
@@ -350,6 +375,18 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
                 if (start_drag(selection_, at)) {
                     axis_ = h->across.contains(at) ? Axis::Across : Axis::Down;
                 }
+                return;
+            }
+            const engine::world::Entity e = document_->world().find(selection_);
+            const auto* sprite =
+                e.is_valid() ? document_->world().get<scene2d::Sprite>(e) : nullptr;
+            if (sprite != nullptr && (h->turn.contains(at) || h->stretch.contains(at))) {
+                drag_ = h->turn.contains(at) ? Drag::Turn : Drag::Stretch;
+                turn_from_ = std::isfinite(sprite->rotation) ? sprite->rotation : 0.0;
+                scale_x_from_ = std::isfinite(sprite->scale_x) ? sprite->scale_x : 1.0;
+                scale_y_from_ = std::isfinite(sprite->scale_y) ? sprite->scale_y : 1.0;
+                pivot_ = QPointF(h->origin);
+                document_->end_merge();
                 return;
             }
         }
@@ -422,6 +459,42 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
             boxing_ = true;
             rect_to_ = event->position().toPoint();
             update();
+        }
+        return;
+    }
+    if (drag_ == Drag::Turn || drag_ == Drag::Stretch) {
+        const QPointF from = QPointF(drag_from_) - pivot_;
+        const QPointF now = event->position() - pivot_;
+        bool changed = false;
+        if (drag_ == Drag::Turn) {
+            // By as much as the cursor went round the position: 0 degrees is straight up,
+            // clockwise as seen.
+            const auto bearing = [](QPointF v) {
+                return std::atan2(v.x(), -v.y()) * 180.0 / 3.14159265358979323846;
+            };
+            double degrees = turn_from_ + (bearing(now) - bearing(from));
+            if (snap_) {
+                degrees = std::round(degrees / 15.0) * 15.0;
+            }
+            changed = document_->turn_sprite(selection_, degrees);
+        } else {
+            // By as much as the cursor went away from the position, the same both ways.
+            const double start = std::hypot(from.x(), from.y());
+            const double factor = start > 1.0 ? std::hypot(now.x(), now.y()) / start : 1.0;
+            const auto scaled = [this](double from_scale, double by) {
+                const double sign = from_scale < 0.0 ? -1.0 : 1.0;
+                double size = std::abs(from_scale) * by;
+                if (snap_) {
+                    size = std::round(size * 2.0) / 2.0;
+                }
+                return sign * std::clamp(size, snap_ ? 0.5 : 0.0625, 16.0);
+            };
+            changed = document_->scale_sprite(selection_, scaled(scale_x_from_, factor),
+                                              scaled(scale_y_from_, factor));
+        }
+        if (changed) {
+            Q_EMIT moved();
+            refresh();
         }
         return;
     }
@@ -525,7 +598,9 @@ void SceneView::mouseReleaseEvent(QMouseEvent* event) {
         }
         update();
     }
-    if ((drag_ == Drag::Entity || drag_ == Drag::Paint) && document_ != nullptr) {
+    if ((drag_ == Drag::Entity || drag_ == Drag::Paint || drag_ == Drag::Turn ||
+         drag_ == Drag::Stretch) &&
+        document_ != nullptr) {
         document_->end_merge();
     }
     drag_ = Drag::None;

@@ -421,6 +421,52 @@ TEST_CASE("Clicking in the scene selects what is on top; dragging moves it, in o
     CHECK(transform->x == 10.0);
     CHECK(transform->y == 9.0);
 
+    // Turning: the knob above the hero, dragged a quarter of the way round its feet
+    // (clockwise) with snapping on, turns it exactly 90 degrees. Scaling: the square at its
+    // top-right corner, dragged twice as far from its feet, doubles it. One undo step each.
+    REQUIRE(view->handles().has_value());
+    const editor::SceneView::Handles shaping =
+        view->handles().value_or(editor::SceneView::Handles{});
+    REQUIRE_FALSE(shaping.turn.isNull());
+    REQUIRE_FALSE(shaping.stretch.isNull());
+    CHECK(shaping.turn.center().y() < shaping.origin.y() - 20); // above the picture
+    view->set_snap(true);
+    const QPointF feet(shaping.origin);
+    const QPointF up = QPointF(shaping.turn.center()) - feet;
+    const double radius = std::hypot(up.x(), up.y());
+    mouse(view, QEvent::MouseButtonPress, shaping.turn.center(), Qt::LeftButton);
+    QPoint round_to;
+    for (int i = 1; i <= 6; ++i) {
+        const double angle = (3.14159265358979 / 2.0) * i / 6.0;
+        round_to = (feet + QPointF(std::sin(angle), -std::cos(angle)) * radius).toPoint();
+        mouse(view, QEvent::MouseMove, round_to, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, round_to, Qt::LeftButton);
+    const auto sprite = [&] {
+        return *e.window.document()->world().get<scene2d::Sprite>(
+            e.window.document()->world().find(hero));
+    };
+    CHECK(sprite().rotation == 90.0);
+    CHECK(e.window.document()->undo_label() == "Turn hero");
+    REQUIRE(view->handles().has_value());
+    const QPoint corner = view->handles().value_or(editor::SceneView::Handles{}).stretch.center();
+    const QPoint far = shaping.origin + ((corner - shaping.origin) * 2);
+    mouse(view, QEvent::MouseButtonPress, corner, Qt::LeftButton);
+    for (int i = 1; i <= 4; ++i) {
+        mouse(view, QEvent::MouseMove, corner + ((far - corner) * i) / 4, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, far, Qt::LeftButton);
+    CHECK(sprite().scale_x == 2.0);
+    CHECK(sprite().scale_y == 2.0);
+    CHECK(sprite().rotation == 90.0);
+    CHECK(e.window.document()->undo_label() == "Scale hero");
+    e.window.undo();
+    CHECK(sprite().scale_x == 1.0);
+    CHECK(sprite().rotation == 90.0);
+    e.window.undo();
+    CHECK(sprite().rotation == 0.0);
+    view->set_snap(false);
+
     // Clicking where nothing is drawn selects nothing; the ground is under most places.
     mouse(view, QEvent::MouseButtonPress, view->from_map(3.0, 3.0), Qt::LeftButton);
     mouse(view, QEvent::MouseButtonRelease, view->from_map(3.0, 3.0), Qt::LeftButton);

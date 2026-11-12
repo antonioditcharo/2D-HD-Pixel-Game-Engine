@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -842,6 +843,43 @@ TEST_CASE("Picking finds what is drawn on top at a point") {
     CHECK(wide.value_or(scene2d::Box{}).left == 9.0);
     CHECK(wide.value_or(scene2d::Box{}).right == 11.0);
     CHECK(name_at(10.9, 8.5) == "hero");
+}
+
+TEST_CASE("Turning and scaling a sprite, each a step of undo that a drag merges") {
+    const Sample sample;
+    const auto d = sample.open();
+    const world::Entity hero_entity = d->world().find_named("hero").at(0);
+    const Guid hero = d->world().guid(hero_entity);
+    const auto sprite = [&] { return *d->world().get<scene2d::Sprite>(d->world().find(hero)); };
+    // Turned past half a turn, it is kept between -180 and 180.
+    CHECK(d->turn_sprite(hero, 30.0));
+    CHECK(d->turn_sprite(hero, 270.0)); // the same drag: merged
+    CHECK(sprite().rotation == -90.0);
+    CHECK(d->undo_label() == "Turn hero");
+    CHECK(d->turn_sprite(hero, -540.0));
+    CHECK(sprite().rotation == 180.0);
+    CHECK(d->turn_sprite(hero, 720.0));
+    CHECK(sprite().rotation == 0.0);
+    CHECK_FALSE(std::signbit(sprite().rotation)); // no -0 in the file
+    d->end_merge();
+    // Scaled both ways at once, within -16 to 16.
+    CHECK(d->scale_sprite(hero, 2.0, -3.0));
+    CHECK(d->scale_sprite(hero, 40.0, -0.5));
+    CHECK(sprite().scale_x == 16.0);
+    CHECK(sprite().scale_y == -0.5);
+    CHECK(d->undo_label() == "Scale hero");
+    // Refused: numbers that are not finite, and entities without a Sprite.
+    CHECK_FALSE(d->turn_sprite(hero, std::numeric_limits<double>::quiet_NaN()));
+    CHECK_FALSE(d->scale_sprite(hero, 1.0, std::numeric_limits<double>::infinity()));
+    CHECK_FALSE(d->turn_sprite(d->world().guid(d->world().find_named("ground").at(0)), 10.0));
+    CHECK_FALSE(d->scale_sprite(Guid::generate(), 1.0, 1.0));
+    // One undo for the scaling, one for all the turning.
+    d->undo();
+    CHECK(sprite().scale_x == 1.0);
+    CHECK(sprite().scale_y == 1.0);
+    d->undo();
+    CHECK(sprite().rotation == 0.0);
+    CHECK_FALSE(d->can_undo());
 }
 
 TEST_CASE("The preview draws the scene as the game would") {

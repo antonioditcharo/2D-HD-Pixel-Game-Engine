@@ -188,6 +188,14 @@ public:
     /// without a Position, and points that are not numbers, are passed over; false if
     /// nothing moved.
     bool move_entities(const std::vector<std::pair<engine::Guid, std::array<double, 2>>>& to);
+    /// Turns an entity's Sprite to `degrees` (clockwise), brought into -180 to 180 ("Turn
+    /// hero"). Turns of the same entity merge into one step, as a drag does. False,
+    /// changing nothing, without a Sprite or for a number that is not finite.
+    bool turn_sprite(engine::Guid entity, double degrees);
+    /// Scales an entity's Sprite across and down at once ("Scale hero"), each kept within
+    /// -16 to 16. Scales of the same entity merge into one step. False, changing nothing,
+    /// without a Sprite or for numbers that are not finite.
+    bool scale_sprite(engine::Guid entity, double scale_x, double scale_y);
     bool rename(engine::Guid entity, std::string_view name);
     /// Names several entities after `base`, numbered in their order: "tree_1", "tree_2",
     /// ..., skipping names other entities have, so logic can tell each apart. One step

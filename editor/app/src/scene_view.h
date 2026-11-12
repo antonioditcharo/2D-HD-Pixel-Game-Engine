@@ -61,10 +61,18 @@ public:
     /// first selected entity's position, along the ground in the Diorama style. Dragging
     /// an arrow's head moves the selection along that axis only. Nothing when nothing
     /// movable is selected, or while painting.
+    ///
+    /// In Classic 2D there are two more: a round knob above the picture, which turns it
+    /// about its position as it is dragged round (to 15 degrees at a time with snapping
+    /// on), and a square at its top-right corner, which scales it evenly as it is dragged
+    /// away from or towards its position (to halves with snapping on). Each drag is one
+    /// undo step. In the Diorama style these are empty.
     struct Handles {
         QRect across;
         QRect down;
         QPoint origin;
+        QRect turn;
+        QRect stretch;
     };
     [[nodiscard]] std::optional<Handles> handles() const;
     /// The point of this widget showing map point (x, y): on the map in Classic 2D, on the
@@ -127,7 +135,21 @@ private:
     double camera_x_ = 0.0;
     double camera_y_ = 0.0;
     // A drag in progress.
-    enum class Drag : std::uint8_t { None, Entity, Camera, Paint, Box } drag_ = Drag::None;
+    enum class Drag : std::uint8_t {
+        None,
+        Entity,
+        Camera,
+        Paint,
+        Box,
+        Turn,
+        Stretch
+    } drag_ = Drag::None;
+    /// For a drag by the turning or scaling handle: the Sprite's rotation and scales when
+    /// it began, and the pivot on this widget.
+    double turn_from_ = 0.0;
+    double scale_x_from_ = 1.0;
+    double scale_y_from_ = 1.0;
+    QPointF pivot_;
     /// The pictures (entities with a Position and a Sprite) whose drawn rectangles touch
     /// `band`, a rectangle of this widget, in the scene's order.
     [[nodiscard]] std::vector<engine::Guid> pictures_in(QRect band) const;

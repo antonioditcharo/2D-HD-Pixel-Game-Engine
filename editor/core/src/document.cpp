@@ -517,6 +517,39 @@ bool Document::move_entities(const std::vector<std::pair<Guid, std::array<double
     return true;
 }
 
+bool Document::turn_sprite(Guid entity, double degrees) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(entity);
+    auto* sprite = e.is_valid() ? d.world->get<scene2d::Sprite>(e) : nullptr;
+    if (sprite == nullptr || !std::isfinite(degrees)) {
+        return false;
+    }
+    double turn = std::fmod(degrees, 360.0); // -360 to 360
+    if (turn > 180.0) {
+        turn -= 360.0;
+    } else if (turn <= -180.0) {
+        turn += 360.0;
+    }
+    serialize::Json before = d.snapshot();
+    sprite->rotation = turn == 0.0 ? 0.0 : turn; // no -0 in the file
+    d.record("Turn " + d.name_of(entity), std::move(before), entity, "sprite/rotation");
+    return true;
+}
+
+bool Document::scale_sprite(Guid entity, double scale_x, double scale_y) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(entity);
+    auto* sprite = e.is_valid() ? d.world->get<scene2d::Sprite>(e) : nullptr;
+    if (sprite == nullptr || !std::isfinite(scale_x) || !std::isfinite(scale_y)) {
+        return false;
+    }
+    serialize::Json before = d.snapshot();
+    sprite->scale_x = std::clamp(scale_x, -16.0, 16.0);
+    sprite->scale_y = std::clamp(scale_y, -16.0, 16.0);
+    d.record("Scale " + d.name_of(entity), std::move(before), entity, "sprite/scale");
+    return true;
+}
+
 bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
     Impl& d = *impl_;
     const world::Entity e = d.find(tilemap);
