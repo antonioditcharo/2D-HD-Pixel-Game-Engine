@@ -187,3 +187,49 @@ jobs:
           name: Sparxel-windows
           path: package
           if-no-files-found: error
+
+      # The same folder as an installer (Inno Setup, which the runner image has). It is
+      # installed silently for this user, the installed editor opens the sample, and it is
+      # uninstalled again, leaving nothing of it behind.
+      - name: Build and check the installer
+        if: matrix.preset == 'windows-msvc'
+        timeout-minutes: 10
+        shell: cmd
+        run: |
+          set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+          if not exist "%ISCC%" (echo Inno Setup was not found at "%ISCC%". & exit /b 1)
+          "%ISCC%" /Q "/DSourceDir=%CD%\package\Sparxel" "/DOutputDir=%CD%\installer" tools\sparxel.iss || exit /b 1
+          set "SETUP=%CD%\installer\Sparxel-Setup-0.0.1.exe"
+          if not exist "%SETUP%" (echo The installer was not made. & exit /b 1)
+          set "TARGET=%RUNNER_TEMP%\SparxelInstalled"
+          start /wait "" "%SETUP%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER "/DIR=%TARGET%" "/LOG=%RUNNER_TEMP%\setup.log"
+          if errorlevel 1 (type "%RUNNER_TEMP%\setup.log" & echo The installer failed. & exit /b 1)
+          if not exist "%TARGET%\sparxel-editor.exe" (type "%RUNNER_TEMP%\setup.log" & echo Nothing was installed. & exit /b 1)
+          if not exist "%TARGET%\unins000.exe" (echo No uninstaller was installed. & exit /b 1)
+          setlocal
+          set "PATH=%SystemRoot%\system32;%SystemRoot%"
+          set QT_PLUGIN_PATH=
+          set QT_QPA_PLATFORM=
+          pushd "%TARGET%" || exit /b 1
+          start /wait "" sparxel-editor.exe samples\hello --check
+          if errorlevel 1 (echo The installed editor did not start or could not open the sample. & exit /b 1)
+          player\sparxel-player.exe samples\hello --headless --frames 30 --no-audio || exit /b 1
+          popd
+          endlocal
+          start /wait "" "%TARGET%\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          rem The uninstaller finishes from a copy of itself: wait up to a minute for it.
+          for /l %%i in (1,1,60) do (
+            if not exist "%TARGET%\sparxel-editor.exe" goto uninstalled
+            ping -n 2 127.0.0.1 >nul
+          )
+          echo The uninstaller left the editor behind. & exit /b 1
+          :uninstalled
+          echo Installed, started and uninstalled.
+
+      - name: Upload the installer
+        if: matrix.preset == 'windows-msvc'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Sparxel-windows-installer
+          path: installer
+          if-no-files-found: error

@@ -158,6 +158,19 @@ CI then **checks it with nothing else on the path** (no Qt, no build folder):
 with 0 only if that worked (in this mode problems never open a dialog), and the packaged
 player plays the sample for half a second.
 
+**The installer.** Each build also makes **`Sparxel-windows-installer`**:
+`Sparxel-Setup-0.0.1.exe`, the same folder wrapped by [Inno Setup](https://jrsoftware.org/isinfo.php)
+6 (on GitHub's Windows image) from [`tools/sparxel.iss`](../../tools/sparxel.iss). It
+shows the MIT licence, installs for the current user by default (no administrator
+rights; into `%LOCALAPPDATA%\Programs\Sparxel`, where the sample stays editable), or
+for everyone if chosen on its first page; adds Sparxel to the Start menu (and, if ticked,
+the desktop); offers to open the editor on the sample when it finishes; and has an
+uninstaller in Windows' installed apps. CI installs it silently into a temporary folder,
+starts the installed editor on the sample (`--check`) and plays the sample with the
+installed player, both with nothing else on the path, then uninstalls it and checks the
+editor is gone. Its version, `AppVersion` in the script, follows the project's version in
+`CMakeLists.txt`.
+
 ## 6. Next increments
 
 1. **Logic, further:** a part of a sum that is itself a bracketed sum written first
@@ -169,4 +182,5 @@ player plays the sample for half a second.
    anywhere, beyond Qt's own docks.
 5. **More templates:** a shoot-'em-up, a puzzle game; and the platformer's enemies and
    coins.
-6. **An installer** (and a signed one) around the Windows package of §5.
+6. **A signed installer:** the installer of §5 signed with a code-signing certificate,
+   so Windows SmartScreen does not warn about it (a certificate is the owner's to buy).
