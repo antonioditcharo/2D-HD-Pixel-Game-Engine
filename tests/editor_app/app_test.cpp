@@ -496,6 +496,70 @@ TEST_CASE("Clicking in the scene selects what is on top; dragging moves it, in o
     CHECK(e.window.selection() == e.guid("ground"));
 }
 
+TEST_CASE("Several pictures turned and scaled together by the handles") {
+    Editor e;
+    editor::SceneView* view = e.window.scene_view();
+    const Guid hero = e.guid("hero");
+    const Guid elder = e.guid("elder");
+    REQUIRE(e.window.document()->turn_sprite(elder, 30.0));
+    e.window.document()->end_merge();
+    const auto click = [&](QPointF map, Qt::KeyboardModifiers held) {
+        const QPoint at = view->from_map(map.x(), map.y());
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(at), view->mapToGlobal(QPointF(at)),
+                          Qt::LeftButton, Qt::LeftButton, held);
+        QApplication::sendEvent(view, &press);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(at), view->mapToGlobal(QPointF(at)),
+                            Qt::LeftButton, Qt::NoButton, held);
+        QApplication::sendEvent(view, &release);
+    };
+    click(QPointF(10.0, 8.5), Qt::NoModifier);
+    click(QPointF(6.0, 4.5), Qt::ControlModifier);
+    REQUIRE(e.window.selected() == std::vector<Guid>{hero, elder});
+    const auto sprite = [&](Guid who) {
+        return *e.window.document()->world().get<scene2d::Sprite>(
+            e.window.document()->world().find(who));
+    };
+    // The hero's knob, a quarter turn round its feet with snapping on: the hero turns to 90
+    // degrees and the elder as much, from 30 to 120. One step.
+    view->set_snap(true);
+    REQUIRE(view->handles().has_value());
+    const editor::SceneView::Handles shaping =
+        view->handles().value_or(editor::SceneView::Handles{});
+    const QPointF feet(shaping.origin);
+    const QPointF up = QPointF(shaping.turn.center()) - feet;
+    const double radius = std::hypot(up.x(), up.y());
+    mouse(view, QEvent::MouseButtonPress, shaping.turn.center(), Qt::LeftButton);
+    QPoint round_to;
+    for (int i = 1; i <= 6; ++i) {
+        const double angle = (3.14159265358979 / 2.0) * i / 6.0;
+        round_to = (feet + QPointF(std::sin(angle), -std::cos(angle)) * radius).toPoint();
+        mouse(view, QEvent::MouseMove, round_to, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, round_to, Qt::LeftButton);
+    CHECK(sprite(hero).rotation == 90.0);
+    CHECK(sprite(elder).rotation == 120.0);
+    CHECK(e.window.document()->undo_label() == "Turn 2 entities");
+    CHECK(e.window.selected() == std::vector<Guid>{hero, elder}); // still both
+    // Its square, twice as far: both doubled.
+    REQUIRE(view->handles().has_value());
+    const QPoint corner = view->handles().value_or(editor::SceneView::Handles{}).stretch.center();
+    const QPoint far = shaping.origin + ((corner - shaping.origin) * 2);
+    mouse(view, QEvent::MouseButtonPress, corner, Qt::LeftButton);
+    for (int i = 1; i <= 4; ++i) {
+        mouse(view, QEvent::MouseMove, corner + ((far - corner) * i) / 4, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, far, Qt::LeftButton);
+    CHECK(sprite(hero).scale_x == 2.0);
+    CHECK(sprite(elder).scale_y == 2.0);
+    CHECK(e.window.document()->undo_label() == "Scale 2 entities");
+    e.window.undo();
+    e.window.undo();
+    CHECK(sprite(hero).rotation == 0.0);
+    CHECK(sprite(elder).rotation == 30.0);
+    CHECK(sprite(elder).scale_x == 1.0);
+    view->set_snap(false);
+}
+
 TEST_CASE("Several entities selected: Ctrl-click and the list, dragged and deleted together") {
     Editor e;
     editor::SceneView* view = e.window.scene_view();

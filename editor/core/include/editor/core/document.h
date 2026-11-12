@@ -205,6 +205,12 @@ public:
     /// -16 to 16. Scales of the same entity merge into one step. False, changing nothing,
     /// without a Sprite or for numbers that are not finite.
     bool scale_sprite(engine::Guid entity, double scale_x, double scale_y);
+    /// turn_sprite() for several entities at once, each to its own angle ("Turn 2
+    /// entities"); refused, changing nothing, if any lacks a Sprite or has no number.
+    bool turn_sprites(const std::vector<std::pair<engine::Guid, double>>& to);
+    /// scale_sprite() for several entities at once, each to its own {across, down}
+    /// ("Scale 2 entities"); all or none, as turn_sprites().
+    bool scale_sprites(const std::vector<std::pair<engine::Guid, std::array<double, 2>>>& to);
     bool rename(engine::Guid entity, std::string_view name);
     /// Names several entities after `base`, numbered in their order: "tree_1", "tree_2",
     /// ..., skipping names other entities have, so logic can tell each apart. One step

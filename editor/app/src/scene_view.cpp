@@ -386,17 +386,34 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
                 }
                 return;
             }
-            const engine::world::Entity e = document_->world().find(selection_);
-            const auto* sprite =
-                e.is_valid() ? document_->world().get<scene2d::Sprite>(e) : nullptr;
-            if (sprite != nullptr && (h->turn.contains(at) || h->stretch.contains(at))) {
-                drag_ = h->turn.contains(at) ? Drag::Turn : Drag::Stretch;
-                turn_from_ = std::isfinite(sprite->rotation) ? sprite->rotation : 0.0;
-                scale_x_from_ = std::isfinite(sprite->scale_x) ? sprite->scale_x : 1.0;
-                scale_y_from_ = std::isfinite(sprite->scale_y) ? sprite->scale_y : 1.0;
-                pivot_ = QPointF(h->origin);
-                document_->end_merge();
-                return;
+            if (h->turn.contains(at) || h->stretch.contains(at)) {
+                // Every selected picture, the one the handles belong to first.
+                shaped_.clear();
+                std::vector<engine::Guid> members{selection_};
+                for (const engine::Guid member : group_) {
+                    if (member != selection_) {
+                        members.push_back(member);
+                    }
+                }
+                for (const engine::Guid member : members) {
+                    const engine::world::Entity m = document_->world().find(member);
+                    const auto* sprite =
+                        m.is_valid() ? document_->world().get<scene2d::Sprite>(m) : nullptr;
+                    if (sprite != nullptr) {
+                        const auto finite_or = [](double v, double otherwise) {
+                            return std::isfinite(v) ? v : otherwise;
+                        };
+                        shaped_.push_back(Shape{member, finite_or(sprite->rotation, 0.0),
+                                                finite_or(sprite->scale_x, 1.0),
+                                                finite_or(sprite->scale_y, 1.0)});
+                    }
+                }
+                if (!shaped_.empty() && shaped_.front().entity == selection_) {
+                    drag_ = h->turn.contains(at) ? Drag::Turn : Drag::Stretch;
+                    pivot_ = QPointF(h->origin);
+                    document_->end_merge();
+                    return;
+                }
             }
         }
     }
@@ -481,25 +498,39 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
             const auto bearing = [](QPointF v) {
                 return std::atan2(v.x(), -v.y()) * 180.0 / 3.14159265358979323846;
             };
-            double degrees = turn_from_ + (bearing(now) - bearing(from));
+            // The one grabbed lands on 15 degrees with snapping; the others turn as much.
+            const double grabbed = shaped_.front().rotation;
+            double degrees = grabbed + (bearing(now) - bearing(from));
             if (snap_) {
                 degrees = std::round(degrees / 15.0) * 15.0;
             }
-            changed = document_->turn_sprite(selection_, degrees);
+            std::vector<std::pair<engine::Guid, double>> turns;
+            turns.reserve(shaped_.size());
+            for (const Shape& shape : shaped_) {
+                turns.emplace_back(shape.entity, shape.rotation + (degrees - grabbed));
+            }
+            changed = document_->turn_sprites(turns);
         } else {
             // By as much as the cursor went away from the position, the same both ways.
             const double start = std::hypot(from.x(), from.y());
             const double factor = start > 1.0 ? std::hypot(now.x(), now.y()) / start : 1.0;
-            const auto scaled = [this](double from_scale, double by) {
+            // The one grabbed lands on halves with snapping; the others grow as much.
+            double by = factor;
+            const double across = std::abs(shaped_.front().scale_x);
+            if (snap_ && across > 0.0) {
+                by = std::clamp(std::round(across * factor * 2.0) / 2.0, 0.5, 16.0) / across;
+            }
+            const auto scaled = [by](double from_scale) {
                 const double sign = from_scale < 0.0 ? -1.0 : 1.0;
-                double size = std::abs(from_scale) * by;
-                if (snap_) {
-                    size = std::round(size * 2.0) / 2.0;
-                }
-                return sign * std::clamp(size, snap_ ? 0.5 : 0.0625, 16.0);
+                return sign * std::clamp(std::abs(from_scale) * by, 0.0625, 16.0);
             };
-            changed = document_->scale_sprite(selection_, scaled(scale_x_from_, factor),
-                                              scaled(scale_y_from_, factor));
+            std::vector<std::pair<engine::Guid, std::array<double, 2>>> scales;
+            scales.reserve(shaped_.size());
+            for (const Shape& shape : shaped_) {
+                scales.emplace_back(shape.entity, std::array<double, 2>{scaled(shape.scale_x),
+                                                                        scaled(shape.scale_y)});
+            }
+            changed = document_->scale_sprites(scales);
         }
         if (changed) {
             Q_EMIT moved();

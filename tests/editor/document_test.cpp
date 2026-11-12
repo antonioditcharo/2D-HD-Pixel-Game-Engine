@@ -963,6 +963,32 @@ TEST_CASE("Turning and scaling a sprite, each a step of undo that a drag merges"
     d->undo();
     CHECK(sprite().rotation == 0.0);
     CHECK_FALSE(d->can_undo());
+
+    // Several at once, each to its own: one step, merged while dragged, all or none.
+    const Guid elder = d->world().guid(d->world().find_named("elder").at(0));
+    const auto elder_sprite = [&] {
+        return *d->world().get<scene2d::Sprite>(d->world().find(elder));
+    };
+    CHECK(d->turn_sprites({{hero, 30.0}, {elder, 60.0}}));
+    CHECK(d->turn_sprites({{hero, 90.0}, {elder, 200.0}}));
+    CHECK(sprite().rotation == 90.0);
+    CHECK(elder_sprite().rotation == -160.0);
+    CHECK(d->undo_label() == "Turn 2 entities");
+    CHECK(d->scale_sprites({{hero, {2.0, 2.0}}, {elder, {-1.5, 3.0}}}));
+    CHECK(elder_sprite().scale_x == -1.5);
+    CHECK(d->undo_label() == "Scale 2 entities");
+    const Guid ground = d->world().guid(d->world().find_named("ground").at(0));
+    CHECK_FALSE(d->turn_sprites({{hero, 45.0}, {ground, 45.0}})); // the ground has no Sprite
+    CHECK_FALSE(d->scale_sprites({{hero, {1.0, 1.0}}, {elder, {std::nan(""), 1.0}}}));
+    CHECK(sprite().rotation == 90.0);
+    CHECK(sprite().scale_x == 2.0);
+    CHECK_FALSE(d->turn_sprites({}));
+    d->undo();
+    d->undo();
+    CHECK(sprite().rotation == 0.0);
+    CHECK(elder_sprite().rotation == 0.0);
+    CHECK(elder_sprite().scale_x == 1.0);
+    CHECK_FALSE(d->can_undo());
 }
 
 TEST_CASE("The preview draws the scene as the game would") {

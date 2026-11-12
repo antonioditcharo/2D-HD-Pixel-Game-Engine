@@ -145,11 +145,15 @@ private:
         Turn,
         Stretch
     } drag_ = Drag::None;
-    /// For a drag by the turning or scaling handle: the Sprite's rotation and scales when
-    /// it began, and the pivot on this widget.
-    double turn_from_ = 0.0;
-    double scale_x_from_ = 1.0;
-    double scale_y_from_ = 1.0;
+    /// For a drag by the turning or scaling handle: each selected picture's rotation and
+    /// scales when it began (the one grabbed first), and its pivot on this widget.
+    struct Shape {
+        engine::Guid entity;
+        double rotation = 0.0;
+        double scale_x = 1.0;
+        double scale_y = 1.0;
+    };
+    std::vector<Shape> shaped_;
     QPointF pivot_;
     /// The pictures (entities with a Position and a Sprite) whose drawn rectangles touch
     /// `band`, a rectangle of this widget, in the scene's order.

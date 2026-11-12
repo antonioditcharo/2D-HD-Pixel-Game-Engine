@@ -584,35 +584,78 @@ Guid Document::place_door(std::string_view scene, double x, double y, std::strin
 }
 
 bool Document::turn_sprite(Guid entity, double degrees) {
-    Impl& d = *impl_;
-    const world::Entity e = d.find(entity);
-    auto* sprite = e.is_valid() ? d.world->get<scene2d::Sprite>(e) : nullptr;
-    if (sprite == nullptr || !std::isfinite(degrees)) {
-        return false;
-    }
-    double turn = std::fmod(degrees, 360.0); // -360 to 360
-    if (turn > 180.0) {
-        turn -= 360.0;
-    } else if (turn <= -180.0) {
-        turn += 360.0;
-    }
-    serialize::Json before = d.snapshot();
-    sprite->rotation = turn == 0.0 ? 0.0 : turn; // no -0 in the file
-    d.record("Turn " + d.name_of(entity), std::move(before), entity, "sprite/rotation");
-    return true;
+    return turn_sprites({{entity, degrees}});
 }
 
 bool Document::scale_sprite(Guid entity, double scale_x, double scale_y) {
+    return scale_sprites({{entity, {scale_x, scale_y}}});
+}
+
+bool Document::turn_sprites(const std::vector<std::pair<Guid, double>>& to) {
     Impl& d = *impl_;
-    const world::Entity e = d.find(entity);
-    auto* sprite = e.is_valid() ? d.world->get<scene2d::Sprite>(e) : nullptr;
-    if (sprite == nullptr || !std::isfinite(scale_x) || !std::isfinite(scale_y)) {
+    std::vector<std::pair<scene2d::Sprite*, double>> turns;
+    std::string group; // the GUIDs turned, so the same group's turns merge
+    for (const auto& [guid, degrees] : to) {
+        const world::Entity e = d.find(guid);
+        auto* sprite = e.is_valid() ? d.world->get<scene2d::Sprite>(e) : nullptr;
+        if (sprite == nullptr || !std::isfinite(degrees)) {
+            return false; // all or none
+        }
+        double turn = std::fmod(degrees, 360.0); // -360 to 360
+        if (turn > 180.0) {
+            turn -= 360.0;
+        } else if (turn <= -180.0) {
+            turn += 360.0;
+        }
+        turns.emplace_back(sprite, turn == 0.0 ? 0.0 : turn); // no -0 in the file
+        group += guid.to_string();
+    }
+    if (turns.empty()) {
         return false;
     }
     serialize::Json before = d.snapshot();
-    sprite->scale_x = std::clamp(scale_x, -16.0, 16.0);
-    sprite->scale_y = std::clamp(scale_y, -16.0, 16.0);
-    d.record("Scale " + d.name_of(entity), std::move(before), entity, "sprite/scale");
+    for (const auto& [sprite, turn] : turns) {
+        sprite->rotation = turn;
+    }
+    if (to.size() == 1) {
+        d.record("Turn " + d.name_of(to.front().first), std::move(before), to.front().first,
+                 "sprite/rotation");
+    } else {
+        d.record("Turn " + std::to_string(to.size()) + " entities", std::move(before), Guid{},
+                 "sprite/rotation:" + group);
+    }
+    return true;
+}
+
+bool Document::scale_sprites(const std::vector<std::pair<Guid, std::array<double, 2>>>& to) {
+    Impl& d = *impl_;
+    std::vector<std::pair<scene2d::Sprite*, std::array<double, 2>>> scales;
+    std::string group;
+    for (const auto& [guid, scale] : to) {
+        const world::Entity e = d.find(guid);
+        auto* sprite = e.is_valid() ? d.world->get<scene2d::Sprite>(e) : nullptr;
+        if (sprite == nullptr || !std::isfinite(scale[0]) || !std::isfinite(scale[1])) {
+            return false; // all or none
+        }
+        scales.emplace_back(sprite, std::array<double, 2>{std::clamp(scale[0], -16.0, 16.0),
+                                                          std::clamp(scale[1], -16.0, 16.0)});
+        group += guid.to_string();
+    }
+    if (scales.empty()) {
+        return false;
+    }
+    serialize::Json before = d.snapshot();
+    for (const auto& [sprite, scale] : scales) {
+        sprite->scale_x = scale[0];
+        sprite->scale_y = scale[1];
+    }
+    if (to.size() == 1) {
+        d.record("Scale " + d.name_of(to.front().first), std::move(before), to.front().first,
+                 "sprite/scale");
+    } else {
+        d.record("Scale " + std::to_string(to.size()) + " entities", std::move(before), Guid{},
+                 "sprite/scale:" + group);
+    }
     return true;
 }
 
