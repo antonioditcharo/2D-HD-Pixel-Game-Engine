@@ -260,8 +260,26 @@ bool SceneView::start_drag(engine::Guid grabbed, QPoint at) {
     return true;
 }
 
+std::optional<QPoint> SceneView::on_screen(double x, double y) const {
+    if (document_ == nullptr || image_.isNull()) {
+        return std::nullopt;
+    }
+    if (!diorama()) {
+        return from_map(x, y);
+    }
+    const engine::render::Mat4 vp = scene2d::diorama_view_projection(
+        diorama_camera(document_->settings(), camera_x_, camera_y_),
+        static_cast<float>(image_.width()) / static_cast<float>(image_.height()));
+    const auto clip =
+        vp.transform(engine::render::Vec3{static_cast<float>(x), 0.0F, static_cast<float>(y)});
+    if (!(clip[3] > 0.0F)) {
+        return std::nullopt;
+    }
+    return from_ndc(clip[0] / clip[3], clip[1] / clip[3]);
+}
+
 std::optional<SceneView::Handles> SceneView::handles() const {
-    if (document_ == nullptr || image_.isNull() || diorama() || paint_tile_) {
+    if (document_ == nullptr || image_.isNull() || paint_tile_) {
         return std::nullopt;
     }
     const engine::world::Entity e = document_->world().find(selection_);
@@ -269,12 +287,30 @@ std::optional<SceneView::Handles> SceneView::handles() const {
     if (at == nullptr || document_->world().get<scene2d::Sprite>(e) == nullptr) {
         return std::nullopt;
     }
-    constexpr int length = 34; ///< From the position to the middle of an arrow's head.
+    constexpr double length = 34.0; ///< From the position to the middle of an arrow's head.
     constexpr int head = 10;
-    const QPoint origin = from_map(at->x, at->y);
-    return Handles{QRect(origin + QPoint(length - (head / 2), -(head / 2)), QSize(head, head)),
-                   QRect(origin + QPoint(-(head / 2), length - (head / 2)), QSize(head, head)),
-                   origin};
+    // Each arrow points the way one tile across, or down, goes on screen.
+    const std::optional<QPoint> origin = on_screen(at->x, at->y);
+    const std::optional<QPoint> across = on_screen(at->x + 1.0, at->y);
+    const std::optional<QPoint> down = on_screen(at->x, at->y + 1.0);
+    if (!origin || !across || !down) {
+        return std::nullopt;
+    }
+    const auto tip = [&](QPoint toward) -> std::optional<QRect> {
+        const QPointF way = QPointF(toward - *origin);
+        const double size = std::hypot(way.x(), way.y());
+        if (!(size > 0.5)) {
+            return std::nullopt; // seen end on: no way to drag along it
+        }
+        const QPoint middle = *origin + (way * (length / size)).toPoint();
+        return QRect(middle - QPoint(head / 2, head / 2), QSize(head, head));
+    };
+    const std::optional<QRect> across_head = tip(*across);
+    const std::optional<QRect> down_head = tip(*down);
+    if (!across_head || !down_head) {
+        return std::nullopt;
+    }
+    return Handles{*across_head, *down_head, *origin};
 }
 
 void SceneView::mousePressEvent(QMouseEvent* event) {

@@ -53,15 +53,19 @@ public:
     /// selected with it move by as much, keeping their places around it).
     void set_snap(bool snap) noexcept { snap_ = snap; }
     [[nodiscard]] bool snap() const noexcept { return snap_; }
-    /// The move handles of the selection, in Classic 2D: an arrow across (x) and one down
-    /// (y) from the first selected entity's position. Dragging an arrow's head moves the
-    /// selection along that axis only. Nothing when nothing movable is selected.
+    /// The move handles of the selection: an arrow across (x) and one down (y) from the
+    /// first selected entity's position, along the ground in the Diorama style. Dragging
+    /// an arrow's head moves the selection along that axis only. Nothing when nothing
+    /// movable is selected, or while painting.
     struct Handles {
         QRect across;
         QRect down;
         QPoint origin;
     };
     [[nodiscard]] std::optional<Handles> handles() const;
+    /// The point of this widget showing map point (x, y): on the map in Classic 2D, on the
+    /// ground through the camera in the Diorama style (nothing if it is behind it).
+    [[nodiscard]] std::optional<QPoint> on_screen(double x, double y) const;
     /// Draws the scene again (after an edit).
     void refresh();
 

@@ -814,6 +814,28 @@ TEST_CASE("In the Diorama style: click through the camera, drag along the ground
     CHECK(t->x == 10.0);
     CHECK(t->y == 9.0);
 
+    // The move handles lie along the ground, from where the hero stands: the arrow across
+    // points the way the map's x goes on screen. Dragged by it, the hero moves across only.
+    REQUIRE(view->handles().has_value());
+    const editor::SceneView::Handles handles =
+        view->handles().value_or(editor::SceneView::Handles{});
+    CHECK(handles.origin == on_screen(10.0, 9.0));
+    const QPoint across_way = on_screen(11.0, 9.0) - on_screen(10.0, 9.0);
+    const QPoint head_way = handles.across.center() - handles.origin;
+    CHECK(QPoint::dotProduct(across_way, head_way) > 0); // the same way
+    const QPoint grab = handles.across.center();
+    const QPoint by = on_screen(12.0, 11.0) - on_screen(10.0, 9.0); // two across, two down
+    mouse(view, QEvent::MouseButtonPress, grab, Qt::LeftButton);
+    for (int i = 1; i <= 4; ++i) {
+        mouse(view, QEvent::MouseMove, grab + (by * i) / 4, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, grab + by, Qt::LeftButton);
+    t = d->world().get<scene2d::Transform2D>(d->world().find(hero_guid));
+    CHECK(t->x > 11.5); // about two across (perspective: not exactly)
+    CHECK(t->x < 12.5);
+    CHECK(t->y == 9.0); // and not down at all
+    window.undo();
+
     // Painting a tile on the ground through the camera.
     window.select(d->world().guid(d->world().find_named("ground").at(0)));
     auto* path = window.tile_palette()->findChild<QToolButton*>(QStringLiteral("tile:1"));
