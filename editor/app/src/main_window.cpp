@@ -76,6 +76,7 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     outliner_ = new QTreeWidget(this);
     outliner_->setObjectName(QStringLiteral("outliner"));
     outliner_->setHeaderHidden(true);
+    outliner_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     outliner_->setAccessibleName(tr("Entities"));
     auto* entities = new QDockWidget(tr("Entities"), this);
     entities->setObjectName(QStringLiteral("entities_dock"));
@@ -156,17 +157,27 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     build_actions();
     connect(advanced, &QCheckBox::toggled, inspector_, &Inspector::set_show_advanced);
     connect(outliner_, &QTreeWidget::itemSelectionChanged, this, [this] {
-        const QList<QTreeWidgetItem*> items = outliner_->selectedItems();
-        const std::optional<engine::Guid> guid =
-            items.isEmpty() ? std::nullopt
-                            : engine::Guid::parse(
-                                  items.front()->data(0, Qt::UserRole).toString().toStdString());
-        const engine::Guid chosen = guid.value_or(engine::Guid{});
-        if (chosen != selection_) {
-            select(chosen);
+        // In the list's order, the current item (the one clicked last) first.
+        std::vector<engine::Guid> chosen;
+        const auto add = [&chosen](const QTreeWidgetItem* item) {
+            const std::optional<engine::Guid> guid =
+                engine::Guid::parse(item->data(0, Qt::UserRole).toString().toStdString());
+            if (guid && std::find(chosen.begin(), chosen.end(), *guid) == chosen.end()) {
+                chosen.push_back(*guid);
+            }
+        };
+        if (outliner_->currentItem() != nullptr && outliner_->currentItem()->isSelected()) {
+            add(outliner_->currentItem());
+        }
+        for (const QTreeWidgetItem* item : outliner_->selectedItems()) {
+            add(item);
+        }
+        if (chosen != selected_) {
+            select_many(std::move(chosen));
         }
     });
     connect(view_, &SceneView::selected, this, [this](engine::Guid guid) { select(guid); });
+    connect(view_, &SceneView::toggled, this, [this](engine::Guid guid) { toggle_selected(guid); });
     connect(view_, &SceneView::moved, this, [this] { changed(false); });
     connect(view_, &SceneView::problem, this, &MainWindow::report);
     connect(logic_, &LogicPanel::edited, this, [this] { update_title_and_actions(); });
@@ -321,8 +332,20 @@ bool MainWindow::start_here() {
     return true;
 }
 
+void MainWindow::reselect() {
+    // What is still there stays selected.
+    std::vector<engine::Guid> still;
+    for (const engine::Guid guid : selected_) {
+        if (document_->world().find(guid).is_valid()) {
+            still.push_back(guid);
+        }
+    }
+    select_many(std::move(still));
+}
+
 void MainWindow::show_scene() {
     selection_ = engine::Guid{};
+    selected_.clear();
     view_->set_document(document_.get());
     inspector_->show_entity(document_.get(), selection_);
     palette_->show_tilemap(document_.get(), selection_);
@@ -341,6 +364,7 @@ bool MainWindow::open_project(const fs::path& folder) {
     }
     document_ = std::move(opened);
     selection_ = engine::Guid{};
+    selected_.clear();
     view_->set_document(document_.get());
     inspector_->show_entity(document_.get(), selection_);
     const QString assets = path_text(folder / "assets");
@@ -358,18 +382,38 @@ bool MainWindow::open_project(const fs::path& folder) {
 }
 
 void MainWindow::select(engine::Guid entity) {
+    select_many(entity.is_valid() ? std::vector<engine::Guid>{entity}
+                                  : std::vector<engine::Guid>{});
+}
+
+void MainWindow::toggle_selected(engine::Guid entity) {
+    std::vector<engine::Guid> now = selected_;
+    if (const auto found = std::find(now.begin(), now.end(), entity); found != now.end()) {
+        now.erase(found);
+    } else {
+        now.push_back(entity);
+    }
+    select_many(std::move(now));
+}
+
+void MainWindow::select_many(std::vector<engine::Guid> entities) {
+    selected_ = std::move(entities);
+    const engine::Guid entity = selected_.empty() ? engine::Guid{} : selected_.front();
     selection_ = entity;
-    view_->set_selection(entity);
+    view_->set_group(selected_);
     inspector_->show_entity(document_.get(), entity);
     palette_->show_tilemap(document_.get(), entity); // also stops painting
     // The list follows, without echoing back.
     const QSignalBlocker quiet(outliner_);
     outliner_->clearSelection();
-    const QString wanted = text_of(entity.to_string());
     for (QTreeWidgetItemIterator it(outliner_); *it != nullptr; ++it) {
-        if ((*it)->data(0, Qt::UserRole).toString() == wanted) {
+        const std::optional<engine::Guid> guid =
+            engine::Guid::parse((*it)->data(0, Qt::UserRole).toString().toStdString());
+        if (guid && std::find(selected_.begin(), selected_.end(), *guid) != selected_.end()) {
             (*it)->setSelected(true);
-            outliner_->scrollToItem(*it);
+            if (*guid == entity) {
+                outliner_->scrollToItem(*it);
+            }
         }
     }
     update_title_and_actions();
@@ -466,7 +510,7 @@ bool MainWindow::save() {
 void MainWindow::undo() {
     if (document_ != nullptr && document_->undo()) {
         rebuild_outliner();
-        select(document_->world().find(selection_).is_valid() ? selection_ : engine::Guid{});
+        reselect();
         view_->refresh();
         logic_->rebuild();
         project_->refresh();
@@ -476,7 +520,7 @@ void MainWindow::undo() {
 void MainWindow::redo() {
     if (document_ != nullptr && document_->redo()) {
         rebuild_outliner();
-        select(document_->world().find(selection_).is_valid() ? selection_ : engine::Guid{});
+        reselect();
         view_->refresh();
         logic_->rebuild();
         project_->refresh();
@@ -497,7 +541,7 @@ engine::Guid MainWindow::new_entity() {
 }
 
 void MainWindow::delete_selection() {
-    if (document_ != nullptr && document_->delete_entity(selection_)) {
+    if (document_ != nullptr && document_->delete_entities(selected_)) {
         rebuild_outliner();
         select(engine::Guid{});
         view_->refresh();

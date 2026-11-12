@@ -49,6 +49,16 @@ void SceneView::set_document(Document* document) {
 
 void SceneView::set_selection(engine::Guid entity) {
     selection_ = entity;
+    group_.clear();
+    if (entity.is_valid()) {
+        group_.push_back(entity);
+    }
+    update();
+}
+
+void SceneView::set_group(std::vector<engine::Guid> entities) {
+    group_ = std::move(entities);
+    selection_ = group_.empty() ? engine::Guid{} : group_.front();
     update();
 }
 
@@ -190,29 +200,27 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
         painter.setPen(QPen(QColor(255, 255, 255), 1, Qt::DashLine));
         painter.drawRect(QRect(drag_from_, rect_to_).normalized());
     }
-    // The selection's outline: in 3D, around the billboard as the camera sees it.
-    if (diorama()) {
-        const engine::world::Entity e = document_->world().find(selection_);
-        if (const auto rect =
-                e.is_valid()
-                    ? diorama_sprite_rect(
-                          document_->world(), document_->assets(), e,
-                          diorama_camera(document_->settings(), camera_x_, camera_y_),
-                          static_cast<float>(image_.width()) / static_cast<float>(image_.height()))
-                    : std::nullopt) {
-            painter.setPen(QPen(QColor(255, 220, 60), 2));
-            painter.drawRect(
-                QRect(from_ndc((*rect)[0], (*rect)[3]), from_ndc((*rect)[2], (*rect)[1])));
+    // Each selected entity's outline (the first brighter): in 3D, around the billboard
+    // as the camera sees it.
+    for (const engine::Guid guid : group_) {
+        const engine::world::Entity e =
+            document_ != nullptr ? document_->world().find(guid) : engine::world::Entity{};
+        if (!e.is_valid()) {
+            continue;
         }
-    } else if (document_ != nullptr) {
-        const engine::world::Entity e = document_->world().find(selection_);
-        if (e.is_valid()) {
-            if (const auto box = sprite_bounds(document_->world(), document_->assets(), e,
-                                               document_->settings().ppu)) {
-                painter.setPen(QPen(QColor(255, 220, 60), 2));
-                painter.drawRect(QRect(from_map(box->left, box->top),
-                                       from_map(box->right, box->bottom) - QPoint(1, 1)));
+        painter.setPen(QPen(guid == selection_ ? QColor(255, 220, 60) : QColor(200, 170, 50), 2));
+        if (diorama()) {
+            if (const auto rect = diorama_sprite_rect(
+                    document_->world(), document_->assets(), e,
+                    diorama_camera(document_->settings(), camera_x_, camera_y_),
+                    static_cast<float>(image_.width()) / static_cast<float>(image_.height()))) {
+                painter.drawRect(
+                    QRect(from_ndc((*rect)[0], (*rect)[3]), from_ndc((*rect)[2], (*rect)[1])));
             }
+        } else if (const auto box = sprite_bounds(document_->world(), document_->assets(), e,
+                                                  document_->settings().ppu)) {
+            painter.drawRect(QRect(from_map(box->left, box->top),
+                                   from_map(box->right, box->bottom) - QPoint(1, 1)));
         }
     }
 }
@@ -253,16 +261,38 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
                      document_->settings().ppu);
         }
         const engine::Guid guid = e.is_valid() ? document_->world().guid(e) : engine::Guid{};
-        selection_ = guid;
-        Q_EMIT selected(guid);
+        // Ctrl or Shift: in or out of the selection, and no drag.
+        if ((event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) != 0) {
+            if (guid.is_valid()) {
+                Q_EMIT toggled(guid);
+            }
+            update();
+            return;
+        }
+        // On one of a group: the group stays, to be dragged together.
+        const bool in_group = group_.size() > 1 && guid.is_valid() &&
+                              std::find(group_.begin(), group_.end(), guid) != group_.end();
+        if (!in_group) {
+            selection_ = guid;
+            group_.assign(guid.is_valid() ? 1U : 0U, guid);
+            Q_EMIT selected(guid);
+        }
         // Characters and props are dragged; maps stay where they are.
-        const auto* transform =
-            e.is_valid() ? document_->world().get<scene2d::Transform2D>(e) : nullptr;
+        dragged_.clear();
+        for (const engine::Guid member : group_) {
+            const engine::world::Entity m = document_->world().find(member);
+            const auto* at =
+                m.is_valid() ? document_->world().get<scene2d::Transform2D>(m) : nullptr;
+            if (at != nullptr && document_->world().get<scene2d::Sprite>(m) != nullptr) {
+                dragged_.emplace_back(member, QPointF(at->x, at->y));
+            }
+        }
         const std::optional<QPointF> ground = map_point(drag_from_);
-        if (transform != nullptr && document_->world().get<scene2d::Sprite>(e) != nullptr &&
-            ground) {
+        const bool movable =
+            std::any_of(dragged_.begin(), dragged_.end(),
+                        [guid](const auto& member) { return member.first == guid; });
+        if (movable && ground) {
             drag_ = Drag::Entity;
-            entity_from_ = QPointF(transform->x, transform->y);
             ground_from_ = *ground;
             document_->end_merge();
         }
@@ -296,9 +326,14 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
             return;
         }
         const QPointF moved_by = *ground - ground_from_;
-        const double x = std::round((entity_from_.x() + moved_by.x()) * ppu) / ppu;
-        const double y = std::round((entity_from_.y() + moved_by.y()) * ppu) / ppu;
-        if (document_->move_entity(selection_, x, y)) {
+        std::vector<std::pair<engine::Guid, std::array<double, 2>>> to;
+        to.reserve(dragged_.size());
+        for (const auto& [member, from] : dragged_) {
+            to.emplace_back(
+                member, std::array<double, 2>{std::round((from.x() + moved_by.x()) * ppu) / ppu,
+                                              std::round((from.y() + moved_by.y()) * ppu) / ppu});
+        }
+        if (document_->move_entities(to)) {
             Q_EMIT moved();
             refresh();
         }
@@ -369,6 +404,7 @@ void SceneView::dropEvent(QDropEvent* event) {
             continue;
         }
         selection_ = placed_entity;
+        group_.assign(1, placed_entity);
         Q_EMIT placed(placed_entity);
     }
     event->acceptProposedAction();

@@ -27,6 +27,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace editor {
@@ -171,6 +172,14 @@ public:
     /// or an invalid one, with `error` in plain language, if the asset is neither.
     engine::Guid place_asset(std::string_view asset_path, double x, double y, std::string& error);
     bool delete_entity(engine::Guid entity);
+    /// Deletes several entities as one step of undo ("Delete 3 entities"). Ones already
+    /// gone (with a parent deleted before them) are passed over. False if none existed.
+    bool delete_entities(const std::vector<engine::Guid>& entities);
+    /// Moves several entities' Positions at once, each to its own point: a group dragged
+    /// together. Moves of the same group merge into one step, as a drag does. Entities
+    /// without a Position, and points that are not numbers, are passed over; false if
+    /// nothing moved.
+    bool move_entities(const std::vector<std::pair<engine::Guid, std::array<double, 2>>>& to);
     bool rename(engine::Guid entity, std::string_view name);
     bool add_component(engine::Guid entity, const engine::reflect::TypeInfo& component);
     bool remove_component(engine::Guid entity, const engine::reflect::TypeInfo& component);

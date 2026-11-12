@@ -444,6 +444,34 @@ bool Document::move_entity(Guid entity, double x, double y) {
     return true;
 }
 
+bool Document::move_entities(const std::vector<std::pair<Guid, std::array<double, 2>>>& to) {
+    Impl& d = *impl_;
+    std::vector<std::pair<scene2d::Transform2D*, std::array<double, 2>>> moves;
+    std::string group; // the GUIDs moved, so the same group's moves merge
+    for (const auto& [guid, point] : to) {
+        const world::Entity e = d.find(guid);
+        auto* transform = e.is_valid() ? d.world->get<scene2d::Transform2D>(e) : nullptr;
+        if (transform != nullptr && std::isfinite(point[0]) && std::isfinite(point[1])) {
+            moves.emplace_back(transform, point);
+            group += guid.to_string();
+        }
+    }
+    if (moves.empty()) {
+        return false;
+    }
+    if (moves.size() == 1) {
+        return move_entity(to.front().first, moves.front().second[0], moves.front().second[1]);
+    }
+    serialize::Json before = d.snapshot();
+    for (const auto& [transform, point] : moves) {
+        transform->x = point[0];
+        transform->y = point[1];
+    }
+    d.record("Move " + std::to_string(moves.size()) + " entities", std::move(before), Guid{},
+             "transform_2d/position:" + group);
+    return true;
+}
+
 bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
     Impl& d = *impl_;
     const world::Entity e = d.find(tilemap);
@@ -702,6 +730,26 @@ bool Document::delete_entity(Guid entity) {
     serialize::Json before = d.snapshot();
     d.world->destroy(e);
     d.record(label, std::move(before));
+    return true;
+}
+
+bool Document::delete_entities(const std::vector<Guid>& entities) {
+    Impl& d = *impl_;
+    if (entities.size() == 1) {
+        return delete_entity(entities.front());
+    }
+    serialize::Json before = d.snapshot();
+    std::size_t deleted = 0;
+    for (const Guid guid : entities) {
+        if (const world::Entity e = d.find(guid); e.is_valid()) {
+            d.world->destroy(e);
+            ++deleted;
+        }
+    }
+    if (deleted == 0) {
+        return false;
+    }
+    d.record("Delete " + std::to_string(deleted) + " entities", std::move(before));
     return true;
 }
 

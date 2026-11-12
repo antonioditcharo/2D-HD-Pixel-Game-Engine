@@ -304,6 +304,83 @@ TEST_CASE("Clicking in the scene selects what is on top; dragging moves it, in o
     CHECK(e.window.selection() == e.guid("ground"));
 }
 
+TEST_CASE("Several entities selected: Ctrl-click and the list, dragged and deleted together") {
+    Editor e;
+    editor::SceneView* view = e.window.scene_view();
+    const Guid hero = e.guid("hero");
+    const Guid elder = e.guid("elder");
+    const auto click = [&](QPointF map, Qt::KeyboardModifiers held) {
+        const QPoint at = view->from_map(map.x(), map.y());
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(at), view->mapToGlobal(QPointF(at)),
+                          Qt::LeftButton, Qt::LeftButton, held);
+        QApplication::sendEvent(view, &press);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(at), view->mapToGlobal(QPointF(at)),
+                            Qt::LeftButton, Qt::NoButton, held);
+        QApplication::sendEvent(view, &release);
+    };
+    const auto at = [&](Guid guid) {
+        return *e.window.document()->world().get<scene2d::Transform2D>(
+            e.window.document()->world().find(guid));
+    };
+    // The hero, then Ctrl-click the elder: both, the hero first (in the inspector).
+    click(QPointF(10.0, 8.5), Qt::NoModifier);
+    click(QPointF(6.0, 4.5), Qt::ControlModifier);
+    CHECK(e.window.selected() == std::vector<Guid>{hero, elder});
+    CHECK(e.window.selection() == hero);
+    CHECK(e.window.outliner()->selectedItems().size() == 2);
+    // Dragging the elder moves both, by the same amount, as one undo step.
+    const QPoint from = view->from_map(6.0, 4.5);
+    const QPoint to = view->from_map(7.0, 5.5);
+    mouse(view, QEvent::MouseButtonPress, from, Qt::LeftButton);
+    CHECK(e.window.selected().size() == 2); // pressing on one of the group keeps the group
+    for (int i = 1; i <= 4; ++i) {
+        mouse(view, QEvent::MouseMove, from + ((to - from) * i) / 4, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, to, Qt::LeftButton);
+    CHECK(std::abs(at(hero).x - 11.0) < 0.07);
+    CHECK(std::abs(at(hero).y - 10.0) < 0.07);
+    CHECK(std::abs(at(elder).x - 7.0) < 0.07);
+    CHECK(std::abs(at(elder).y - 6.0) < 0.07);
+    CHECK(e.window.document()->undo_label() == "Move 2 entities");
+    e.window.undo();
+    CHECK(at(hero).x == 10.0);
+    CHECK(at(elder).x == 6.0);
+    CHECK_FALSE(e.window.document()->can_undo());
+    CHECK(e.window.selected().size() == 2); // still both after undo
+    // Ctrl-click the hero again: out; Shift-click: back in, last.
+    click(QPointF(10.0, 8.5), Qt::ControlModifier);
+    CHECK(e.window.selected() == std::vector<Guid>{elder});
+    click(QPointF(10.0, 8.5), Qt::ShiftModifier);
+    CHECK(e.window.selected() == std::vector<Guid>{elder, hero});
+    // Delete removes both, as one step; undo brings both back, still selected.
+    const int listed = e.window.outliner()->topLevelItemCount();
+    e.window.delete_selection();
+    CHECK(e.window.outliner()->topLevelItemCount() == listed - 2);
+    CHECK(e.window.selected().empty());
+    CHECK(e.window.document()->undo_label() == "Delete 2 entities");
+    e.window.undo();
+    CHECK(e.window.outliner()->topLevelItemCount() == listed);
+    // A plain click on one of them: that one alone.
+    click(QPointF(10.0, 8.5), Qt::NoModifier);
+    CHECK(e.window.selected() == std::vector<Guid>{hero});
+    // In the list: several items selected select them all, the current one first.
+    QTreeWidget* list = e.window.outliner();
+    QTreeWidgetItem* hero_item = nullptr;
+    QTreeWidgetItem* lamp_item = nullptr;
+    for (QTreeWidgetItemIterator it(list); *it != nullptr; ++it) {
+        if ((*it)->text(0) == QStringLiteral("hero")) {
+            hero_item = *it;
+        } else if ((*it)->text(0) == QStringLiteral("lamp")) {
+            lamp_item = *it;
+        }
+    }
+    REQUIRE(hero_item != nullptr);
+    REQUIRE(lamp_item != nullptr);
+    list->setCurrentItem(lamp_item, 0, QItemSelectionModel::Select);
+    CHECK(e.window.selected() == std::vector<Guid>{e.guid("lamp"), hero});
+    CHECK(e.window.selection() == e.guid("lamp"));
+}
+
 TEST_CASE("New entities get components from the inspector, and saving and exporting work") {
     Editor e;
     const Guid made = e.window.new_entity();

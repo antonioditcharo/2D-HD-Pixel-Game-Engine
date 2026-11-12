@@ -212,6 +212,50 @@ TEST_CASE("Entities and components are created, renamed and removed, and come ba
     CHECK_FALSE(d->dirty());
 }
 
+TEST_CASE("Several entities move and are deleted together, each as one step") {
+    const Sample sample;
+    const auto d = sample.open();
+    const Guid hero = guid_of(*d, "hero");
+    const Guid elder = guid_of(*d, "elder");
+    const auto at = [&](Guid guid) {
+        return *d->world().get<scene2d::Transform2D>(d->world().find(guid));
+    };
+    // A group dragged: each to its own point; the drag's moves merge into one step.
+    for (int i = 1; i <= 3; ++i) {
+        REQUIRE(d->move_entities({{hero, {10.0 + i, 9.0}}, {elder, {6.0 + i, 5.0}}}));
+    }
+    CHECK(at(hero).x == 13.0);
+    CHECK(at(elder).x == 9.0);
+    CHECK(d->undo_label() == "Move 2 entities");
+    d->end_merge();
+    // Another drag of the same two is its own step.
+    REQUIRE(d->move_entities({{hero, {14.0, 9.0}}, {elder, {10.0, 5.0}}}));
+    REQUIRE(d->undo());
+    CHECK(at(hero).x == 13.0);
+    REQUIRE(d->undo());
+    CHECK(at(hero).x == 10.0);
+    CHECK(at(elder).x == 6.0);
+    CHECK_FALSE(d->can_undo());
+    // What has no Position, or no number to go to, is passed over; nothing at all, false.
+    const Guid empty = d->create_entity("empty", 0.0, 0.0);
+    const reflect::TypeInfo* position = d->registry().find_type<scene2d::Transform2D>();
+    REQUIRE(position != nullptr);
+    REQUIRE(d->remove_component(empty, *position));
+    CHECK_FALSE(d->move_entities({{empty, {1.0, 1.0}}, {hero, {std::nan(""), 1.0}}}));
+    CHECK_FALSE(d->move_entities({}));
+    // Deleted together: one step, and back together.
+    const std::size_t before = d->entities().size();
+    REQUIRE(d->delete_entities({hero, elder, Guid::generate()}));
+    CHECK(d->undo_label() == "Delete 2 entities");
+    CHECK(d->entities().size() == before - 2);
+    CHECK_FALSE(d->delete_entities({hero, elder}));
+    REQUIRE(d->undo());
+    CHECK(d->entities().size() == before);
+    CHECK(at(hero).x == 10.0);
+    REQUIRE(d->delete_entities({elder})); // one alone reads as it always has
+    CHECK(d->undo_label() == "Delete elder");
+}
+
 TEST_CASE("Placing a picture from the assets makes a sprite there, as one step") {
     const Sample sample;
     const auto d = sample.open();

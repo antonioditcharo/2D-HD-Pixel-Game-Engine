@@ -56,6 +56,13 @@ public:
     void set_quiet(bool quiet) noexcept { quiet_ = quiet; }
     /// Selects an entity everywhere: the list, the scene and the inspector.
     void select(engine::Guid entity);
+    /// Selects several entities together: all in the list and outlined in the scene, the
+    /// first in the inspector. Delete removes them all and dragging moves them all.
+    void select_many(std::vector<engine::Guid> entities);
+    /// Adds `entity` to the selection, or takes it out (Ctrl- or Shift-click).
+    void toggle_selected(engine::Guid entity);
+    /// Everything selected, the inspector's first.
+    [[nodiscard]] const std::vector<engine::Guid>& selected() const noexcept { return selected_; }
 
     [[nodiscard]] Document* document() const noexcept { return document_.get(); }
     [[nodiscard]] engine::Guid selection() const noexcept { return selection_; }
@@ -85,7 +92,10 @@ protected:
 private:
     /// Shows the document's scene everywhere, after another was opened.
     void show_scene();
+    /// After undo or redo: keeps selected what is still there.
+    void reselect();
     bool quiet_ = false;
+    std::vector<engine::Guid> selected_;
 
 private:
     void build_actions();

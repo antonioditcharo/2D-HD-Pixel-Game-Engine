@@ -29,6 +29,9 @@ public:
     /// Shows `document`, with the camera on the middle of its map.
     void set_document(Document* document);
     void set_selection(engine::Guid entity);
+    /// Several entities selected together: each is outlined, and dragging any of them
+    /// moves them all. The first is the one `selected` reported.
+    void set_group(std::vector<engine::Guid> entities);
     /// Paint mode: the left button paints `tile` into `tilemap`, the right button erases;
     /// nullopt leaves it.
     void set_painting(engine::Guid tilemap, std::optional<std::int32_t> tile);
@@ -59,6 +62,8 @@ public:
 
 Q_SIGNALS:
     void selected(engine::Guid entity);
+    /// Ctrl- or Shift-click: `entity` joins the selection, or leaves it.
+    void toggled(engine::Guid entity);
     /// The scene was changed here: an entity dragged, or tiles painted.
     void moved();
     /// Escape was pressed while painting.
@@ -85,6 +90,9 @@ private:
     std::unique_ptr<Preview> preview_;
     QImage image_;
     engine::Guid selection_;
+    std::vector<engine::Guid> group_; ///< Everything selected, `selection_` first.
+    /// A group being dragged: each entity and where it was when the drag began.
+    std::vector<std::pair<engine::Guid, QPointF>> dragged_;
     double camera_x_ = 0.0;
     double camera_y_ = 0.0;
     // A drag in progress.
@@ -97,7 +105,6 @@ private:
     PaintTool paint_tool_ = PaintTool::Pencil;
     QPoint rect_to_; ///< Where a rectangle being dragged reaches now.
     QPoint drag_from_;
-    QPointF entity_from_;
     QPointF ground_from_; ///< The map point under the cursor when a drag began.
     [[nodiscard]] bool diorama() const;
     /// The image point (-1 to 1, y up) under a point of this widget.
