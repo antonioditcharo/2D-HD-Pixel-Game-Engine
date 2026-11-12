@@ -533,12 +533,35 @@ TEST_CASE("Pictures are dragged from the assets into the scene") {
     CHECK(e.window.document()->undo_label() == "Place elder");
     REQUIRE(e.window.document()->undo());
 
-    // A sound is not placed; the status bar says why.
+    // A sound dropped there becomes a Sound Source, selected; the inspector lists the
+    // project's sounds for it, with this one chosen.
     const std::unique_ptr<QMimeData> chime = drag_data(e.sample.path / "assets/sfx/chime.wav");
     drop(*chime, view->from_map(6.5, 8.0));
+    CHECK(e.window.document()->undo_label() == "Place chime");
+    const engine::world::Entity hum = world.find(e.window.selection());
+    REQUIRE(hum.is_valid());
+    const auto* source = world.get<engine::game::SoundSource>(hum);
+    REQUIRE(source != nullptr);
+    const std::string chime_guid =
+        e.window.document()->assets().find("sfx/chime.wav")->guid.to_string();
+    CHECK(source->sound == chime_guid);
+    bool listed_sound = false;
+    for (const QComboBox* box : e.window.findChildren<QComboBox*>()) {
+        if (box->findText(QStringLiteral("sfx/chime.wav")) >= 0) {
+            listed_sound = true;
+            CHECK(box->currentText() == QStringLiteral("sfx/chime.wav"));
+            CHECK(box->findText(QStringLiteral("art/hero.png")) < 0); // sounds only
+        }
+    }
+    CHECK(listed_sound);
+    REQUIRE(e.window.document()->undo());
+
+    // Other kinds of file are not placed; the status bar says why.
+    const std::unique_ptr<QMimeData> rules = drag_data(e.sample.path / "assets/logic/main.drules");
+    drop(*rules, view->from_map(6.5, 8.0));
     CHECK(e.window.statusBar()->currentMessage().startsWith(
-        QStringLiteral("Only pictures (PNG) can be placed")));
-    CHECK(e.window.document()->undo_label() != "Place chime");
+        QStringLiteral("Only pictures (PNG) and sounds")));
+    CHECK(e.window.document()->undo_label() != "Place main");
 
     // Nor is a file from outside the assets.
     QMimeData outside;

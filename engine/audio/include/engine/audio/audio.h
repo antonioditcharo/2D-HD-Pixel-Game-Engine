@@ -72,6 +72,19 @@ public:
     void set_master_volume(double volume);
     [[nodiscard]] double master_volume() const noexcept;
 
+    /// Starts a loaded sound on repeat on the Sounds bus (a waterfall, a fire), at
+    /// `volume` and `pan` as play_sound() takes them. Returns what names it to set_loop()
+    /// and stop_loop(), or 0 if it could not start.
+    [[nodiscard]] std::uint64_t play_loop(std::string_view key, double volume = 1.0,
+                                          double pan = 0.0);
+    /// Changes a looping sound's volume and pan, as its listener moves. Nothing for an
+    /// unknown loop.
+    void set_loop(std::uint64_t loop, double volume, double pan);
+    /// Stops a looping sound. Nothing for an unknown loop.
+    void stop_loop(std::uint64_t loop);
+    /// Looping sounds playing.
+    [[nodiscard]] std::size_t playing_loops() const;
+
     /// One-shot sounds still playing.
     [[nodiscard]] std::size_t playing_sounds() const;
 

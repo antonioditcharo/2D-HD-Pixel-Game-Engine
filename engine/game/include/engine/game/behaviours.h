@@ -89,6 +89,27 @@ struct Interactable {
     bool enabled = true;
 };
 
+/// "Sound Source": a sound on repeat where the entity is (a waterfall, a fire, a crowd),
+/// heard from the player: full volume beside it, fading to silence `range` tiles away,
+/// and from the side it is on.
+struct SoundSource {
+    std::string sound;   ///< The GUID of a sound asset (or its path in assets/).
+    double volume = 1.0; ///< Beside it, 0 to 1.
+    double range = 8.0;  ///< How far it carries, in tiles.
+    bool playing = true;
+};
+
+/// How loud (0 to `source.volume`) and from which side (-1 left to 1 right) a sound source
+/// at (x, y) is heard from `ear`. Silent when it is not playing, or `range` away or more.
+struct Heard {
+    double volume = 0.0;
+    double pan = 0.0;
+};
+[[nodiscard]] Heard heard(const SoundSource& source, double x, double y,
+                          std::array<double, 2> ear) noexcept;
+/// How far to one side, in tiles, a sound is fully on that side's speaker.
+inline constexpr double full_pan_tiles = 8.0;
+
 /// "Physics Body": the entity takes part in the physics simulation (ADR-008). Dynamic bodies
 /// fall, slide, bounce and are pushed; their Position follows the simulation. Static and
 /// kinematic bodies follow their Position, so logic moves them. The shape is centred on the

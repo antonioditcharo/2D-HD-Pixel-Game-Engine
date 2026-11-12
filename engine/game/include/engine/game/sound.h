@@ -13,6 +13,7 @@
 #include "engine/world/world.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,13 @@ public:
     void set_music_volume(std::int64_t percent);
     void set_sound_volume(std::int64_t percent);
 
+    /// Keeps every Sound Source of the world playing as it should be heard now: started
+    /// when it first plays, louder or quieter and to one side as the player moves, and
+    /// stopped when it is turned off or its entity goes. Called once a step.
+    void update_sources();
+    /// Stops every Sound Source (when the scene is replaced).
+    void stop_sources();
+
     /// Forgets sounds whose files changed or went away, so they are read again next time.
     void apply(const assets::AssetChanges& changes);
     /// Sounds that could not be played, oldest first, in plain language.
@@ -56,6 +64,14 @@ private:
     const assets::AssetDatabase* assets_{nullptr};
     const world::World* world_{nullptr};
     std::vector<std::string> problems_;
+    /// A Sound Source that is playing: the engine's loop, and the sound it repeats (as
+    /// the component names it), so a changed sound starts again. A loop of 0 is a sound
+    /// that could not be played, reported once.
+    struct Source {
+        std::uint64_t loop = 0;
+        std::string sound;
+    };
+    std::map<Guid, Source> sources_;
 };
 
 /// Registers AudioObject as "audio".

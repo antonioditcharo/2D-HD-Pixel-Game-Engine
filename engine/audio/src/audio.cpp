@@ -86,6 +86,7 @@ struct AudioEngine::Impl {
     ~Impl() {
         // Voices first: they belong to the groups and the engine.
         sounds.clear();
+        loops.clear();
         music.reset();
         fading.clear();
         if (groups_ready) {
@@ -166,6 +167,8 @@ struct AudioEngine::Impl {
     std::map<std::string, std::shared_ptr<const Pcm>, std::less<>> decoded;
     std::map<std::string, std::shared_ptr<const std::vector<std::uint8_t>>, std::less<>> streams;
     std::vector<std::unique_ptr<Voice>> sounds;
+    std::map<std::uint64_t, std::unique_ptr<Voice>> loops; ///< Sounds on repeat, by id.
+    std::uint64_t next_loop = 1;
     std::unique_ptr<Voice> music;
     std::string music_key; ///< music's key, or empty: kept beside it for music().
     std::vector<std::unique_ptr<Voice>> fading; ///< Earlier music, fading out.
@@ -290,6 +293,7 @@ bool AudioEngine::is_loaded(std::string_view key) const {
 
 void AudioEngine::unload(std::string_view key) {
     Impl& a = *impl_;
+    std::erase_if(a.loops, [key](const auto& loop) { return loop.second->key == key; });
     std::erase_if(a.sounds, [key](const std::unique_ptr<Voice>& v) { return v->key == key; });
     std::erase_if(a.fading, [key](const std::unique_ptr<Voice>& v) { return v->key == key; });
     if (a.music != nullptr && a.music->key == key) {
@@ -394,6 +398,44 @@ void AudioEngine::set_master_volume(double volume) {
 
 double AudioEngine::master_volume() const noexcept {
     return impl_->master;
+}
+
+std::uint64_t AudioEngine::play_loop(std::string_view key, double volume, double pan) {
+    Impl& a = *impl_;
+    std::unique_ptr<Voice> voice = a.voice(key, &a.sound_group);
+    if (voice == nullptr) {
+        return 0;
+    }
+    ma_sound_set_looping(&voice->sound, MA_TRUE);
+    const std::uint64_t id = a.next_loop++;
+    Voice& started = *a.loops.emplace(id, std::move(voice)).first->second;
+    set_loop(id, volume, pan);
+    if (ma_sound_start(&started.sound) != MA_SUCCESS) {
+        a.loops.erase(id);
+        a.error = "Starting a sound failed.";
+        return 0;
+    }
+    return id;
+}
+
+void AudioEngine::set_loop(std::uint64_t loop, double volume, double pan) {
+    Impl& a = *impl_;
+    const auto found = a.loops.find(loop);
+    if (found == a.loops.end()) {
+        return;
+    }
+    ma_sound_set_volume(&found->second->sound,
+                        std::isfinite(volume) ? static_cast<float>(std::max(volume, 0.0)) : 0.0F);
+    ma_sound_set_pan(&found->second->sound,
+                     std::isfinite(pan) ? static_cast<float>(std::clamp(pan, -1.0, 1.0)) : 0.0F);
+}
+
+void AudioEngine::stop_loop(std::uint64_t loop) {
+    impl_->loops.erase(loop);
+}
+
+std::size_t AudioEngine::playing_loops() const {
+    return impl_->loops.size();
 }
 
 std::size_t AudioEngine::playing_sounds() const {

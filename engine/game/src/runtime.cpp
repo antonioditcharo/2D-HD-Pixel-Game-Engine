@@ -812,6 +812,7 @@ void Runtime::step() {
             }
         }
     }
+    r.audio_object.update_sources();
     for (std::string& problem : r.audio_object.take_problems()) {
         r.problems.push_back(std::move(problem));
     }

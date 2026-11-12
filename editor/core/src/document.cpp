@@ -514,7 +514,7 @@ Guid Document::create_entity(std::string_view name, double x, double y) {
     return guid;
 }
 
-Guid Document::place_picture(std::string_view asset_path, double x, double y, std::string& error) {
+Guid Document::place_asset(std::string_view asset_path, double x, double y, std::string& error) {
     Impl& d = *impl_;
     const engine::assets::AssetRecord* record = d.assets->find(asset_path);
     const fs::path path(asset_path);
@@ -526,9 +526,13 @@ Guid Document::place_picture(std::string_view asset_path, double x, double y, st
         error = "There is no asset " + std::string(asset_path) + " in assets/.";
         return Guid{};
     }
-    if (extension != ".png") {
-        error = "Only pictures (PNG) can be placed in the scene; " + std::string(asset_path) +
-                " is not one.";
+    const bool picture = extension == ".png";
+    const bool sound =
+        extension == ".wav" || extension == ".ogg" || extension == ".flac" || extension == ".mp3";
+    if (!picture && !sound) {
+        error = "Only pictures (PNG) and sounds (WAV, Ogg, FLAC, MP3) can be placed in the "
+                "scene; " +
+                std::string(asset_path) + " is neither.";
         return Guid{};
     }
     if (!std::isfinite(x) || !std::isfinite(y)) {
@@ -542,8 +546,12 @@ Guid Document::place_picture(std::string_view asset_path, double x, double y, st
         transform->x = std::round(x * ppu) / ppu;
         transform->y = std::round(y * ppu) / ppu;
     }
-    if (auto* sprite = d.world->add<scene2d::Sprite>(e)) {
-        sprite->image = record->guid.to_string();
+    if (picture) {
+        if (auto* sprite = d.world->add<scene2d::Sprite>(e)) {
+            sprite->image = record->guid.to_string();
+        }
+    } else if (auto* source = d.world->add<game::SoundSource>(e)) {
+        source->sound = record->guid.to_string();
     }
     const Guid guid = d.world->guid(e);
     d.record("Place " + d.name_of(guid), std::move(before));

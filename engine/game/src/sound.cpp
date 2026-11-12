@@ -98,10 +98,65 @@ void AudioObject::set_sound_volume(std::int64_t percent) {
     }
 }
 
+void AudioObject::update_sources() {
+    if (engine_ == nullptr || world_ == nullptr) {
+        return;
+    }
+    const reflect::TypeInfo* type = world_->registry().find_type<SoundSource>();
+    if (type == nullptr) {
+        return;
+    }
+    const std::optional<std::array<double, 2>> ear = player_position(*world_);
+    std::map<Guid, Source> now;
+    world_->each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        const SoundSource* source = ref.as<SoundSource>();
+        const scene2d::Transform2D* at = world_->get<scene2d::Transform2D>(entity);
+        if (source == nullptr || at == nullptr || !source->playing || source->sound.empty()) {
+            return; // not playing: its loop, if any, is stopped below
+        }
+        // Heard from the player; without one, from where the sound is.
+        const Heard level =
+            heard(*source, at->x, at->y, ear.value_or(std::array<double, 2>{at->x, at->y}));
+        const Guid guid = world_->guid(entity);
+        Source playing;
+        if (const auto found = sources_.find(guid);
+            found != sources_.end() && found->second.sound == source->sound) {
+            playing = found->second;
+            sources_.erase(found);
+        } else {
+            playing.sound = source->sound;
+            if (const std::string key = prepare(source->sound); !key.empty()) {
+                playing.loop = engine_->play_loop(key, level.volume, level.pan);
+                if (playing.loop == 0) {
+                    problems_.push_back(source->sound + ": " + engine_->last_error());
+                }
+            }
+        }
+        engine_->set_loop(playing.loop, level.volume, level.pan);
+        now.emplace(guid, std::move(playing));
+    });
+    // What is left was turned off, changed its sound, or is gone.
+    for (const auto& [guid, old] : sources_) {
+        engine_->stop_loop(old.loop);
+    }
+    sources_ = std::move(now);
+}
+
+void AudioObject::stop_sources() {
+    if (engine_ != nullptr) {
+        for (const auto& [guid, source] : sources_) {
+            engine_->stop_loop(source.loop);
+        }
+    }
+    sources_.clear();
+}
+
 void AudioObject::apply(const assets::AssetChanges& changes) {
     if (engine_ == nullptr) {
         return;
     }
+    // Their sounds may be among those changed: they start again from the new files.
+    stop_sources();
     for (const std::vector<Guid>* changed : {&changes.modified, &changes.removed}) {
         for (const Guid guid : *changed) {
             engine_->unload(guid.to_string());

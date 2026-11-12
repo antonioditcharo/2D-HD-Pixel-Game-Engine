@@ -864,6 +864,103 @@ TEST_CASE("Rules play music and sounds from assets") {
     CHECK(left(480)[100] == doctest::Approx(0.25).epsilon(0.001));
 }
 
+TEST_CASE("A Sound Source repeats where it is, louder as the player comes closer") {
+    const Project project;
+    input::Recording replay;
+    replay.record(1, key(input::Key::Left), true); // towards the door, from the second step
+    replay.record(61, key(input::Key::Left), false);
+    const auto runtime = project.open(no_graphics(&replay));
+    audio::AudioEngine* mixer = runtime->audio();
+    REQUIRE(mixer != nullptr);
+    mixer->stop_music();
+    const auto stereo = [mixer] {
+        std::vector<float> out(std::size_t{480} * 2);
+        REQUIRE(mixer->render(out));
+        return std::array<float, 2>{out[200], out[201]};
+    };
+    // The door, 5 tiles west of the hero, hums: the chime (0.25) on repeat, carrying 10 tiles.
+    const world::Entity door = runtime->world().find_named("door").at(0);
+    game::SoundSource* hum = runtime->world().add<game::SoundSource>(door);
+    REQUIRE(hum != nullptr);
+    hum->sound = "sfx/chime.wav";
+    hum->range = 10.0;
+    CHECK(mixer->playing_loops() == 0);
+    runtime->step();
+    CHECK(mixer->playing_loops() == 1);
+    CHECK(mixer->playing_sounds() == 0);
+    // Half-way out of its range: half as loud; 5/8 of the way to the left.
+    std::array<float, 2> heard = stereo();
+    CHECK(heard[0] == doctest::Approx(0.25 * 0.5).epsilon(0.001));
+    CHECK(heard[1] == doctest::Approx(0.25 * 0.5 * 0.375).epsilon(0.001));
+    // It repeats: still there after four times its length.
+    for (int i = 0; i < 20; ++i) {
+        static_cast<void>(stereo());
+    }
+    CHECK(stereo()[0] == doctest::Approx(0.125).epsilon(0.001));
+    // The hero walks 4 tiles towards it: a tile away, 0.9 as loud, nearly in the middle.
+    for (int i = 0; i < 60; ++i) {
+        runtime->step();
+    }
+    CHECK(transform_of(*runtime, "hero").x == doctest::Approx(-4.0));
+    CHECK(mixer->playing_loops() == 1); // the same loop, not one more each step
+    heard = stereo();
+    CHECK(heard[0] == doctest::Approx(0.25 * 0.9).epsilon(0.001));
+    CHECK(heard[1] == doctest::Approx(0.25 * 0.9 * 0.875).epsilon(0.001));
+    // Quieter by its own volume; turned off, silent; on again, it starts again.
+    hum->volume = 0.5;
+    runtime->step();
+    CHECK(stereo()[0] == doctest::Approx(0.25 * 0.45).epsilon(0.001));
+    hum->playing = false;
+    runtime->step();
+    CHECK(mixer->playing_loops() == 0);
+    CHECK(stereo()[0] == doctest::Approx(0.0));
+    hum->playing = true;
+    runtime->step();
+    CHECK(mixer->playing_loops() == 1);
+    // A sound that is not there is a problem told once, not every step.
+    CHECK(runtime->problems().empty());
+    hum->sound = "sfx/nothing.wav";
+    runtime->step();
+    runtime->step();
+    runtime->step();
+    CHECK(mixer->playing_loops() == 0);
+    REQUIRE(runtime->problems().size() == 1);
+    CHECK(runtime->problems()[0] == "There is no sound sfx/nothing.wav in assets/.");
+    // Gone with its entity.
+    hum->sound = "sfx/chime.wav";
+    runtime->step();
+    CHECK(mixer->playing_loops() == 1);
+    runtime->world().destroy(door);
+    runtime->step();
+    CHECK(mixer->playing_loops() == 0);
+}
+
+TEST_CASE("How a Sound Source is heard: by distance, side and its own volume") {
+    game::SoundSource source;
+    source.range = 8.0;
+    const auto at = [&](double x, double y) { return game::heard(source, x, y, {0.0, 0.0}); };
+    CHECK(at(0.0, 0.0).volume == 1.0);
+    CHECK(at(0.0, 0.0).pan == 0.0);
+    CHECK(at(4.0, 0.0).volume == 0.5);
+    CHECK(at(4.0, 0.0).pan == 0.5);
+    CHECK(at(0.0, -6.0).volume == 0.25); // above or below: quieter, but in the middle
+    CHECK(at(0.0, -6.0).pan == 0.0);
+    CHECK(at(-3.0, 4.0).volume == doctest::Approx(0.375)); // 5 tiles away
+    CHECK(at(-3.0, 4.0).pan == -0.375);
+    CHECK(at(8.0, 0.0).volume == 0.0);
+    CHECK(at(30.0, 0.0).volume == 0.0);
+    CHECK(at(30.0, 0.0).pan == 1.0);
+    source.volume = 0.5;
+    CHECK(at(4.0, 0.0).volume == 0.25);
+    source.volume = 7.0; // clamped
+    CHECK(at(0.0, 0.0).volume == 1.0);
+    source.playing = false;
+    CHECK(at(0.0, 0.0).volume == 0.0);
+    source.playing = true;
+    source.range = 0.0; // carries nowhere
+    CHECK(at(0.0, 0.0).volume == 0.0);
+}
+
 TEST_CASE("Problems are reported with the file they are in") {
     const Project project;
     std::vector<serialize::Issue> issues;

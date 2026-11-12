@@ -35,6 +35,7 @@ audio->set_volume(audio::Bus::Music, 0.5);
 | `load(key, bytes)` / `unload(key)` | Decodes a sound into memory under a key (the runtime uses the asset GUID). Loading a key again replaces it, for hot reload; unloading stops it wherever it plays |
 | `load_stream(key, bytes)` | Keeps only the file's bytes, to be decoded as it plays: for long music, whose decoded form would fill memory. Each voice has its own decoder, so a stream can play twice at once and loop |
 | `play_sound(key, volume, pitch, pan)` | Plays once on the Sounds bus. Pitch 2 is an octave up and twice as fast; pan -1 is the left speaker only, 1 the right only (balance: the other side gets quieter) |
+| `play_loop(key, volume, pan)`, `set_loop(id, volume, pan)`, `stop_loop(id)` | A sound on repeat on the Sounds bus, named by the id `play_loop` returns (0 if it could not start), whose volume and pan can change as its listener moves. `playing_loops()` counts them; unloading a sound stops its loops |
 | `play_music(key, fade)` | Loops on the Music bus. The music before fades out over the same time as this fades in. Playing the music already playing does nothing, so a Rule can ask for the town music every time the player enters |
 | `stop_music(fade)` | Fades out, or stops at once with 0 |
 | `set_volume(bus, v)`, `set_master_volume(v)` | 0 to 1, clamped. Sound volume, bus volume and master volume multiply |
@@ -83,6 +84,15 @@ Logic uses the **Audio** object (`audio`):
 | `stop_music(fade)` | *Stop the music, fading over {fade} seconds* |
 | `set_music_volume(percent)`, `set_sound_volume(percent)` | *Set the music volume to {percent}%*, 0 to 100 |
 
+A **Sound Source** component (`sound_source`: `sound`, `volume` 1, `range` 8 tiles,
+`playing`) repeats a sound where its entity is: a waterfall, a fire, a crowd. Each step
+the runtime sets its loop to how the player hears it now: `volume` × (1 − distance /
+`range`), silent `range` tiles away, and panned by how far to the side it is (fully at 8
+tiles), as `heard()` works out. It starts when it first plays, stops when `playing` is
+turned off or its entity goes, starts again if its sound is changed, and a sound that
+cannot be played is reported once. In the editor, a sound dragged into the scene becomes
+one ([editor.md](editor.md)).
+
 - Sounds are named by **asset GUID** (what the editor writes) or by **path** in `assets/`
   (for logic written by hand). Each is read the first time it plays: sound effects are
   decoded whole, music is streamed. A file is loaded once, the way it is first used, and
@@ -103,12 +113,13 @@ All mix headless and read the samples, so they run anywhere, with no sound card:
 | Ogg Vorbis | Half a second of a 440 Hz tone at 0.5 ([`tests/audio/data/`](../../tests/audio/data/), made with ffmpeg and libvorbis) decodes and plays: over its middle 0.4 s the RMS level is that of a sine of 0.5 (to 3%), the peak 0.5 (to 5%), and there are 176 cycles; then silence, with no voice left |
 | Streaming | A streamed tenth of a second loops twenty times over two seconds with no gap, at exactly its level; crossfades with decoded music to the same samples as two decoded ones; plays twice at once as a sound; unloading stops it; junk and silence refused; a streamed Ogg tone has the decoded one's loudness |
 | Panning | Centre, all left, half right, clamped beyond 1 and the middle for not-a-number, each channel exactly as balance says |
+| Loops | A looping sound repeats without a gap at its volume; its volume and pan change while it plays; a second loop has its own id; unknown ids do nothing; stopping one is silence at once, and unloading the sound stops the rest |
+| Sound sources | `heard()`: full beside it, half at half its range, in the middle above or below, to the side by x / 8, silent at its range and beyond, scaled by its own volume (clamped), silent when not playing or with no range. In the runtime: a door 5 tiles west hums at exactly half level, 5/8 to the left, and keeps repeating; after the hero walks 4 tiles towards it, at 0.9 and 1/8 to the left, still one loop; its volume halves it; turned off it is silent and stopped, and on again it starts; a missing sound is one problem, not one a step; destroying the entity stops it |
 | Bad sounds | Junk bytes, nothing, and a sound with no samples refused with messages; playing unknown keys refused; unloading stops a playing sound and the music; loading a key again replaces it |
 | In a game | A Rule on game start plays the theme by path; Interact's Rule plays a chime over it (0.5 + 0.25); missing and unreadable sounds reported; volumes in percent clamped; no engine, no problems. A chime at the door 5 tiles west of the hero: left 0.25 × 0.6875, right that × 0.375; out of hearing, nothing; nobody by that name, a problem; music streamed |
 
 ## 6. Next increments
 
 1. **Snapshots and ducking:** lowering the music while a character speaks.
-2. **Sound sources** as a component: ambient loops (a river, a fire) placed in the scene,
-   following as the player moves, rather than one-shot sounds.
+2. **Fades for sound sources** as they start and stop, and a falloff curve to choose.
 3. **Footstep surfaces**, **zones** and **adaptive music** (ADR-009).

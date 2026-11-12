@@ -363,7 +363,7 @@ void SceneView::dropEvent(QDropEvent* event) {
             continue;
         }
         std::string error;
-        const engine::Guid placed_entity = document_->place_picture(path, at->x(), at->y(), error);
+        const engine::Guid placed_entity = document_->place_asset(path, at->x(), at->y(), error);
         if (!placed_entity.is_valid()) {
             Q_EMIT problem(QString::fromStdString(error));
             continue;

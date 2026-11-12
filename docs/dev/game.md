@@ -212,6 +212,7 @@ on the same entity: the Animation runs later in the step and would win.
 | **Solid Body** (`body`) | `width` 0.75, `height` 0.5 tiles; `enabled` | Blocks movers like a wall that can stand anywhere: villagers, crates, signs. Movers stop exactly at its edge and slide along it. A mover's own body never blocks it. Bodies block where they stand at the start of the step |
 | **Trigger Area** (`trigger`) | `width` 1, `height` 1 tiles; `enabled` | Sends **"entered"** when a mover's hitbox starts overlapping it and **"exited"** when it stops, once each, with the mover's name as `who` (its GUID if the name is shared). For doorways, cutscene zones and traps. Disabling it makes everyone inside exit |
 | **Interactable** (`interactable`) | `width` 1, `height` 1 tiles; `enabled` | Sends **"interacted"**, with `who`, when a mover presses Interact facing it: the mover's hitbox moved half a tile (`interact_reach`) the way it faces must overlap it. The nearest one wins; ties go to the lower GUID |
+| **Sound Source** (`sound_source`) | `sound`; `volume` 1; `range` 8 tiles; `playing` | Repeats a sound where it is, heard from the player: louder the closer they come, silent `range` tiles away, and from its side ([audio.md](audio.md) §4) |
 
 Events are sent in a fixed order (exits before entries, then by trigger and mover GUID),
 so a replay always runs Rules in the same order.

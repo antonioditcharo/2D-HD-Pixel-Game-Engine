@@ -217,7 +217,7 @@ TEST_CASE("Placing a picture from the assets makes a sprite there, as one step")
     std::string error;
     // To whole pixels: 16 per tile, so 3.03 (48.48 pixels) becomes 3 and 4.94 (79.04
     // pixels) becomes 79 / 16.
-    const Guid placed = d->place_picture("art/hero.png", 3.03, 4.94, error);
+    const Guid placed = d->place_asset("art/hero.png", 3.03, 4.94, error);
     REQUIRE(placed.is_valid());
     CHECK(error.empty());
     const world::Entity e = d->world().find(placed);
@@ -234,14 +234,39 @@ TEST_CASE("Placing a picture from the assets makes a sprite there, as one step")
     CHECK(d->entities().size() == before);
     CHECK_FALSE(d->world().find(placed).is_valid());
 
-    // Only pictures that are assets, at a real point.
-    CHECK_FALSE(d->place_picture("sfx/chime.wav", 1.0, 1.0, error).is_valid());
-    CHECK(error == "Only pictures (PNG) can be placed in the scene; sfx/chime.wav is not one.");
-    CHECK_FALSE(d->place_picture("art/nothing.png", 1.0, 1.0, error).is_valid());
+    // Only pictures and sounds that are assets, at a real point.
+    CHECK_FALSE(d->place_asset("logic/main.drules", 1.0, 1.0, error).is_valid());
+    CHECK(error == "Only pictures (PNG) and sounds (WAV, Ogg, FLAC, MP3) can be placed in the "
+                   "scene; logic/main.drules is neither.");
+    CHECK_FALSE(d->place_asset("art/nothing.png", 1.0, 1.0, error).is_valid());
     CHECK(error == "There is no asset art/nothing.png in assets/.");
-    CHECK_FALSE(d->place_picture("art/hero.png", std::nan(""), 1.0, error).is_valid());
+    CHECK_FALSE(d->place_asset("art/hero.png", std::nan(""), 1.0, error).is_valid());
     CHECK(d->entities().size() == before);
     CHECK(d->redo_label() == "Place hero"); // refusals record nothing, so redo is kept
+
+    // A sound becomes a Sound Source repeating it there, with the component's defaults.
+    const Guid hum = d->place_asset("sfx/chime.wav", 12.5, 3.0, error);
+    REQUIRE(hum.is_valid());
+    const world::Entity source = d->world().find(hum);
+    CHECK(d->world().name(source) == "chime");
+    CHECK(d->world().get<scene2d::Transform2D>(source)->x == 12.5);
+    CHECK(d->world().get<scene2d::Sprite>(source) == nullptr);
+    const auto* sound = d->world().get<game::SoundSource>(source);
+    REQUIRE(sound != nullptr);
+    CHECK(sound->sound == d->assets().find("sfx/chime.wav")->guid.to_string());
+    CHECK(sound->volume == 1.0);
+    CHECK(sound->range == 8.0);
+    CHECK(sound->playing);
+    CHECK(d->undo_label() == "Place chime");
+    // It saves and comes back as it was placed.
+    REQUIRE(d->save(error));
+    std::vector<serialize::Issue> issues;
+    const auto again = editor::Document::open(sample.path, issues);
+    REQUIRE(again != nullptr);
+    CHECK(issues.empty());
+    const auto* reread = again->world().get<game::SoundSource>(again->world().find(hum));
+    REQUIRE(reread != nullptr);
+    CHECK(reread->sound == sound->sound);
 }
 
 TEST_CASE("Project settings change as one step, are checked as the game checks them, and save") {

@@ -47,6 +47,20 @@ std::vector<std::pair<std::string, std::string>> images(Document& document) {
     return out;
 }
 
+/// The project's sound assets, for sound fields: (path, GUID).
+std::vector<std::pair<std::string, std::string>> sounds(Document& document) {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const engine::assets::AssetRecord& record : document.assets().assets()) {
+        const std::string_view path = record.path;
+        if (path.ends_with(".wav") || path.ends_with(".ogg") || path.ends_with(".flac") ||
+            path.ends_with(".mp3")) {
+            out.emplace_back(record.path, record.guid.to_string());
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 } // namespace
 
 Inspector::Inspector(QWidget* parent) : QWidget(parent), layout_(new QVBoxLayout(this)) {
@@ -229,18 +243,20 @@ QWidget* Inspector::field(const reflect::TypeInfo& component,
         const std::string value = current && std::holds_alternative<std::string>(*current)
                                       ? std::get<std::string>(*current)
                                       : std::string();
-        if (property.id == "image" || property.id == "tileset") {
-            // A picture: choose one of the project's images by its path.
+        if (property.id == "image" || property.id == "tileset" || property.id == "sound") {
+            // A picture or a sound: choose one of the project's by its path.
+            const bool sound = property.id == "sound";
             auto* choose = new QComboBox(content_);
             choose->addItem(tr("(none)"), QString());
-            for (const auto& [path, guid] : images(*document_)) {
+            for (const auto& [path, guid] : sound ? sounds(*document_) : images(*document_)) {
                 choose->addItem(text_of(path), text_of(guid));
             }
             const int index = choose->findData(text_of(value));
             if (index >= 0) {
                 choose->setCurrentIndex(index);
             } else if (!value.empty()) {
-                choose->addItem(tr("(missing picture)"), text_of(value));
+                choose->addItem(sound ? tr("(missing sound)") : tr("(missing picture)"),
+                                text_of(value));
                 choose->setCurrentIndex(choose->count() - 1);
             }
             connect(choose, qOverload<int>(&QComboBox::activated), this,

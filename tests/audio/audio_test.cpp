@@ -257,6 +257,41 @@ TEST_CASE("Panning moves a sound between the speakers") {
     CHECK(nan[1] == doctest::Approx(0.5));
 }
 
+TEST_CASE("Looping sounds repeat until stopped, at a volume and pan that can change") {
+    const auto engine = make_engine();
+    REQUIRE(engine->load("hum", wav(2400, 16384))); // 0.05 s at 0.5
+    CHECK(engine->play_loop("missing") == 0);
+    const std::uint64_t hum = engine->play_loop("hum", 0.5);
+    REQUIRE(hum != 0);
+    CHECK(engine->playing_loops() == 1);
+    CHECK(engine->playing_sounds() == 0); // not a one-shot
+    // Three times its length, without a gap: it repeats.
+    CHECK(flat(mix(*engine, 7200), 0, 7200, 0.25F));
+    // Louder, as the listener comes closer; then off to the right.
+    engine->set_loop(hum, 1.0, 0.0);
+    CHECK(flat(mix(*engine, 2400), 0, 2400, 0.5F));
+    engine->set_loop(hum, 1.0, 1.0);
+    std::vector<float> out(std::size_t{480} * 2, -9.0F);
+    REQUIRE(engine->render(out));
+    constexpr std::size_t middle = 200; // a frame mid-way
+    CHECK(out[middle * 2] == doctest::Approx(0.0));
+    CHECK(out[(middle * 2) + 1] == doctest::Approx(0.5));
+    // A second loop has its own name; unknown names do nothing.
+    const std::uint64_t other = engine->play_loop("hum", 0.0);
+    CHECK(other != 0);
+    CHECK(other != hum);
+    CHECK(engine->playing_loops() == 2);
+    engine->set_loop(9999, 1.0, 0.0);
+    engine->stop_loop(9999);
+    CHECK(engine->playing_loops() == 2);
+    // Stopped: silence at once. Unloading the sound stops the loops still playing it.
+    engine->stop_loop(hum);
+    CHECK(engine->playing_loops() == 1);
+    CHECK(flat(mix(*engine, 2400), 0, 2400, 0.0F));
+    engine->unload("hum");
+    CHECK(engine->playing_loops() == 0);
+}
+
 TEST_CASE("Bad sounds are refused, and unloading stops a sound") {
     const auto engine = make_engine();
     const std::vector<std::uint8_t> junk{'n', 'o', 't', ' ', 'a', ' ', 's', 'o', 'u', 'n', 'd'};

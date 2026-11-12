@@ -132,6 +132,22 @@ void register_behaviours(reflect::Registry& registry) {
         .text("When {who} interacts with it")
         .tooltip("Happens when the player presses Interact while facing it, close by.");
 
+    auto source = registry.add_type<SoundSource>("sound_source")
+                      .display_name("Sound Source")
+                      .category("Sound")
+                      .tooltip("A sound on repeat where this is, such as a waterfall or a fire: "
+                               "louder the closer the player comes, and from its side.");
+    source.property<&SoundSource::sound>("sound").tooltip("The sound to repeat.");
+    source.property<&SoundSource::volume>("volume").range(0.0, 1.0).step(0.05).tooltip(
+        "How loud it is right beside it.");
+    source.property<&SoundSource::range>("range")
+        .range(0.5, 64.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("How far it carries: silent this far away.");
+    source.property<&SoundSource::playing>("playing").tooltip(
+        "Turn off to silence it, and on again to start it.");
+
     registry.add_choice_list<physics::BodyType>("body_type")
         .display_name("Body type")
         .entry(physics::BodyType::Static, "static", "Fixed", "Never moves.")
@@ -194,6 +210,17 @@ void register_behaviours(reflect::Registry& registry) {
         .tooltip("Happens when it starts touching something: another body or a wall.");
 }
 
+Heard heard(const SoundSource& source, double x, double y, std::array<double, 2> ear) noexcept {
+    if (!source.playing || !(source.range > 0.0) || !std::isfinite(source.volume)) {
+        return Heard{};
+    }
+    const double dx = x - ear[0];
+    const double distance = std::hypot(dx, y - ear[1]);
+    const double level =
+        std::clamp(source.volume, 0.0, 1.0) * std::clamp(1.0 - (distance / source.range), 0.0, 1.0);
+    return Heard{level, std::clamp(dx / full_pan_tiles, -1.0, 1.0)};
+}
+
 std::optional<std::array<double, 2>> player_position(const world::World& world) {
     const reflect::TypeInfo* mover_type = world.registry().find_type<TopDownMover>();
     if (mover_type == nullptr) {
@@ -216,7 +243,8 @@ bool register_behaviour_components(world::World& world) {
     const bool trigger = world.register_component<Trigger>();
     const bool interactable = world.register_component<Interactable>();
     const bool simulated = world.register_component<PhysicsBody>();
-    return mover && walk && body && trigger && interactable && simulated;
+    const bool sound = world.register_component<SoundSource>();
+    return mover && walk && body && trigger && interactable && simulated && sound;
 }
 
 // ---------------------------------------------------------------------------------------

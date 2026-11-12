@@ -146,11 +146,12 @@ public:
     bool fill_tiles(engine::Guid tilemap, double x, double y, std::int32_t tile);
     /// Creates an entity with a Position at (x, y). Returns its GUID.
     engine::Guid create_entity(std::string_view name, double x, double y);
-    /// Places a picture from the assets (its path in assets/, such as "chars/hero.png")
-    /// at map point (x, y), snapped to whole pixels: a new entity named after the file,
-    /// with a Position and a Sprite showing it, as one undo step. Returns its GUID, or
-    /// an invalid one, with `error` in plain language, if the asset is not a picture.
-    engine::Guid place_picture(std::string_view asset_path, double x, double y, std::string& error);
+    /// Places an asset (its path in assets/, such as "chars/hero.png") at map point
+    /// (x, y), snapped to whole pixels: a new entity named after the file, with a
+    /// Position and, for a picture (PNG), a Sprite showing it; for a sound (WAV, Ogg,
+    /// FLAC or MP3), a Sound Source repeating it there. One undo step. Returns its GUID,
+    /// or an invalid one, with `error` in plain language, if the asset is neither.
+    engine::Guid place_asset(std::string_view asset_path, double x, double y, std::string& error);
     bool delete_entity(engine::Guid entity);
     bool rename(engine::Guid entity, std::string_view name);
     bool add_component(engine::Guid entity, const engine::reflect::TypeInfo& component);
