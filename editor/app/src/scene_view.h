@@ -117,6 +117,9 @@ private:
     std::int32_t stroke_tile_ = -1; ///< What this drag paints: the tile, or -1 to erase.
     PaintTool paint_tool_ = PaintTool::Pencil;
     QPoint rect_to_; ///< Where a rectangle being dragged reaches now.
+    /// A box to select with has been dragged out: the button moved with it held. A press
+    /// and release alone are a click, wherever they land.
+    bool boxing_ = false;
     QPoint drag_from_;
     QPointF ground_from_; ///< The map point under the cursor when a drag began.
     [[nodiscard]] bool diorama() const;

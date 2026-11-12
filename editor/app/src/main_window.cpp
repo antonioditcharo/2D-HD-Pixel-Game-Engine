@@ -403,7 +403,7 @@ void MainWindow::select_many(std::vector<engine::Guid> entities) {
     const engine::Guid entity = selected_.empty() ? engine::Guid{} : selected_.front();
     selection_ = entity;
     view_->set_group(selected_);
-    inspector_->show_entity(document_.get(), entity);
+    inspector_->show_entities(document_.get(), selected_);
     palette_->show_tilemap(document_.get(), entity); // also stops painting
     // The list follows, without echoing back.
     const QSignalBlocker quiet(outliner_);

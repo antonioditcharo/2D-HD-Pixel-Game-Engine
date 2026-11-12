@@ -430,6 +430,51 @@ bool Document::set_property(Guid entity, const reflect::TypeInfo& component,
     return true;
 }
 
+bool Document::set_property_many(const std::vector<Guid>& entities,
+                                 const reflect::TypeInfo& component,
+                                 const reflect::PropertyInfo& property, const reflect::Value& value,
+                                 std::string& error) {
+    Impl& d = *impl_;
+    if (entities.size() == 1) {
+        return set_property(entities.front(), component, property, value, error);
+    }
+    if (entities.empty()) {
+        error = "Nothing is selected.";
+        return false;
+    }
+    std::vector<reflect::ObjectRef> objects;
+    std::string group; // the GUIDs changed, so the same group's typing merges
+    for (const Guid guid : entities) {
+        const world::Entity e = d.find(guid);
+        const reflect::ObjectRef object =
+            e.is_valid() ? d.world->get(e, component) : reflect::ObjectRef{};
+        if (object.is_null()) {
+            error = d.name_of(guid) + " has no " + component.meta.display_name + ".";
+            return false;
+        }
+        objects.push_back(object);
+        group += guid.to_string();
+    }
+    serialize::Json before = d.snapshot();
+    for (const reflect::ObjectRef& object : objects) {
+        const reflect::SetResult result = reflect::set_property(object, property, value);
+        if (result == reflect::SetResult::Ok) {
+            continue;
+        }
+        d.restore(before); // all or none
+        error = result == reflect::SetResult::ReadOnly
+                    ? property.meta.display_name + " cannot be changed."
+                : result == reflect::SetResult::OutOfRange
+                    ? property.meta.display_name + " is out of its range."
+                    : "That is not a valid " + property.meta.display_name + ".";
+        return false;
+    }
+    d.record("Change " + property.meta.display_name + " of " + std::to_string(objects.size()) +
+                 " entities",
+             std::move(before), Guid{}, component.name + "/" + property.id + ":" + group);
+    return true;
+}
+
 bool Document::move_entity(Guid entity, double x, double y) {
     Impl& d = *impl_;
     const world::Entity e = d.find(entity);

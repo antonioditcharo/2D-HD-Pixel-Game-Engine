@@ -7,6 +7,7 @@
 // See docs/dev/editor.md.
 
 #include <QWidget>
+#include <vector>
 
 #include "editor/core/document.h"
 
@@ -22,6 +23,10 @@ public:
 
     /// Shows `entity` of `document` (or nothing, for an empty GUID or no document).
     void show_entity(Document* document, engine::Guid entity);
+    /// Shows several entities together: the components all of them have, each field with
+    /// the first one's value (marked when they differ); a change goes to them all as one
+    /// step. One entity shows as show_entity() does.
+    void show_entities(Document* document, std::vector<engine::Guid> entities);
     /// Shows fields marked Advanced too.
     void set_show_advanced(bool show);
 
@@ -34,11 +39,14 @@ Q_SIGNALS:
 
 private:
     void rebuild();
+    /// The fields for several entities at once, into `column`.
+    void rebuild_many(QVBoxLayout& column);
     QWidget* field(const engine::reflect::TypeInfo& component,
                    const engine::reflect::PropertyInfo& property);
 
     Document* document_ = nullptr;
     engine::Guid entity_;
+    std::vector<engine::Guid> entities_; ///< All shown; `entity_` is the first.
     bool show_advanced_ = false;
     QVBoxLayout* layout_ = nullptr;
     QWidget* content_ = nullptr;

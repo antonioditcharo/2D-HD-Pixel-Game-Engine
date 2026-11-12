@@ -393,11 +393,45 @@ TEST_CASE("Several entities selected: Ctrl-click and the list, dragged and delet
     };
     drag_box(QPointF(4.0, 3.0), QPointF(11.0, 9.5));
     CHECK(e.window.selected() == std::vector<Guid>{hero, elder});
+    // The inspector shows what both have, marks what differs, and changes both at once.
+    editor::Inspector* inspector = e.window.inspector();
+    QApplication::processEvents();
+    auto* many = inspector->findChild<QLabel*>(QStringLiteral("many"));
+    REQUIRE(many != nullptr);
+    CHECK(many->text() == QStringLiteral("2 selected. A change here changes them all."));
+    CHECK(inspector->findChild<QLineEdit*>(QStringLiteral("name")) == nullptr);
+    CHECK(inspector->findChild<QComboBox*>(QStringLiteral("add_component")) == nullptr);
+    CHECK(inspector->findChild<QGroupBox*>(QStringLiteral("component:sprite")) != nullptr);
+    CHECK(inspector->findChild<QGroupBox*>(QStringLiteral("component:top_down_mover")) ==
+          nullptr); // the elder has none
+    auto* across = inspector->findChild<QDoubleSpinBox*>(QStringLiteral("property:transform_2d/x"));
+    REQUIRE(across != nullptr);
+    CHECK(across->value() == 10.0); // the first's
+    bool marked = false;
+    for (const QLabel* label : inspector->findChildren<QLabel*>()) {
+        marked = marked || label->text() == QStringLiteral("Across (differs)");
+    }
+    CHECK(marked);
+    across->setValue(8.0);
+    QApplication::processEvents();
+    CHECK(at(hero).x == 8.0);
+    CHECK(at(elder).x == 8.0);
+    CHECK(e.window.document()->undo_label() == "Change Across of 2 entities");
+    e.window.undo();
+    QApplication::processEvents();
+    CHECK(at(hero).x == 10.0);
+    CHECK(at(elder).x == 6.0);
+    CHECK(e.window.selected() == std::vector<Guid>{hero, elder});
     CHECK(at(hero).x == 10.0); // selecting moved nothing
     CHECK(at(elder).x == 6.0);
     drag_box(QPointF(13.0, 2.0), QPointF(15.0, 3.5));
     CHECK(e.window.selected().empty());
     click(QPointF(3.0, 3.0), Qt::NoModifier);
+    CHECK(e.window.selected() == std::vector<Guid>{e.guid("ground")});
+    // A press and a release with no drag between them is a click, even if they land apart
+    // (on Windows the view can change size between them: the tile palette appears).
+    mouse(view, QEvent::MouseButtonPress, view->from_map(13.0, 2.0), Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, view->from_map(9.0, 9.5), Qt::LeftButton);
     CHECK(e.window.selected() == std::vector<Guid>{e.guid("ground")});
     CHECK_FALSE(e.window.document()->dirty());
 }

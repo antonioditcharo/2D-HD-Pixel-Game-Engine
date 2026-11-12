@@ -147,6 +147,14 @@ public:
     bool set_property(engine::Guid entity, const engine::reflect::TypeInfo& component,
                       const engine::reflect::PropertyInfo& property,
                       const engine::reflect::Value& value, std::string& error);
+    /// Sets the same property of the same component on several entities at once, as one
+    /// step of undo ("Change Speed of 2 entities"); typing into the field merges, as for
+    /// one. Refused, changing nothing, with `error`, if any of them lacks the component
+    /// or refuses the value.
+    bool set_property_many(const std::vector<engine::Guid>& entities,
+                           const engine::reflect::TypeInfo& component,
+                           const engine::reflect::PropertyInfo& property,
+                           const engine::reflect::Value& value, std::string& error);
     /// Moves an entity's Position to (x, y). Moves of one entity merge, as a drag does.
     bool move_entity(engine::Guid entity, double x, double y);
     /// Paints `tile` (-1 erases) into the cell of `tilemap` at map point (x, y). The map

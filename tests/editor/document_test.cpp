@@ -256,6 +256,59 @@ TEST_CASE("Several entities move and are deleted together, each as one step") {
     CHECK(d->undo_label() == "Delete elder");
 }
 
+TEST_CASE("A property of several entities changes for all of them, as one step") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    const Guid hero = guid_of(*d, "hero");
+    const Guid elder = guid_of(*d, "elder");
+    const Guid lantern = guid_of(*d, "lantern");
+    const Guid lamp = guid_of(*d, "lamp");
+    const reflect::TypeInfo* transform = d->registry().find_type<scene2d::Transform2D>();
+    const reflect::TypeInfo* light = d->registry().find_type<scene2d::Light>();
+    const reflect::TypeInfo* sprite = d->registry().find_type<scene2d::Sprite>();
+    REQUIRE(transform != nullptr);
+    REQUIRE(light != nullptr);
+    REQUIRE(sprite != nullptr);
+    const auto x_of = [&](Guid g) {
+        return d->world().get<scene2d::Transform2D>(d->world().find(g))->x;
+    };
+    // Typed in: both change, and the typing is one step.
+    REQUIRE(d->set_property_many({hero, elder}, *transform, property(*transform, "x"),
+                                 reflect::Value{3.0}, error));
+    REQUIRE(d->set_property_many({hero, elder}, *transform, property(*transform, "x"),
+                                 reflect::Value{4.0}, error));
+    CHECK(x_of(hero) == 4.0);
+    CHECK(x_of(elder) == 4.0);
+    CHECK(d->undo_label() == "Change Across of 2 entities");
+    REQUIRE(d->undo());
+    CHECK(x_of(hero) == 10.0);
+    CHECK(x_of(elder) == 6.0);
+    CHECK_FALSE(d->can_undo());
+    // All or none: one without the component, or a value one refuses, changes nothing.
+    CHECK_FALSE(d->set_property_many({hero, lantern}, *sprite, property(*sprite, "visible"),
+                                     reflect::Value{false}, error));
+    CHECK(error == "lantern has no Sprite.");
+    CHECK(d->world().get<scene2d::Sprite>(d->world().find(hero))->visible);
+    const double radius = d->world().get<scene2d::Light>(d->world().find(lantern))->radius;
+    CHECK_FALSE(d->set_property_many({lantern, lamp}, *light, property(*light, "radius"),
+                                     reflect::Value{40.0}, error));
+    CHECK(error == "Radius is out of its range.");
+    CHECK(d->world().get<scene2d::Light>(d->world().find(lantern))->radius == radius);
+    CHECK_FALSE(d->can_undo());
+    CHECK_FALSE(d->dirty());
+    CHECK_FALSE(
+        d->set_property_many({}, *light, property(*light, "radius"), reflect::Value{1.0}, error));
+    // Both lights at once, in range.
+    REQUIRE(d->set_property_many({lantern, lamp}, *light, property(*light, "radius"),
+                                 reflect::Value{6.0}, error));
+    CHECK(d->world().get<scene2d::Light>(d->world().find(lamp))->radius == 6.0);
+    // One entity reads as it always has.
+    REQUIRE(d->set_property_many({hero}, *transform, property(*transform, "x"), reflect::Value{2.0},
+                                 error));
+    CHECK(d->undo_label() == "Change Across of hero");
+}
+
 TEST_CASE("Placing a picture from the assets makes a sprite there, as one step") {
     const Sample sample;
     const auto d = sample.open();

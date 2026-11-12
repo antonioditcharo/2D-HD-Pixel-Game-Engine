@@ -196,7 +196,8 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
     const QPoint o = origin();
     painter.drawImage(QRect(o, image_.size() * s), image_);
     // A rectangle being dragged out, before it is painted or selected with.
-    if ((drag_ == Drag::Paint && paint_tool_ == PaintTool::Rectangle) || drag_ == Drag::Box) {
+    if ((drag_ == Drag::Paint && paint_tool_ == PaintTool::Rectangle) ||
+        (drag_ == Drag::Box && boxing_)) {
         painter.setPen(QPen(QColor(255, 255, 255), 1, Qt::DashLine));
         painter.drawRect(QRect(drag_from_, rect_to_).normalized());
     }
@@ -299,6 +300,7 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
             // with; a click stays a click.
             drag_ = Drag::Box;
             rect_to_ = drag_from_;
+            boxing_ = false;
         }
         update();
     } else if (event->button() == Qt::RightButton || event->button() == Qt::MiddleButton) {
@@ -323,8 +325,14 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
     if (drag_ == Drag::Box) {
-        rect_to_ = event->position().toPoint();
-        update();
+        // Only a move with the button held, and beyond a few pixels, makes it a box (a
+        // move Qt makes up when widgets change under the cursor has no button held).
+        if ((event->buttons() & Qt::LeftButton) != 0 &&
+            (boxing_ || (event->position().toPoint() - drag_from_).manhattanLength() > 6)) {
+            boxing_ = true;
+            rect_to_ = event->position().toPoint();
+            update();
+        }
         return;
     }
     if (drag_ == Drag::Entity) {
@@ -391,11 +399,11 @@ std::vector<engine::Guid> SceneView::pictures_in(QRect band) const {
 
 void SceneView::mouseReleaseEvent(QMouseEvent* event) {
     if (drag_ == Drag::Box) {
-        const QRect band = QRect(drag_from_, event->position().toPoint()).normalized();
         drag_ = Drag::None;
-        // A few pixels is a click, which selected what it was on already.
-        if (band.width() + band.height() > 6) {
-            Q_EMIT boxed(pictures_in(band));
+        // A click selected what it was on already.
+        if (boxing_) {
+            boxing_ = false;
+            Q_EMIT boxed(pictures_in(QRect(drag_from_, rect_to_).normalized()));
         }
         update();
         return;

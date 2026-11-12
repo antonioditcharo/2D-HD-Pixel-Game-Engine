@@ -68,8 +68,14 @@ Inspector::Inspector(QWidget* parent) : QWidget(parent), layout_(new QVBoxLayout
 }
 
 void Inspector::show_entity(Document* document, engine::Guid entity) {
+    show_entities(document, entity.is_valid() ? std::vector<engine::Guid>{entity}
+                                              : std::vector<engine::Guid>{});
+}
+
+void Inspector::show_entities(Document* document, std::vector<engine::Guid> entities) {
     document_ = document;
-    entity_ = entity;
+    entities_ = std::move(entities);
+    entity_ = entities_.empty() ? engine::Guid{} : entities_.front();
     rebuild();
 }
 
@@ -101,6 +107,10 @@ void Inspector::rebuild() {
         return;
     }
     const engine::world::World& world = document_->world();
+    if (entities_.size() > 1) {
+        rebuild_many(*column);
+        return;
+    }
 
     // The name.
     auto* name = new QLineEdit(text_of(std::string(world.name(entity))), content_);
@@ -174,6 +184,52 @@ void Inspector::rebuild() {
     column->addStretch();
 }
 
+void Inspector::rebuild_many(QVBoxLayout& column) {
+    const engine::world::World& world = document_->world();
+    auto* heading = new QLabel(
+        tr("%1 selected. A change here changes them all.").arg(entities_.size()), content_);
+    heading->setObjectName(QStringLiteral("many"));
+    heading->setWordWrap(true);
+    column.addWidget(heading);
+    // The components all of them have, in the first one's order.
+    const engine::world::Entity first = world.find(entity_);
+    for (const reflect::TypeInfo* component : world.components(first)) {
+        const bool shared = std::all_of(entities_.begin(), entities_.end(), [&](engine::Guid g) {
+            const engine::world::Entity e = world.find(g);
+            return e.is_valid() && !world.get(e, *component).is_null();
+        });
+        if (!shared) {
+            continue;
+        }
+        auto* group = new QGroupBox(text_of(component->meta.display_name), content_);
+        group->setObjectName(text_of("component:" + component->name));
+        auto* form = new QFormLayout(group);
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        for (const reflect::PropertyInfo& property : component->properties) {
+            if (reflect::has_flag(property.flags, reflect::property_flag::hidden) ||
+                (!show_advanced_ &&
+                 reflect::has_flag(property.flags, reflect::property_flag::advanced))) {
+                continue;
+            }
+            const std::optional<reflect::Value> mine =
+                reflect::get_property(world.get(first, *component), property);
+            const bool differs =
+                std::any_of(entities_.begin(), entities_.end(), [&](engine::Guid g) {
+                    return reflect::get_property(world.get(world.find(g), *component), property) !=
+                           mine;
+                });
+            QWidget* editor = field(*component, property);
+            editor->setToolTip(text_of(property.meta.tooltip));
+            editor->setAccessibleName(text_of(property.meta.display_name));
+            form->addRow(differs ? tr("%1 (differs)").arg(text_of(property.meta.display_name))
+                                 : text_of(property.meta.display_name),
+                         editor);
+        }
+        column.addWidget(group);
+    }
+    column.addStretch();
+}
+
 QWidget* Inspector::field(const reflect::TypeInfo& component,
                           const reflect::PropertyInfo& property) {
     const engine::world::Entity entity = document_->world().find(entity_);
@@ -184,7 +240,7 @@ QWidget* Inspector::field(const reflect::TypeInfo& component,
     // Writes a value; reports a refusal.
     const auto write = [this, &component, &property](const reflect::Value& value) {
         std::string error;
-        if (document_->set_property(entity_, component, property, value, error)) {
+        if (document_->set_property_many(entities_, component, property, value, error)) {
             Q_EMIT edited(false);
         } else {
             Q_EMIT refused(text_of(error));
