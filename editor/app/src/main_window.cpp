@@ -1,6 +1,7 @@
 #include "main_window.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -288,8 +289,23 @@ void MainWindow::build_actions() {
     QAction* snap = edit->addAction(tr("&Snap to tiles"));
     snap->setObjectName(QStringLiteral("snap"));
     snap->setCheckable(true);
-    snap->setToolTip(tr("Dragged things land on whole tiles"));
+    snap->setToolTip(tr("Dragged things land on the grid: whole tiles, or finer"));
     connect(snap, &QAction::toggled, view_, &SceneView::set_snap);
+    // How finely the grid divides a tile.
+    QMenu* grid = edit->addMenu(tr("Snap &grid"));
+    auto* grids = new QActionGroup(grid);
+    grids->setExclusive(true);
+    for (const auto& [divisions, label] :
+         {std::pair{1, tr("&Whole tiles")}, std::pair{2, tr("&Half tiles")},
+          std::pair{4, tr("&Quarter tiles")}}) {
+        QAction* choice = grid->addAction(label);
+        choice->setObjectName(QStringLiteral("grid:%1").arg(divisions));
+        choice->setCheckable(true);
+        choice->setChecked(divisions == view_->snap_divisions());
+        grids->addAction(choice);
+        connect(choice, &QAction::triggered, view_,
+                [this, d = divisions] { view_->set_snap_divisions(d); });
+    }
     play_ = game->addAction(tr("&Play"), this, [this] { play(); });
     play_->setShortcut(Qt::Key_F5);
     export_ = game->addAction(tr("&Export…"), this, [this] { export_to({}); });

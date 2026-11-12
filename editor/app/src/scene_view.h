@@ -53,6 +53,10 @@ public:
     /// selected with it move by as much, keeping their places around it).
     void set_snap(bool snap) noexcept { snap_ = snap; }
     [[nodiscard]] bool snap() const noexcept { return snap_; }
+    /// How finely snapping divides a tile: 1 (whole tiles), 2 (half tiles) or 4 (quarter
+    /// tiles). Any other number is refused, changing nothing.
+    bool set_snap_divisions(int divisions) noexcept;
+    [[nodiscard]] int snap_divisions() const noexcept { return snap_divisions_; }
     /// The move handles of the selection: an arrow across (x) and one down (y) from the
     /// first selected entity's position, along the ground in the Diorama style. Dragging
     /// an arrow's head moves the selection along that axis only. Nothing when nothing
@@ -138,6 +142,7 @@ private:
     /// and release alone are a click, wherever they land.
     bool boxing_ = false;
     bool snap_ = false;
+    int snap_divisions_ = 1;
     engine::Guid grabbed_; ///< The entity a drag of entities began on.
     /// Which way a drag by a handle may go: freely, or along one axis.
     enum class Axis : std::uint8_t { Free, Across, Down } axis_ = Axis::Free;

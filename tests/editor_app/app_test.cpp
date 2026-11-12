@@ -449,7 +449,33 @@ TEST_CASE("Several entities selected: Ctrl-click and the list, dragged and delet
     CHECK(at(elder).x == 7.25);
     CHECK(at(elder).y == 6.0);
     e.window.undo();
-    e.window.undo();
+    // On a grid of quarter tiles, dragged 1.24 across and 0.76 down: the hero lands on
+    // (11.25, 9.75), and the elder moves by as much.
+    CHECK(view->snap_divisions() == 1);
+    CHECK_FALSE(view->set_snap_divisions(3)); // not a grid offered
+    auto* quarter = e.window.findChild<QAction*>(QStringLiteral("grid:4"));
+    auto* whole = e.window.findChild<QAction*>(QStringLiteral("grid:1"));
+    REQUIRE(quarter != nullptr);
+    REQUIRE(whole != nullptr);
+    CHECK(whole->isChecked());
+    quarter->trigger();
+    CHECK(view->snap_divisions() == 4);
+    CHECK(quarter->isChecked());
+    CHECK_FALSE(whole->isChecked());
+    const QPoint finer = view->from_map(11.24, 9.26);
+    mouse(view, QEvent::MouseButtonPress, grab, Qt::LeftButton);
+    for (int i = 1; i <= 3; ++i) {
+        mouse(view, QEvent::MouseMove, grab + ((finer - grab) * i) / 3, Qt::LeftButton);
+    }
+    mouse(view, QEvent::MouseButtonRelease, finer, Qt::LeftButton);
+    CHECK(at(hero).x == 11.25);
+    CHECK(at(hero).y == 9.75);
+    CHECK(at(elder).x == 7.5);
+    CHECK(at(elder).y == 5.75);
+    whole->trigger();
+    CHECK(view->snap_divisions() == 1);
+    e.window.undo(); // the drag
+    e.window.undo(); // the elder put off its tile
     snap->setChecked(false);
     CHECK(at(elder).x == 6.0);
     CHECK(e.window.selected().size() == 2); // still both after undo

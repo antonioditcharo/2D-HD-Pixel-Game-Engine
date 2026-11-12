@@ -260,6 +260,14 @@ bool SceneView::start_drag(engine::Guid grabbed, QPoint at) {
     return true;
 }
 
+bool SceneView::set_snap_divisions(int divisions) noexcept {
+    if (divisions != 1 && divisions != 2 && divisions != 4) {
+        return false;
+    }
+    snap_divisions_ = divisions;
+    return true;
+}
+
 std::optional<QPoint> SceneView::on_screen(double x, double y) const {
     if (document_ == nullptr || image_.isNull()) {
         return std::nullopt;
@@ -431,11 +439,13 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
             moved_by.setX(0.0);
         }
         if (snap_) {
-            // By as much as puts the grabbed entity on the nearest whole tile.
+            // By as much as puts the grabbed entity on the nearest point of the grid.
+            const double n = snap_divisions_;
+            const auto on_grid = [n](double v) { return std::round(v * n) / n; };
             for (const auto& [member, from] : dragged_) {
                 if (member == grabbed_) {
-                    moved_by = QPointF(std::round(from.x() + moved_by.x()) - from.x(),
-                                       std::round(from.y() + moved_by.y()) - from.y());
+                    moved_by = QPointF(on_grid(from.x() + moved_by.x()) - from.x(),
+                                       on_grid(from.y() + moved_by.y()) - from.y());
                 }
             }
         }
