@@ -414,8 +414,8 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-/// Where an entity's sprite picture covers the map, in tiles, as Classic 2D draws it;
-/// nothing if it has no sprite with a readable picture.
+/// Where an entity's sprite picture covers the map, in tiles, as Classic 2D draws it (the
+/// box around it, when it is turned); nothing if it has no sprite with a readable picture.
 [[nodiscard]] std::optional<engine::scene2d::Box>
 sprite_bounds(const engine::world::World& world, const engine::assets::AssetDatabase& assets,
               engine::world::Entity entity, std::uint32_t ppu);

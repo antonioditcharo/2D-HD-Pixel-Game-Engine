@@ -62,6 +62,22 @@ void register_types(reflect::Registry& registry) {
     sprite.property<&Sprite::frame>("frame").range(0, 65535).flags(advanced).tooltip(
         "Which frame of the sprite sheet to show, counting from 0, left to right, then top "
         "to bottom.");
+    sprite.property<&Sprite::rotation>("rotation")
+        .range(-360.0, 360.0)
+        .step(15.0)
+        .unit(reflect::Unit::Degrees)
+        .tooltip("Turns the picture about its pivot, clockwise.");
+    sprite.property<&Sprite::scale_x>("scale_x")
+        .range(-16.0, 16.0)
+        .step(0.5)
+        .display_name("Scale across")
+        .tooltip("Stretches the picture across: 2 is twice as wide. Below 0 it is flipped.");
+    sprite.property<&Sprite::scale_y>("scale_y")
+        .range(-16.0, 16.0)
+        .step(0.5)
+        .display_name("Scale down")
+        .tooltip("Stretches the picture up and down: 2 is twice as tall. Below 0 it is "
+                 "upside down.");
 
     auto animation = registry.add_type<SpriteAnimation>("sprite_animation")
                          .display_name("Animation")
@@ -554,6 +570,52 @@ void TextureCache::apply(const assets::AssetChanges& changes) {
 
 namespace {
 
+/// The sprite's rotation in whole turns removed, from 0 up to 360 (0 if not finite).
+double turn_of(const Sprite& sprite) noexcept {
+    if (!std::isfinite(sprite.rotation)) {
+        return 0.0;
+    }
+    const double turn = std::fmod(sprite.rotation, 360.0);
+    return turn < 0.0 ? turn + 360.0 : turn;
+}
+
+} // namespace
+
+std::array<std::array<double, 2>, 4> sprite_corners(const Sprite& sprite, double width,
+                                                    double height) noexcept {
+    const double sx = std::isfinite(sprite.scale_x) ? sprite.scale_x : 1.0;
+    const double sy = std::isfinite(sprite.scale_y) ? sprite.scale_y : 1.0;
+    // Exact for quarter turns, so turned pixel art keeps whole pixels.
+    const double turn = turn_of(sprite);
+    double cos_t = 1.0;
+    double sin_t = 0.0;
+    if (turn == 90.0) {
+        cos_t = 0.0;
+        sin_t = 1.0;
+    } else if (turn == 180.0) {
+        cos_t = -1.0;
+    } else if (turn == 270.0) {
+        cos_t = 0.0;
+        sin_t = -1.0;
+    } else if (turn != 0.0) {
+        const double radians = turn * 3.14159265358979323846 / 180.0;
+        cos_t = std::cos(radians);
+        sin_t = std::sin(radians);
+    }
+    std::array<std::array<double, 2>, 4> corners{};
+    const std::array<std::array<double, 2>, 4> frame{
+        {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}}};
+    for (std::size_t i = 0; i < 4; ++i) {
+        const double x = (frame[i][0] - sprite.pivot_x) * width * sx;
+        const double y = (frame[i][1] - sprite.pivot_y) * height * sy;
+        // Clockwise as seen, with y growing downwards.
+        corners[i] = {(x * cos_t) - (y * sin_t), (x * sin_t) + (y * cos_t)};
+    }
+    return corners;
+}
+
+namespace {
+
 struct Item {
     std::int32_t layer = 0;
     double y = 0.0;
@@ -562,7 +624,7 @@ struct Item {
     std::size_t index = 0; ///< The tile's position in its map.
     const render::Texture* texture{nullptr};
     render::Rect source;
-    render::Rect destination;
+    std::array<render::Point, 4> corners; ///< On the target, as SpriteRenderer::draw() takes them.
     render::Color tint;
 };
 
@@ -671,10 +733,10 @@ DrawStats draw_world(const world::World& world, TextureCache& textures,
     const double view_right = (static_cast<double>(target.width()) - centre_x) / scale;
     const double view_bottom = (static_cast<double>(target.height()) - centre_y) / scale;
 
-    const auto to_screen = [&](double left, double top, double width, double height) {
-        return render::Rect{static_cast<float>(centre_x + (left * scale)),
-                            static_cast<float>(centre_y + (top * scale)),
-                            static_cast<float>(width * scale), static_cast<float>(height * scale)};
+    // A point in source pixels, relative to the camera's pixel, on the target.
+    const auto to_screen = [&](double x, double y) {
+        return render::Point{static_cast<float>(centre_x + (x * scale)),
+                             static_cast<float>(centre_y + (y * scale))};
     };
 
     if (transform_type != nullptr) {
@@ -738,8 +800,12 @@ DrawStats draw_world(const world::World& world, TextureCache& textures,
                             item.source = render::Rect{
                                 static_cast<float>(column * size), static_cast<float>(row * size),
                                 static_cast<float>(size), static_cast<float>(size)};
-                            item.destination =
-                                to_screen(left + (x * tile), top + (y * tile), tile, tile);
+                            const double tile_left = left + (x * tile);
+                            const double tile_top = top + (y * tile);
+                            item.corners = {to_screen(tile_left, tile_top),
+                                            to_screen(tile_left + tile, tile_top),
+                                            to_screen(tile_left + tile, tile_top + tile),
+                                            to_screen(tile_left, tile_top + tile)};
                             item.tint = render::Color{255, 255, 255, tilemap->alpha()};
                             items.push_back(item);
                         }
@@ -759,16 +825,29 @@ DrawStats draw_world(const world::World& world, TextureCache& textures,
                     frame_rect(*texture, sprite->frame_width, sprite->frame_height, sprite->frame);
                 const auto width = static_cast<double>(source.w);
                 const auto height = static_cast<double>(source.h);
-                // Snap in source pixels, then upscale by a whole number: pixel-perfect.
-                const double left =
-                    std::round(((transform->x - camera.x) * ppu) - (sprite->pivot_x * width));
-                const double top =
-                    std::round(((transform->y - camera.y) * ppu) - (sprite->pivot_y * height));
+                const double at_x = (transform->x - camera.x) * ppu;
+                const double at_y = (transform->y - camera.y) * ppu;
+                const std::array<std::array<double, 2>, 4> local =
+                    sprite_corners(*sprite, width, height);
+                // Snap in source pixels, then upscale by a whole number: pixel-perfect. An
+                // upright picture's left and top edges land on whole pixels; a turned
+                // one's pivot does.
+                double from_x = 0.0; // the corners are placed relative to this point
+                double from_y = 0.0;
+                if (turn_of(*sprite) == 0.0) {
+                    from_x = std::min({local[0][0], local[1][0], local[2][0], local[3][0]});
+                    from_y = std::min({local[0][1], local[1][1], local[2][1], local[3][1]});
+                }
+                const double snapped_x = std::round(at_x + from_x);
+                const double snapped_y = std::round(at_y + from_y);
                 Item item = base;
                 item.part = 1;
                 item.texture = texture;
                 item.source = source;
-                item.destination = to_screen(left, top, width, height);
+                for (std::size_t i = 0; i < 4; ++i) {
+                    item.corners[i] = to_screen(snapped_x + (local[i][0] - from_x),
+                                                snapped_y + (local[i][1] - from_y));
+                }
                 item.tint =
                     render::Color{sprite->tint_r, sprite->tint_g, sprite->tint_b, sprite->tint_a};
                 items.push_back(item);
@@ -782,7 +861,7 @@ DrawStats draw_world(const world::World& world, TextureCache& textures,
 
     sprites.begin(target, clear);
     for (const Item& item : items) {
-        sprites.draw(*item.texture, item.source, item.destination, item.tint);
+        sprites.draw(*item.texture, item.source, item.corners, item.tint);
     }
     sprites.end();
     stats.drawn = items.size();
@@ -1243,17 +1322,20 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                 frame_rect(*texture, sprite->frame_width, sprite->frame_height, sprite->frame);
             const auto width = static_cast<float>(static_cast<double>(source.w) / ppu);
             const auto height = static_cast<float>(static_cast<double>(source.h) / ppu);
-            // Upright, facing the camera, with the pivot on the map position.
+            // Upright, facing the camera, with the pivot on the map position; scaled and
+            // turned in its own plane as in Classic 2D. Each corner is how far along the
+            // camera's right it lies, and how far up.
             const render::Vec3 base{static_cast<float>(transform->x), lift,
                                     static_cast<float>(transform->y)};
-            const auto px = static_cast<float>(sprite->pivot_x);
-            const auto py = static_cast<float>(sprite->pivot_y);
             const render::Vec3 r = o.right;
-            const float left = -px * width;
-            const float right_edge = (1.0F - px) * width;
-            const float top = py * height;
-            const float bottom = -(1.0F - py) * height;
-            const auto at = [&](float along, float up) {
+            std::array<std::array<float, 2>, 4> card{};
+            const std::array<std::array<double, 2>, 4> local =
+                sprite_corners(*sprite, static_cast<double>(width), static_cast<double>(height));
+            for (std::size_t i = 0; i < 4; ++i) {
+                card[i] = {static_cast<float>(local[i][0]), static_cast<float>(-local[i][1])};
+            }
+            const auto at = [&](const std::array<float, 2>& corner) {
+                const auto [along, up] = corner;
                 return render::Vec3{base.x + (r.x * along), base.y + up, base.z + (r.z * along)};
             };
             // Its shadow, on the tile it stands on (just inside its row).
@@ -1278,18 +1360,31 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                 // picture's own right.
                 const render::Vec3 across =
                     reach > 1e-4F ? render::Vec3{-dz / reach, 0.0F, dx / reach} : r;
-                const auto onto_ground = [&](float along, float up) {
+                const auto onto_ground = [&](const std::array<float, 2>& corner) {
+                    const auto [along, up] = corner;
                     const float above = base.y + up - y; // height above the ground
                     return render::Vec3{base.x + (across.x * along) + (dx * above), y,
                                         base.z + (across.z * along) + (dz * above)};
                 };
+                // Darkest where the picture is nearest the ground: fully at its lowest
+                // corner, six tenths at its highest.
+                const float lowest = std::min({card[0][1], card[1][1], card[2][1], card[3][1]});
+                const float highest = std::max({card[0][1], card[1][1], card[2][1], card[3][1]});
+                std::array<float, 4> darkness{};
+                for (std::size_t i = 0; i < 4; ++i) {
+                    const float rise =
+                        highest > lowest ? (card[i][1] - lowest) / (highest - lowest) : 0.0F;
+                    darkness[i] = dark * std::lerp(1.0F, 0.6F, rise);
+                }
                 renderer.draw_shadow(*texture,
-                                     {onto_ground(left, top), onto_ground(right_edge, top),
-                                      onto_ground(right_edge, bottom), onto_ground(left, bottom)},
-                                     source, {dark * 0.6F, dark * 0.6F, dark, dark});
+                                     {onto_ground(card[0]), onto_ground(card[1]),
+                                      onto_ground(card[2]), onto_ground(card[3])},
+                                     source, darkness);
             } else if (floor) {
                 // A soft blob at its feet.
-                const float half_w = std::max(width * 0.4F, 0.15F);
+                const float span = std::max({card[0][0], card[1][0], card[2][0], card[3][0]}) -
+                                   std::min({card[0][0], card[1][0], card[2][0], card[3][0]});
+                const float half_w = std::max(span * 0.4F, 0.15F);
                 const float half_d = half_w * 0.5F;
                 const float y = floor.value_or(0.0F) + 0.004F;
                 renderer.draw_shadow({render::Vec3{base.x - half_w, y, base.z - half_d},
@@ -1298,21 +1393,20 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                                       render::Vec3{base.x - half_w, y, base.z + half_d}},
                                      dark);
             }
-            renderer.draw(
-                *texture,
-                {at(left, top), at(right_edge, top), at(right_edge, bottom), at(left, bottom)},
-                source,
-                lit(sprite_light,
-                    render::Color{sprite->tint_r, sprite->tint_g, sprite->tint_b, sprite->tint_a}),
-                [&] {
-                    // Billboards take point lights from all round, softly, and in their tint.
-                    render::Surface s = surface(sprite_normal, 1.0F);
-                    s.casts_shadow = false; // an edge-on card from the sun: its own shadow
-                    s.albedo = {static_cast<float>(sprite->tint_r) / 255.0F,
-                                static_cast<float>(sprite->tint_g) / 255.0F,
-                                static_cast<float>(sprite->tint_b) / 255.0F};
-                    return s;
-                }());
+            renderer.draw(*texture, {at(card[0]), at(card[1]), at(card[2]), at(card[3])}, source,
+                          lit(sprite_light, render::Color{sprite->tint_r, sprite->tint_g,
+                                                          sprite->tint_b, sprite->tint_a}),
+                          [&] {
+                              // Billboards take point lights from all round, softly, and in their
+                              // tint.
+                              render::Surface s = surface(sprite_normal, 1.0F);
+                              s.casts_shadow =
+                                  false; // an edge-on card from the sun: its own shadow
+                              s.albedo = {static_cast<float>(sprite->tint_r) / 255.0F,
+                                          static_cast<float>(sprite->tint_g) / 255.0F,
+                                          static_cast<float>(sprite->tint_b) / 255.0F};
+                              return s;
+                          }());
             ++stats.drawn;
         }
     });

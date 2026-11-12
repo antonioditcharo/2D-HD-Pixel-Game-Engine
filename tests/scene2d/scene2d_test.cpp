@@ -555,6 +555,108 @@ TEST_CASE("Sprite sheet frames and tilemaps draw pixel-exact") {
     }
 }
 
+TEST_CASE("A sprite's corners, scaled and turned about its pivot") {
+    scene2d::Sprite sprite; // pivot bottom centre
+    using Corners = std::array<std::array<double, 2>, 4>;
+    CHECK(scene2d::sprite_corners(sprite, 4.0, 2.0) ==
+          Corners{{{-2.0, -2.0}, {2.0, -2.0}, {2.0, 0.0}, {-2.0, 0.0}}});
+    // A quarter turn clockwise: the top goes to the right, exactly.
+    sprite.rotation = 90.0;
+    CHECK(scene2d::sprite_corners(sprite, 4.0, 2.0) ==
+          Corners{{{2.0, -2.0}, {2.0, 2.0}, {0.0, 2.0}, {0.0, -2.0}}});
+    sprite.rotation = -270.0; // the same
+    CHECK(scene2d::sprite_corners(sprite, 4.0, 2.0) ==
+          Corners{{{2.0, -2.0}, {2.0, 2.0}, {0.0, 2.0}, {0.0, -2.0}}});
+    sprite.rotation = 45.0;
+    const Corners slanted = scene2d::sprite_corners(sprite, 4.0, 2.0);
+    CHECK(slanted[1][0] == doctest::Approx(std::sqrt(8.0))); // (2, -2) turned onto the x axis
+    CHECK(slanted[1][1] == doctest::Approx(0.0));
+    // Flipped across, and twice as tall; a rotation that is not a number is none.
+    sprite.rotation = std::numeric_limits<double>::quiet_NaN();
+    sprite.scale_x = -1.0;
+    sprite.scale_y = 2.0;
+    CHECK(scene2d::sprite_corners(sprite, 4.0, 2.0) ==
+          Corners{{{2.0, -4.0}, {-2.0, -4.0}, {-2.0, 0.0}, {2.0, 0.0}}});
+    sprite.scale_y = std::numeric_limits<double>::infinity();
+    CHECK(scene2d::sprite_corners(sprite, 4.0, 2.0)[0][1] == -2.0);
+}
+
+TEST_CASE("Turned, scaled and flipped sprites draw pixel-exact") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    Fixture f;
+    // A 4 x 2 picture: red on the left half, blue on the right.
+    write_image(f.folder.path / "sheet.png", 4, 2,
+                {f.red, f.red, f.blue, f.blue, f.red, f.red, f.blue, f.blue});
+    f.db.refresh();
+    REQUIRE(f.db.issues().empty());
+    const Guid sheet = f.db.find("sheet.png")->guid;
+    const auto target = device->create_render_target(8, 8);
+    const auto sprites = render::SpriteRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(sprites != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    // 2 pixels per tile, no upscaling: the camera's (0, 0) is pixel (4, 4).
+    const scene2d::Camera2D camera{0.0, 0.0, 2, 1};
+    const auto w = f.make_world();
+    scene2d::Sprite* sprite = w->get<scene2d::Sprite>(Fixture::place(*w, "Hero", 0.0, 0.0, sheet));
+    const auto draw = [&] {
+        CHECK(scene2d::draw_world(*w, textures, *sprites, *target, camera, f.background).drawn ==
+              1);
+        return target->read_pixels();
+    };
+
+    // Upright, its feet on (4, 4): x 2 to 5, y 2 to 3.
+    std::vector<std::uint8_t> pixels = draw();
+    CHECK(pixel(pixels, 8, 2, 2) == f.red);
+    CHECK(pixel(pixels, 8, 5, 3) == f.blue);
+    CHECK(pixel(pixels, 8, 1, 3) == f.background);
+    CHECK(pixel(pixels, 8, 6, 3) == f.background);
+    CHECK(pixel(pixels, 8, 3, 4) == f.background);
+
+    // Flipped: blue on the left.
+    sprite->scale_x = -1.0;
+    pixels = draw();
+    CHECK(pixel(pixels, 8, 2, 2) == f.blue);
+    CHECK(pixel(pixels, 8, 5, 3) == f.red);
+
+    // A quarter turn clockwise about its feet: x 4 to 5, y 2 to 5, red (its left) on top.
+    sprite->scale_x = 1.0;
+    sprite->rotation = 90.0;
+    pixels = draw();
+    CHECK(pixel(pixels, 8, 4, 2) == f.red);
+    CHECK(pixel(pixels, 8, 5, 3) == f.red);
+    CHECK(pixel(pixels, 8, 4, 4) == f.blue);
+    CHECK(pixel(pixels, 8, 5, 5) == f.blue);
+    CHECK(pixel(pixels, 8, 3, 3) == f.background);
+    CHECK(pixel(pixels, 8, 6, 3) == f.background);
+    CHECK(pixel(pixels, 8, 4, 6) == f.background);
+    sprite->rotation = -270.0;
+    CHECK(draw() == pixels);
+
+    // Twice as wide: the whole row, x 0 to 7.
+    sprite->rotation = 0.0;
+    sprite->scale_x = 2.0;
+    pixels = draw();
+    CHECK(pixel(pixels, 8, 0, 2) == f.red);
+    CHECK(pixel(pixels, 8, 3, 3) == f.red);
+    CHECK(pixel(pixels, 8, 4, 2) == f.blue);
+    CHECK(pixel(pixels, 8, 7, 3) == f.blue);
+    // Half as tall: one row, the one above its feet.
+    sprite->scale_x = 1.0;
+    sprite->scale_y = 0.5;
+    pixels = draw();
+    CHECK(pixel(pixels, 8, 2, 3) == f.red);
+    CHECK(pixel(pixels, 8, 2, 2) == f.background);
+    // A rotation that is not a number draws it upright.
+    sprite->scale_y = 1.0;
+    const std::vector<std::uint8_t> upright = draw();
+    sprite->rotation = std::numeric_limits<double>::quiet_NaN();
+    CHECK(draw() == upright);
+}
+
 TEST_CASE("The Diorama style: lit ground, standing sprites, blocks, turning and fog") {
     render::Device* device = gpu();
     if (device == nullptr) {
@@ -608,6 +710,39 @@ TEST_CASE("The Diorama style: lit ground, standing sprites, blocks, turning and 
     const float facing = scene2d::brightness(render::Vec3{0, 0, 1}, light); // towards the eye
     CHECK(close_to(pixel(pixels, 17, 8, 6), 0, 0, shade(facing, 255)));
     CHECK(close_to(pixel(pixels, 17, 8, 10), shade(top, 255), 0, 0));
+
+    // Scaled and turned in its own plane: the pixels showing points a quarter and three
+    // quarters of a tile above its feet both show the sprite, 1 tile tall; at half the
+    // height only the lower one does; turned upside down about its feet, it is under the
+    // ground, out of sight.
+    const auto pixel_at = [&](double up) {
+        const auto clip = scene2d::diorama_view_projection(camera, 1.0F)
+                              .transform(render::Vec3{0.0F, static_cast<float>(up), 0.0F});
+        const double x = ((clip[0] / clip[3]) + 1.0) / 2.0 * 17.0;
+        const double y = (1.0 - (clip[1] / clip[3])) / 2.0 * 17.0;
+        REQUIRE(x >= 0.0);
+        REQUIRE(x < 17.0);
+        REQUIRE(y >= 0.0);
+        REQUIRE(y < 17.0);
+        return pixel(pixels, 17, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+    };
+    const auto is_sprite = [&](Color c) { return close_to(c, 0, 0, shade(facing, 255)); };
+    scene2d::Sprite* standing = w->get<scene2d::Sprite>(w->find_named("Hero").at(0));
+    CHECK(is_sprite(pixel_at(0.25)));
+    CHECK(is_sprite(pixel_at(0.75)));
+    standing->scale_y = 0.5;
+    scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
+    pixels = target->read_pixels();
+    CHECK(is_sprite(pixel_at(0.25)));
+    CHECK_FALSE(is_sprite(pixel_at(0.75)));
+    standing->scale_y = 1.0;
+    standing->rotation = 180.0;
+    scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
+    pixels = target->read_pixels();
+    CHECK_FALSE(is_sprite(pixel_at(0.25)));
+    standing->rotation = 0.0;
+    scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light);
+    pixels = target->read_pixels();
 
     // Turned a quarter, the sprite still faces the camera (now lit from the side).
     camera.yaw = 90.0;

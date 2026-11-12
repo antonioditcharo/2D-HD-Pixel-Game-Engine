@@ -53,7 +53,22 @@ struct Sprite {
     std::uint32_t frame_width = 0;
     std::uint32_t frame_height = 0;
     std::uint32_t frame = 0;
+    /// Turns the picture about its pivot, in degrees, clockwise as seen (in the Diorama
+    /// style, in the billboard's own plane).
+    double rotation = 0.0;
+    /// Stretches the picture about its pivot: 2 is twice as wide (or tall); a negative
+    /// number flips it.
+    double scale_x = 1.0;
+    double scale_y = 1.0;
 };
+
+/// Where the corners of `sprite`'s picture go relative to its position, for a frame
+/// `width` x `height` (in any unit; the result is in the same one), x to the right and y
+/// down: the frame's top-left, top-right, bottom-right and bottom-left, after it is scaled
+/// and then turned about its pivot. A rotation or scale that is not a finite number counts
+/// as none (0 and 1).
+[[nodiscard]] std::array<std::array<double, 2>, 4>
+sprite_corners(const Sprite& sprite, double width, double height) noexcept;
 
 /// "Animation": plays a run of a sprite sheet's frames on the entity's Sprite.
 struct SpriteAnimation {

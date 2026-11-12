@@ -811,6 +811,37 @@ TEST_CASE("Picking finds what is drawn on top at a point") {
     CHECK(name_at(3.0, 3.0) == "ground");
     CHECK(name_at(0.5, 0.5) == "walls"); // drawn after the ground, on the same layer
     CHECK(name_at(-5.0, 3.0) == "nothing");
+
+    // Turned and scaled pictures are picked where they are drawn.
+    scene2d::Sprite* sprite = d->world().get<scene2d::Sprite>(d->world().find_named("hero").at(0));
+    sprite->rotation = 90.0; // about its feet, clockwise: its head goes to the right
+    const std::optional<scene2d::Box> turned = editor::sprite_bounds(
+        d->world(), d->assets(), d->world().find_named("hero").at(0), d->settings().ppu);
+    REQUIRE(turned.has_value());
+    const scene2d::Box lying = turned.value_or(scene2d::Box{});
+    CHECK(lying.left == 10.0);
+    CHECK(lying.right == 11.0);
+    CHECK(lying.top == 8.5);
+    CHECK(lying.bottom == 9.5);
+    CHECK(name_at(10.5, 9.25) == "hero");
+    CHECK(name_at(9.75, 8.25) != "hero"); // where it stood
+    // A 45-degree turn: the middle is picked, a corner of the box around it is not.
+    sprite->rotation = 45.0;
+    const std::optional<scene2d::Box> slanted = editor::sprite_bounds(
+        d->world(), d->assets(), d->world().find_named("hero").at(0), d->settings().ppu);
+    REQUIRE(slanted.has_value());
+    const scene2d::Box box = slanted.value_or(scene2d::Box{});
+    CHECK(name_at((box.left + box.right) / 2.0, (box.top + box.bottom) / 2.0) == "hero");
+    CHECK(name_at(box.left + 0.02, box.top + 0.02) != "hero");
+    // Twice as wide, and flipped: from 9 to 11 across.
+    sprite->rotation = 0.0;
+    sprite->scale_x = -2.0;
+    const std::optional<scene2d::Box> wide = editor::sprite_bounds(
+        d->world(), d->assets(), d->world().find_named("hero").at(0), d->settings().ppu);
+    REQUIRE(wide.has_value());
+    CHECK(wide.value_or(scene2d::Box{}).left == 9.0);
+    CHECK(wide.value_or(scene2d::Box{}).right == 11.0);
+    CHECK(name_at(10.9, 8.5) == "hero");
 }
 
 TEST_CASE("The preview draws the scene as the game would") {

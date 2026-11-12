@@ -1014,13 +1014,16 @@ bool Document::save(std::string& error) {
 // Picking
 // ---------------------------------------------------------------------------------------
 
-std::optional<scene2d::Box> sprite_bounds(const world::World& w,
-                                          const engine::assets::AssetDatabase& assets,
-                                          world::Entity entity, std::uint32_t ppu) {
+namespace {
+
+/// The size in tiles of the frame `entity`'s Sprite shows, as the game draws it (a frame
+/// larger than the picture is the whole picture). Nothing without a readable picture.
+std::optional<std::array<double, 2>> sprite_size(const world::World& w,
+                                                 const engine::assets::AssetDatabase& assets,
+                                                 world::Entity entity, std::uint32_t ppu) {
     const scene2d::Sprite* sprite = w.get<scene2d::Sprite>(entity);
-    const scene2d::Transform2D* t = w.get<scene2d::Transform2D>(entity);
     const std::optional<Guid> image = sprite != nullptr ? Guid::parse(sprite->image) : std::nullopt;
-    if (t == nullptr || !image) {
+    if (!image) {
         return std::nullopt;
     }
     const std::optional<std::vector<std::uint8_t>> bytes = assets.read(*image);
@@ -1030,18 +1033,71 @@ std::optional<scene2d::Box> sprite_bounds(const world::World& w,
     if (!picture) {
         return std::nullopt;
     }
+    const auto side = [](std::uint32_t frame, std::uint32_t whole) {
+        return frame == 0 || frame > whole ? whole : frame;
+    };
     const double units = static_cast<double>(std::max<std::uint32_t>(ppu, 1));
-    const double width =
-        static_cast<double>(sprite->frame_width > 0 ? sprite->frame_width : picture->width) / units;
-    const double height =
-        static_cast<double>(sprite->frame_height > 0 ? sprite->frame_height : picture->height) /
-        units;
-    const double left = t->x - (sprite->pivot_x * width);
-    const double top = t->y - (sprite->pivot_y * height);
-    return scene2d::Box{left, top, left + width, top + height};
+    return std::array<double, 2>{
+        static_cast<double>(side(sprite->frame_width, picture->width)) / units,
+        static_cast<double>(side(sprite->frame_height, picture->height)) / units};
+}
+
+} // namespace
+
+std::optional<scene2d::Box> sprite_bounds(const world::World& w,
+                                          const engine::assets::AssetDatabase& assets,
+                                          world::Entity entity, std::uint32_t ppu) {
+    const scene2d::Sprite* sprite = w.get<scene2d::Sprite>(entity);
+    const scene2d::Transform2D* t = w.get<scene2d::Transform2D>(entity);
+    const std::optional<std::array<double, 2>> size = sprite_size(w, assets, entity, ppu);
+    if (sprite == nullptr || t == nullptr || !size) {
+        return std::nullopt;
+    }
+    const auto [width, height] = *size;
+    // The box around the picture as drawn: scaled, flipped and turned about its pivot.
+    const std::array<std::array<double, 2>, 4> corners =
+        scene2d::sprite_corners(*sprite, width, height);
+    scene2d::Box box{t->x + corners[0][0], t->y + corners[0][1], t->x + corners[0][0],
+                     t->y + corners[0][1]};
+    for (const auto& [x, y] : corners) {
+        box.left = std::min(box.left, t->x + x);
+        box.top = std::min(box.top, t->y + y);
+        box.right = std::max(box.right, t->x + x);
+        box.bottom = std::max(box.bottom, t->y + y);
+    }
+    return box;
 }
 
 namespace {
+
+/// Whether map point (x, y) is inside `entity`'s turned picture, for a point already in
+/// the box around it (which is the picture itself when it is not turned).
+bool inside_turned(const world::World& w, const engine::assets::AssetDatabase& assets,
+                   world::Entity entity, double x, double y, std::uint32_t ppu) {
+    const scene2d::Sprite* sprite = w.get<scene2d::Sprite>(entity);
+    const scene2d::Transform2D* t = w.get<scene2d::Transform2D>(entity);
+    if (sprite == nullptr || t == nullptr || !std::isfinite(sprite->rotation) ||
+        std::fmod(sprite->rotation, 90.0) == 0.0) {
+        return true; // a quarter turn, or none: the box is the picture
+    }
+    const std::optional<std::array<double, 2>> size = sprite_size(w, assets, entity, ppu);
+    if (!size) {
+        return false;
+    }
+    const std::array<std::array<double, 2>, 4> c =
+        scene2d::sprite_corners(*sprite, (*size)[0], (*size)[1]);
+    // Inside a convex four-sided shape: on the same side of every edge.
+    bool before = false;
+    bool after = false;
+    for (std::size_t i = 0; i < 4; ++i) {
+        const auto& [ax, ay] = c[i];
+        const auto& [bx, by] = c[(i + 1) % 4];
+        const double side = ((bx - ax) * (y - t->y - ay)) - ((by - ay) * (x - t->x - ax));
+        before = before || side < 0.0;
+        after = after || side > 0.0;
+    }
+    return !(before && after);
+}
 
 /// pick(), optionally leaving sprites out (the Diorama style picks those through the
 /// camera instead).
@@ -1066,7 +1122,8 @@ world::Entity pick_at(const world::World& w, const engine::assets::AssetDatabase
                 return;
             }
             const std::optional<scene2d::Box> box = sprite_bounds(w, assets, entity, ppu);
-            if (box && x >= box->left && x < box->right && y >= box->top && y < box->bottom) {
+            if (box && x >= box->left && x < box->right && y >= box->top && y < box->bottom &&
+                inside_turned(w, assets, entity, x, y, ppu)) {
                 sprites.push_back(Candidate{t->layer, t->y, w.guid(entity), entity});
             }
         });
@@ -1137,27 +1194,23 @@ diorama_sprite_rect(const world::World& w, const engine::assets::AssetDatabase& 
                     world::Entity entity, const scene2d::DioramaCamera& camera, float aspect) {
     const scene2d::Sprite* sprite = w.get<scene2d::Sprite>(entity);
     const scene2d::Transform2D* t = w.get<scene2d::Transform2D>(entity);
-    // The picture's size in tiles, as Classic 2D sizes it (the same in 3D).
-    const std::optional<scene2d::Box> flat = sprite_bounds(w, assets, entity, camera.ppu);
-    if (sprite == nullptr || t == nullptr || !flat) {
+    const std::optional<std::array<double, 2>> size = sprite_size(w, assets, entity, camera.ppu);
+    if (sprite == nullptr || t == nullptr || !size) {
         return std::nullopt;
     }
-    const double width = flat->right - flat->left;
-    const double height = flat->bottom - flat->top;
+    const auto [width, height] = *size;
     // As draw_diorama() stands it: upright, facing the camera, pivot on the map point.
     const double yaw =
         (std::isfinite(camera.yaw) ? camera.yaw : 0.0) * 3.14159265358979323846 / 180.0;
     const double rx = std::cos(yaw);
     const double rz = -std::sin(yaw);
     const double lift = static_cast<double>(t->layer) * 0.002;
-    const double left = -sprite->pivot_x * width;
-    const double right = (1.0 - sprite->pivot_x) * width;
-    const double top = sprite->pivot_y * height;
-    const double bottom = -(1.0 - sprite->pivot_y) * height;
     const engine::render::Mat4 vp = scene2d::diorama_view_projection(camera, aspect);
     std::array<double, 4> rect{1e9, 1e9, -1e9, -1e9};
-    for (const auto& [along, up] : {std::pair{left, top}, std::pair{right, top},
-                                    std::pair{right, bottom}, std::pair{left, bottom}}) {
+    // Scaled and turned in the billboard's plane, as draw_diorama() does: y down there is
+    // down the card.
+    for (const auto& [along, down] : scene2d::sprite_corners(*sprite, width, height)) {
+        const double up = -down;
         const auto clip = vp.transform(engine::render::Vec3{
             static_cast<float>(t->x + (rx * along)), static_cast<float>(lift + up),
             static_cast<float>(t->y + (rz * along))});

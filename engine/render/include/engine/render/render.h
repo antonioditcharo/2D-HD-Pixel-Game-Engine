@@ -37,6 +37,12 @@ struct Rect {
     float h = 0.0F;
 };
 
+/// A point on a render target, in pixels.
+struct Point {
+    float x = 0.0F;
+    float y = 0.0F;
+};
+
 struct DeviceOptions {
     /// Create the device without a display, for tests, tools and offline rendering. Such a
     /// device can still show windows with the Vulkan backend (through SDL's offscreen
@@ -219,6 +225,11 @@ public:
     /// Queues a sprite: the `source` pixels of `texture`, drawn to `destination`, multiplied
     /// by `tint`. Does nothing outside begin() and end().
     void draw(const Texture& texture, Rect source, Rect destination,
+              Color tint = {255, 255, 255, 255});
+    /// Queues a sprite drawn into any four-sided shape, for pictures turned, scaled or
+    /// flipped: `corners` are where the source's top-left, top-right, bottom-right and
+    /// bottom-left go.
+    void draw(const Texture& texture, Rect source, const std::array<Point, 4>& corners,
               Color tint = {255, 255, 255, 255});
     /// Sends the frame to the GPU. Returns false, with the device's last_error() set, if it
     /// could not.

@@ -36,7 +36,7 @@ nothing extra to write ([reflection.md](reflection.md)).
 | Component | Properties | Shown as |
 |---|---|---|
 | `Transform2D` ("transform_2d") | `x`, `y` in **tiles** (world units), `layer` (advanced) | "Position" |
-| `Sprite` ("sprite") | `image` (an asset GUID), `visible`; advanced: `pivot_x`, `pivot_y`, tint red, green, blue, and opacity; `frame_width`, `frame_height` and `frame` for sprite sheets | "Sprite" |
+| `Sprite` ("sprite") | `image` (an asset GUID), `visible`, `rotation` (degrees), `scale_x` and `scale_y` (*Scale across*, *Scale down*); advanced: `pivot_x`, `pivot_y`, tint red, green, blue, and opacity; `frame_width`, `frame_height` and `frame` for sprite sheets | "Sprite" |
 | `SpriteAnimation` ("sprite_animation") | `first_frame`, `frame_count`, `frames_per_second`, `loop`, `playing`; actions *Play* and *Stop*; event *finished* | "Animation" |
 | `Tilemap` ("tilemap") | `tileset` (an asset GUID), `tiles`, `visible`, `solid`; advanced: `tile_size` | "Tilemap" |
 
@@ -45,6 +45,13 @@ nothing extra to write ([reflection.md](reflection.md)).
   Creators never type sprite sizes.
 - **The pivot** is the point of the image placed on the position. The default, bottom
   centre, puts a character's feet on its position, which is what depth sorting needs.
+- **Turning and scaling** happen about the pivot: `scale_x` and `scale_y` stretch the
+  picture (2 is twice the size; below 0 flips it), then `rotation` turns it clockwise, in
+  degrees. `sprite_corners()` gives where the four corners go, and the game, the Diorama
+  style and the editor's picking all use it, so they agree. An upright picture keeps its
+  left and top edges on whole pixels, as before; a turned one keeps its pivot on a whole
+  pixel, and quarter turns are exact (turned pixel art stays whole pixels). Only the
+  picture turns: solid tiles, bodies and areas keep their own shapes.
 
 ## 3. Sprite sheets and animation
 
@@ -165,7 +172,9 @@ the style ([game.md](game.md) §2).
   image (tested).
 - **Sprites** are upright billboards (`plan/04` §5.1, "Upright"): they turn about the
   vertical axis to face the camera, with their pivot on the map position, so feet stand on
-  the ground. 1 image pixel is 1/`ppu` of a tile, as in 2D.
+  the ground. 1 image pixel is 1/`ppu` of a tile, as in 2D. A sprite's scale and rotation
+  apply in the billboard's own plane, as seen; its shadow follows the turned shape,
+  darkest at its lowest corner.
 - **Tilemaps** are the ground. A Tilemap's `height` turns every tile into a block of that
   many tiles, with the tile's picture on its top and sides; sides are drawn only where no
   neighbouring block hides them (one block is 5 quads; two side by side are 8; tested).
@@ -253,6 +262,8 @@ the others run anywhere:
 | Diorama view extent | For 12 cameras (pitch 20 to 85, field of view 10 to 60), the extent's bottom, top and sides projected through `diorama_view_projection()` land on the screen's edges within 0.01 %; the top is infinite when it looks above the horizon |
 | Animated tiles | `frame()` at 0, 0.5, 1.49 and 1.5 seconds (wrapping), still with one frame, and 0 for a broken time; `shown()` moves on, but not past the tileset; `animate()` moves a map's time on. On the GPU, a map of tile 0 with two frames at 2 a second is red, then blue half a second later, then red again, in Classic 2D (exact pixels) and the Diorama style |
 | See-through maps (GPU) | `alpha()` from `opacity`, clamped, NaN as solid; water at 0.5 over a riverbed: in Classic 2D exactly half of each; in the Diorama style the lit riverbed and lit water mixed by the alpha, four quads blended; opacity 1 and 0 blend none |
+| A sprite's corners | `sprite_corners()` upright; a quarter turn clockwise, exactly, and the same at -270; 45 degrees; flipped across and twice as tall; a rotation or scale that is not a number counts as none |
+| Turned, scaled and flipped (GPU) | A picture red on the left and blue on the right, at exact pixels: upright; flipped (blue on the left); a quarter turn about its feet (red on top, standing to the right of them), the same at -270; twice as wide; half as tall; a NaN rotation drawn upright. In the Diorama style, points a quarter and three quarters of a tile above the feet show the sprite; at half height only the lower one; turned upside down, neither |
 | Frames and tilemaps (GPU) | Exact pixels for frames 0, 1 and a wrapped 2; a 2 × 2 map with an empty cell and a skipped tile; a sprite over its map; tiles in view counted for an aligned and an offset camera; bad text and a missing tileset counted |
 
 ## 9. Next increments

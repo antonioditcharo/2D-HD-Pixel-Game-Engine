@@ -604,6 +604,15 @@ void SpriteRenderer::begin_over(RenderTarget& target) {
 }
 
 void SpriteRenderer::draw(const Texture& texture, Rect source, Rect destination, Color tint) {
+    const float x0 = destination.x;
+    const float y0 = destination.y;
+    const float x1 = destination.x + destination.w;
+    const float y1 = destination.y + destination.h;
+    draw(texture, source, {Point{x0, y0}, Point{x1, y0}, Point{x1, y1}, Point{x0, y1}}, tint);
+}
+
+void SpriteRenderer::draw(const Texture& texture, Rect source, const std::array<Point, 4>& corners,
+                          Color tint) {
     if (native_->target == nullptr) {
         return;
     }
@@ -613,19 +622,18 @@ void SpriteRenderer::draw(const Texture& texture, Rect source, Rect destination,
     const float v0 = source.y / tex_h;
     const float u1 = (source.x + source.w) / tex_w;
     const float v1 = (source.y + source.h) / tex_h;
-    const float x0 = destination.x;
-    const float y0 = destination.y;
-    const float x1 = destination.x + destination.w;
-    const float y1 = destination.y + destination.h;
     const float r = static_cast<float>(tint.r) / 255.0F;
     const float g = static_cast<float>(tint.g) / 255.0F;
     const float b = static_cast<float>(tint.b) / 255.0F;
     const float a = static_cast<float>(tint.a) / 255.0F;
-    const Vertex corners[6] = {
-        {x0, y0, u0, v0, r, g, b, a}, {x1, y0, u1, v0, r, g, b, a}, {x0, y1, u0, v1, r, g, b, a},
-        {x1, y0, u1, v0, r, g, b, a}, {x1, y1, u1, v1, r, g, b, a}, {x0, y1, u0, v1, r, g, b, a},
+    const auto& [tl, tr, br, bl] = corners;
+    // Two triangles: top-left, top-right, bottom-left; top-right, bottom-right, bottom-left.
+    const Vertex vertices[6] = {
+        {tl.x, tl.y, u0, v0, r, g, b, a}, {tr.x, tr.y, u1, v0, r, g, b, a},
+        {bl.x, bl.y, u0, v1, r, g, b, a}, {tr.x, tr.y, u1, v0, r, g, b, a},
+        {br.x, br.y, u1, v1, r, g, b, a}, {bl.x, bl.y, u0, v1, r, g, b, a},
     };
-    native_->vertices.insert(native_->vertices.end(), std::begin(corners), std::end(corners));
+    native_->vertices.insert(native_->vertices.end(), std::begin(vertices), std::end(vertices));
     native_->textures.push_back(&texture);
 }
 

@@ -40,7 +40,7 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
 | `Device` | The GPU. Headless (no window, for tests, tools and offline rendering) or ordinary. Reports `driver_name()`: `vulkan`, `direct3d12` or `metal` |
 | `Texture` | RGBA8 pixels uploaded to the GPU |
 | `RenderTarget` | An offscreen image to draw into; `read_pixels()` copies it back |
-| `SpriteRenderer` | Draws textured, tinted rectangles in batches |
+| `SpriteRenderer` | Draws textured, tinted rectangles in batches, or any four-sided shapes (turned, scaled or flipped pictures) |
 | `WorldRenderer` | Draws textured quads in 3D with a depth buffer, alpha cutout, see-through quads blended farthest first, lighting colour, point lights per pixel, shadow decals and fog (§7) |
 
 ## 3. Sprites
@@ -50,6 +50,10 @@ std::vector<std::uint8_t> pixels = target->read_pixels();            // waits fo
 - **Nearest-neighbour sampling** and exact pixel placement: a 2 × 2 texture drawn at
   8 × 8 becomes four clean 4 × 4 blocks, with no blurred edges (tested pixel by pixel).
 - **Tint** multiplies the texture's colour; its alpha fades the sprite.
+- **Turned and scaled sprites:** `draw(texture, source, corners, tint)` takes where the
+  source's top-left, top-right, bottom-right and bottom-left go, instead of a rectangle.
+  Nothing is culled, so a flipped picture (its corners in the other order) is drawn too.
+  The rectangle form is the same two triangles.
 - **Alpha blending,** with sprites drawn in the order given, so later ones are on top.
 - **Clearing or keeping:** `begin(target, colour)` clears the target first;
   `begin_over(target)` keeps what it holds, to draw over a finished frame, such as text
