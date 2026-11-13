@@ -185,6 +185,7 @@ struct EncounterArea {
     double steps_min = 12.0; ///< Tiles walked between battles, at least...
     double steps_max = 24.0; ///< ...and at most.
     bool enabled = true;
+    std::string background; ///< A picture in assets/ behind its battles; empty for the world.
     double walked = 0.0;    ///< Tiles walked inside since the last battle (hidden; saved).
     double next = 0.0;      ///< Tiles to walk before the next one; 0 picks (hidden; saved).
     std::uint32_t seed = 0; ///< Its random choices (hidden; saved).
@@ -193,7 +194,24 @@ struct EncounterArea {
 /// One step: the player (player_position()) walked `walked` tiles; every enabled Encounter
 /// Area the player is inside counts them, and the first whose count comes due gives the
 /// enemies of one of its groups, picked at random, for a battle. Nothing otherwise.
-[[nodiscard]] std::optional<std::string> update_encounters(world::World& world, double walked);
+/// With `background`, the area's Battle background goes there.
+[[nodiscard]] std::optional<std::string> update_encounters(world::World& world, double walked,
+                                                           std::string* background = nullptr);
+
+/// "Enemy on the Map": a monster the player sees, as in many RPGs, that starts a battle when
+/// the player walks into it, and is gone once beaten.
+struct EnemyOnMap {
+    std::string enemies;    ///< Who the battle is against: rows of data/enemies, by commas.
+    double width = 1.0;     ///< The box the player walks into, in tiles, centred...
+    double height = 1.0;    ///< ...and upwards from the position.
+    std::string background; ///< A picture in assets/ behind the battle; empty for the world.
+    bool beaten = false;    ///< Beaten: hidden, and no more battles (saved).
+    bool inside = false;    ///< The player is in its box (hidden; saved).
+};
+
+/// One step: the first Enemy on the Map not beaten whose box the player walked into this
+/// step (they were outside before). Nothing otherwise, or for the player standing in one.
+[[nodiscard]] std::optional<world::Entity> update_enemies_on_map(world::World& world);
 
 /// "Prefab": this entity (and what is under it) is a copy of a prefab, a reusable object
 /// saved as a ".dprefab" file; the editor updates copies from it.

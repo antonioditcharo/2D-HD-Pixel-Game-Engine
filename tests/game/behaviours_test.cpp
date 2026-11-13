@@ -600,3 +600,28 @@ TEST_CASE("Encounter Areas start battles as the player walks inside them") {
     f.w->get<game::EncounterArea>(grass)->enabled = false;
     CHECK_FALSE(game::update_encounters(*f.w, 10.0).has_value());
 }
+
+TEST_CASE("Enemies on the Map: walking into one starts its battle, once, until beaten") {
+    const Fixture f;
+    const world::Entity slime = f.place("slime", 5.0, 5.0);
+    game::EnemyOnMap* enemy = f.w->add<game::EnemyOnMap>(slime);
+    REQUIRE(enemy != nullptr);
+    enemy->enemies = "slime";
+    f.at(f.hero) = scene2d::Transform2D{1.0, 1.0};
+    CHECK_FALSE(game::update_enemies_on_map(*f.w).has_value());
+    // Walking in: once, not again while standing in it.
+    f.at(f.hero) = scene2d::Transform2D{5.2, 4.8};
+    CHECK(game::update_enemies_on_map(*f.w) == slime);
+    CHECK_FALSE(game::update_enemies_on_map(*f.w).has_value());
+    // Out and in again: again.
+    f.at(f.hero) = scene2d::Transform2D{1.0, 1.0};
+    CHECK_FALSE(game::update_enemies_on_map(*f.w).has_value());
+    f.at(f.hero) = scene2d::Transform2D{5.0, 5.0};
+    CHECK(game::update_enemies_on_map(*f.w) == slime);
+    // Beaten: never.
+    f.at(f.hero) = scene2d::Transform2D{1.0, 1.0};
+    static_cast<void>(game::update_enemies_on_map(*f.w));
+    f.w->get<game::EnemyOnMap>(slime)->beaten = true;
+    f.at(f.hero) = scene2d::Transform2D{5.0, 5.0};
+    CHECK_FALSE(game::update_enemies_on_map(*f.w).has_value());
+}

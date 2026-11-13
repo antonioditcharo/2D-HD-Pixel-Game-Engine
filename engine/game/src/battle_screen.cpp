@@ -212,6 +212,11 @@ void register_battle_types(reflect::Registry& registry) {
         .text("Start a battle against {enemies}")
         .tooltip("Enemies by their rows of data/enemies, separated by commas: slime, slime, "
                  "bat. The party fights them on the battle screen.");
+    battle.action<&BattleObject::set_background>("set_background", {"picture"})
+        .text("Show {picture} behind battles")
+        .tooltip("A picture behind every battle from now on (a cave, a field), by its path in "
+                 "assets/; empty for the world. Encounter Areas and Enemies on the Map can "
+                 "choose their own.");
     battle.condition<&BattleObject::fighting>("fighting")
         .text("A battle is on")
         .tooltip("Whether the battle screen shows.");
@@ -439,8 +444,9 @@ void BattleScreen::draw(
         ui::draw_text(sprites, atlas, font, words, x, y, colour);
     };
     sprites.begin_over(surface);
-    // The world dims behind the battle.
-    sprites.draw(white, one, render::Rect{0, 0, w, h}, render::Color{0, 0, 10, 150});
+    // The world dims behind the battle; a battle background only a little.
+    sprites.draw(white, one, render::Rect{0, 0, w, h},
+                 render::Color{0, 0, 10, static_cast<std::uint8_t>(backdrop_ ? 50 : 150)});
 
     // The enemies, side by side across the top half, each with its HP.
     const std::vector<Fighter>& all = battle_.fighters();

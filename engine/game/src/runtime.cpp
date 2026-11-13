@@ -722,6 +722,11 @@ struct Runtime::Impl {
     BattleObject battle;
     std::optional<BattleScreen> battle_screen;
     std::optional<ShopScreen> shop_screen;
+    /// The battle's picture behind it (empty: the world), and the Enemy on the Map that
+    /// started it, if one did.
+    std::string battle_picture;
+    std::optional<std::string> picture_wanted; ///< From an area or an enemy, for the next.
+    std::optional<Guid> touched_enemy;
     Translations translations; ///< From data/translations, in the language chosen.
     GameMenu menu;
     std::optional<std::array<double, 2>> player_was; ///< For encounters: where the player stood.
@@ -1146,11 +1151,24 @@ void Runtime::step() {
         if (r.player_was && !talking && !r.battle_screen && !r.shop_screen && !r.menu.open()) {
             const double walked =
                 std::hypot((*now)[0] - (*r.player_was)[0], (*now)[1] - (*r.player_was)[1]);
-            if (const std::optional<std::string> enemies = update_encounters(*r.world, walked)) {
+            std::string background;
+            if (const std::optional<std::string> enemies =
+                    update_encounters(*r.world, walked, &background)) {
                 r.battle.start(*enemies);
+                r.picture_wanted = background;
             }
         }
         r.player_was = now;
+    }
+    // Enemies on the map: walking into one starts its battle.
+    if (const std::optional<world::Entity> enemy = update_enemies_on_map(*r.world);
+        enemy && !talking && !r.battle_screen && !r.shop_screen && !r.menu.open() &&
+        r.fading == Impl::Fade::None) {
+        if (const auto* foe = r.world->get<EnemyOnMap>(*enemy); foe != nullptr) {
+            r.battle.start(foe->enemies);
+            r.picture_wanted = foe->background;
+            r.touched_enemy = r.world->guid(*enemy);
+        }
     }
     advance_day(r.lighting, dt);
     // Physics: dynamic bodies move, and bodies that start touching tell Rules.
@@ -1356,6 +1374,11 @@ void Runtime::step() {
         if (fight) {
             r.battle_screen.emplace(std::move(*fight));
             r.battle.set_fighting(true);
+            r.battle_picture = r.picture_wanted && !r.picture_wanted->empty()
+                                   ? *r.picture_wanted
+                                   : r.battle.background();
+            r.battle_screen->set_backdrop(!r.battle_picture.empty());
+            r.picture_wanted.reset();
         } else {
             r.problems.push_back("The battle could not start: " + error);
         }
@@ -1400,6 +1423,20 @@ void Runtime::step() {
             if (fought.gold() > 0) {
                 r.inventory.give("gold", fought.gold());
             }
+        }
+        // An Enemy on the Map beaten is gone, and tells its Rules.
+        if (r.touched_enemy) {
+            const world::Entity foe = r.world->find(*r.touched_enemy);
+            if (outcome == BattleOutcome::Won && foe.is_valid()) {
+                if (auto* enemy = r.world->get<EnemyOnMap>(foe)) {
+                    enemy->beaten = true;
+                }
+                if (auto* sprite = r.world->get<scene2d::Sprite>(foe)) {
+                    sprite->visible = false;
+                }
+                emit(*r.vm, *r.world, foe, "defeated");
+            }
+            r.touched_enemy.reset();
         }
         r.battle_screen.reset();
         r.battle.set_fighting(false);
@@ -1609,7 +1646,27 @@ bool Runtime::draw() {
         return false;
     }
 
-    // A battle, over the world.
+    // A battle, over the world, or over its background picture.
+    if (r.battle_screen && !r.battle_picture.empty()) {
+        const assets::AssetRecord* record = r.assets.find(r.battle_picture);
+        if (const render::Texture* back = record != nullptr && r.textures != nullptr
+                                              ? r.textures->get(record->guid)
+                                              : nullptr) {
+            // Covering the screen, kept in proportion, centred.
+            const auto sw = static_cast<float>(r.target->width());
+            const auto sh = static_cast<float>(r.target->height());
+            const float scale = std::max(sw / static_cast<float>(std::max(back->width(), 1U)),
+                                         sh / static_cast<float>(std::max(back->height(), 1U)));
+            const float bw = static_cast<float>(back->width()) * scale;
+            const float bh = static_cast<float>(back->height()) * scale;
+            r.sprites->begin_over(*r.target);
+            r.sprites->draw(
+                *back, render::Rect{0.0F, 0.0F, 1.0F, 1.0F},
+                render::Rect{std::floor((sw - bw) / 2.0F), std::floor((sh - bh) / 2.0F), bw, bh},
+                render::Color{255, 255, 255, 255});
+            static_cast<void>(r.sprites->end());
+        }
+    }
     if (r.battle_screen) {
         // Enemies' pictures, by their path in assets/.
         const auto picture = [&r](const std::string& path) -> const render::Texture* {
@@ -2281,7 +2338,10 @@ const GameMenu& Runtime::menu() const noexcept {
 }
 
 const BattleScreen* Runtime::battle_screen() const noexcept {
-    return impl_->battle_screen ? &*impl_->battle_screen : nullptr;
+    if (const std::optional<BattleScreen>& screen = impl_->battle_screen; screen.has_value()) {
+        return &*screen;
+    }
+    return nullptr;
 }
 
 const DialogueObject& Runtime::dialogue() const noexcept {

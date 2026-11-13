@@ -3710,3 +3710,92 @@ TEST_CASE("A game in another language: messages and answers shown translated, Ru
     // Rules hear the answer as written (the project's own Rules log it).
     CHECK(std::count(runtime->log().begin(), runtime->log().end(), "Yes") == 1);
 }
+
+TEST_CASE("An Enemy on the Map: walked into, fought in front of its background, then gone") {
+    const Project project;
+    const BattleTables tables;
+    {
+        std::filesystem::create_directories(project.folder.path / "assets/data");
+        for (const auto& [name, table] :
+             {std::pair{"party", &tables.party}, std::pair{"enemies", &tables.enemies},
+              std::pair{"skills", &tables.skills}, std::pair{"items", &tables.items}}) {
+            std::ofstream(project.folder.path / "assets/data" / (std::string(name) + ".dtable"),
+                          std::ios::binary)
+                << game::table_to_text(*table);
+        }
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        const world::Entity hero = w.create("hero");
+        w.add<scene2d::Transform2D>(hero);
+        w.add<game::TopDownMover>(hero);
+        // A bat two tiles to the east, seen on the map, with a cave behind its battle.
+        const world::Entity bat = w.create("bat_on_map");
+        w.add<scene2d::Transform2D>(bat)->x = 2.0;
+        w.add<scene2d::Sprite>(bat)->image = "art/rock.png";
+        game::EnemyOnMap* foe = w.add<game::EnemyOnMap>(bat);
+        foe->enemies = "bat";
+        foe->background = "art/rock.png";
+        write_json(project.folder.path / "assets/maps/field.dscene", serialize::scene_to_json(w));
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["start_scene"] = "maps/field.dscene";
+        settings["width"] = 320;
+        settings["height"] = 180;
+        write_json(project.folder.path / game::project_file, settings);
+        logic::LogicAsset rules;
+        rules.name = "bat";
+        rules.rules.push_back(logic::Rule{logic::BlockId{1},
+                                          "bat_on_map",
+                                          "defeated",
+                                          {},
+                                          {ir::log(2, Project::text("the bat is gone"))},
+                                          {}});
+        write_json(project.folder.path / "assets/logic/bat.drules",
+                   serialize::logic_to_json(rules));
+    }
+    // Right, until the bat; then Interact every few steps through the battle.
+    input::Recording replay;
+    replay.record(0, key(input::Key::Right), true);
+    replay.record(40, key(input::Key::Right), false);
+    for (std::uint64_t step = 44; step < 600; step += 4) {
+        replay.record(step, key(input::Key::Z), true);
+        replay.record(step + 2, key(input::Key::Z), false);
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    options.replay = &replay;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    int steps = 0;
+    while (runtime->battle_screen() == nullptr && steps < 40) {
+        runtime->step();
+        ++steps;
+    }
+    REQUIRE(runtime->battle_screen() != nullptr);
+    // The battle's background, the rock's colour, fills the screen behind it.
+    REQUIRE(runtime->draw());
+    {
+        // The top-left corner shows the rock's grey-blue (90, 90, 100), dimmed a little.
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        REQUIRE(pixels.size() >= 4);
+        INFO(int{pixels[0]} << ", " << int{pixels[1]} << ", " << int{pixels[2]});
+        const bool rock =
+            pixels[0] >= 60 && pixels[0] <= 85 && pixels[1] == pixels[0] && pixels[2] > pixels[0];
+        CHECK(rock);
+    }
+    for (int i = 0; i < 560 && runtime->battle_screen() != nullptr; ++i) {
+        runtime->step();
+    }
+    REQUIRE(runtime->battle_screen() == nullptr);
+    runtime->step();
+    const world::Entity bat = runtime->world().find_named("bat_on_map").at(0);
+    CHECK(runtime->world().get<game::EnemyOnMap>(bat)->beaten);
+    CHECK_FALSE(runtime->world().get<scene2d::Sprite>(bat)->visible);
+    CHECK(std::count(runtime->log().begin(), runtime->log().end(), "the bat is gone") == 1);
+}

@@ -256,6 +256,9 @@ void register_behaviours(reflect::Registry& registry) {
         .tooltip("Tiles walked inside between battles, at most.");
     encounter.property<&EncounterArea::enabled>("enabled").tooltip(
         "Turn off for no battles here, such as after a boss is beaten.");
+    encounter.property<&EncounterArea::background>("background")
+        .display_name("Battle background")
+        .tooltip("A picture behind its battles, by its path in assets/; empty for the world.");
     encounter.property<&EncounterArea::walked>("walked")
         .flags(reflect::property_flag::hidden)
         .tooltip("Tiles walked since the last battle.");
@@ -265,6 +268,35 @@ void register_behaviours(reflect::Registry& registry) {
     encounter.property<&EncounterArea::seed>("seed")
         .flags(reflect::property_flag::hidden)
         .tooltip("Its random choices.");
+
+    auto enemy = registry.add_type<EnemyOnMap>("enemy_on_map")
+                     .display_name("Enemy on the Map")
+                     .category("Events")
+                     .tooltip("A monster the player sees: walking into it starts a battle, and "
+                              "once beaten it is gone.");
+    enemy.property<&EnemyOnMap::enemies>("enemies").tooltip(
+        "Who the battle is against: rows of data/enemies, separated by commas: slime, bat");
+    enemy.property<&EnemyOnMap::width>("width")
+        .range(0.0, 64.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("How wide the box the player walks into is, centred on the position.");
+    enemy.property<&EnemyOnMap::height>("height")
+        .range(0.0, 64.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("How tall the box is, upwards from the position.");
+    enemy.property<&EnemyOnMap::background>("background")
+        .display_name("Battle background")
+        .tooltip("A picture behind the battle, by its path in assets/; empty for the world.");
+    enemy.property<&EnemyOnMap::beaten>("beaten").tooltip(
+        "Beaten: hidden, and no more battles. Turn off to bring it back.");
+    enemy.property<&EnemyOnMap::inside>("inside")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("Whether the player is in its box.");
+    enemy.event<>("defeated")
+        .text("When it is beaten")
+        .tooltip("The battle it started was won: drop something, open a door.");
 
     auto prefab = registry.add_type<PrefabLink>("prefab_link")
                       .display_name("Prefab")
@@ -414,8 +446,9 @@ bool register_behaviour_components(world::World& world) {
     const bool simulated = world.register_component<PhysicsBody>();
     const bool sound = world.register_component<SoundSource>();
     const bool jumping = world.register_component<Jumping>();
+    const bool enemy = world.register_component<EnemyOnMap>();
     return mover && walker && particles && prefab && encounter && walk && body && trigger &&
-           interactable && simulated && sound && jumping;
+           interactable && simulated && sound && jumping && enemy;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -693,7 +726,8 @@ std::vector<TriggerEvent> update_triggers(world::World& world) {
     return events;
 }
 
-std::optional<std::string> update_encounters(world::World& world, double walked) {
+std::optional<std::string> update_encounters(world::World& world, double walked,
+                                             std::string* background) {
     const reflect::TypeInfo* type = world.registry().find_type<EncounterArea>();
     const std::optional<std::array<double, 2>> player = player_position(world);
     if (type == nullptr || !player || !std::isfinite(walked) || walked <= 0.0) {
@@ -752,7 +786,37 @@ std::optional<std::string> update_encounters(world::World& world, double walked)
         if (!groups.empty()) {
             found = groups[static_cast<std::size_t>(random() * static_cast<double>(groups.size())) %
                            groups.size()];
+            if (background != nullptr) {
+                *background = area->background;
+            }
         }
+    });
+    return found;
+}
+
+std::optional<world::Entity> update_enemies_on_map(world::World& world) {
+    const reflect::TypeInfo* type = world.registry().find_type<EnemyOnMap>();
+    const std::optional<std::array<double, 2>> player = player_position(world);
+    if (type == nullptr) {
+        return std::nullopt;
+    }
+    std::optional<world::Entity> found;
+    world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        EnemyOnMap* enemy = ref.as<EnemyOnMap>();
+        const scene2d::Transform2D* at = world.get<scene2d::Transform2D>(entity);
+        if (enemy == nullptr || at == nullptr) {
+            return;
+        }
+        bool inside = false;
+        if (player && !enemy->beaten) {
+            const scene2d::Box box = feet_box(at->x, at->y, enemy->width, enemy->height);
+            inside = (*player)[0] >= box.left && (*player)[0] < box.right &&
+                     (*player)[1] > box.top && (*player)[1] <= box.bottom;
+        }
+        if (inside && !enemy->inside && !found) {
+            found = entity;
+        }
+        enemy->inside = inside;
     });
     return found;
 }

@@ -36,6 +36,7 @@ Logic then uses:
 | *{name} joins the party*, *{name} leaves the party* | Party members by their row of `data/party`, at most six. With nobody in the party, a battle takes the first row |
 | *Heal the party* | Everyone to full HP and MP, as at an inn |
 | *Start a battle against {enemies}* | Enemies by their rows, separated by commas: *slime, slime, bat* (two of a kind are told apart: *Slime A*, *Slime B*) |
+| *Show {picture} behind battles* | A picture (a path in `assets/`) behind every battle from now on; empty for the world |
 | *{name} is in the party*, *A battle is on* | Conditions |
 | *The number in the party*, *The party's experience* | Values |
 | *Give {name} {xp} experience* | Experience for one member, as a battle gives it |
@@ -52,7 +53,22 @@ the player walks inside it, the tiles walked count; every *At least* to *At most
 *Enemy groups*, picked at random: `slime, slime | bat` (groups separated by `|`). Nothing
 counts during a message, a battle or a menu, or when arriving in a scene. Turn *Enabled* off
 for an area cleared of monsters. Its count and choices are saved with games
-(`update_encounters()`).
+(`update_encounters()`). Its **Battle background** is a picture behind its battles.
+
+**Enemies on the map.** An **Enemy on the Map** (`enemy_on_map`) is a monster the player
+sees, as in many modern RPGs: give an entity a picture (and a Walker to wander or chase,
+[game.md](game.md)) and this component, with its *Enemies* (`bat, bat`), the box the
+player walks into (*width* × *height*, 1 × 1 by default, centred on the bottom of its
+position) and an optional *Battle background*. Walking into it starts the battle (not
+during a message, a menu, a shop or a fade, and once per walking in: standing in it, or
+having fled, the player must step out and back in). Won, it is **beaten**: hidden, no more
+battles, and Rules on its *When it is beaten* event run (drop something, open a door).
+Turn *Beaten* off to bring it back. Saved with games (`update_enemies_on_map()`).
+
+**Battle backgrounds.** A battle started by an Encounter Area or an Enemy on the Map with
+a background, or after *Show {picture} behind battles*, shows that picture behind the
+battle screen, covering the screen in proportion and dimmed a little; otherwise the world
+shows, dimmed.
 
 ## 3. Fighting
 
@@ -101,8 +117,8 @@ game over, or waking at an inn).
 
 ## 4. Next increments
 
-1. **Visible enemies** that start a battle on touch (a Rule can already: *When … walks in*,
-   then *Start a battle*), and battle backgrounds.
+1. **Enemies on the map that chase** when the player comes near, and return when left
+   behind (Brains, `plan/02` H3).
 2. **States that last** after battles (poison walking on the map), and cures at inns.
 3. **Smarter enemies**: skills, and Brains choosing them.
 4. **A battle-screen designer** in the UI workspace, and animations for attacks.

@@ -129,12 +129,16 @@ public:
     /// ("slime, slime, bat"). The runtime takes the request.
     void start(const std::string& enemies);
     [[nodiscard]] bool fighting() const noexcept { return fighting_; }
+    /// The picture behind battles from now on (a path in assets/); empty for the world.
+    void set_background(const std::string& picture) { background_ = picture; }
+    [[nodiscard]] const std::string& background() const noexcept { return background_; }
     [[nodiscard]] std::optional<std::string> take_request();
     void set_fighting(bool on) noexcept { fighting_ = on; }
 
 private:
     std::optional<std::string> request_;
     bool fighting_ = false;
+    std::string background_;
 };
 
 /// Registers PartyObject as "party" and BattleObject as "battle".
@@ -144,6 +148,8 @@ void register_battle_types(reflect::Registry& registry);
 class BattleScreen {
 public:
     explicit BattleScreen(Battle battle);
+    /// With a picture behind the battle, the screen dims it less than it dims the world.
+    void set_backdrop(bool picture) noexcept { backdrop_ = picture; }
 
     /// A pressed action ("move_up", "move_down", "interact", "cancel"), with what the
     /// player carries for the item list.
@@ -180,6 +186,7 @@ private:
     bool target_party_ = false;
     std::vector<std::string> messages_;
     std::string problem_;
+    bool backdrop_ = false;
 };
 
 } // namespace engine::game
