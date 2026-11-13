@@ -4,6 +4,7 @@ find_package(SDL3 CONFIG REQUIRED)
 
 add_library(engine_assets STATIC
     src/assets.cpp
+    src/autotile.cpp
 )
 add_library(engine::assets ALIAS engine_assets)
 

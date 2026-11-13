@@ -1,6 +1,7 @@
 #include "tile_palette.h"
 
 #include "engine/assets/assets.h"
+#include "engine/assets/autotile.h"
 #include "engine/scene2d/scene2d.h"
 
 #include <QButtonGroup>
@@ -79,6 +80,7 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
         button->deleteLater();
     }
     buttons_.clear();
+    numbers_.clear();
     const engine::world::Entity e =
         document != nullptr ? document->world().find(entity) : engine::world::Entity{};
     const auto* map = e.is_valid() ? document->world().get<scene2d::Tilemap>(e) : nullptr;
@@ -107,6 +109,7 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
     const int rows = static_cast<int>(picture->height / size);
     constexpr int per_row = 6;
     const auto add = [this](QToolButton* button, std::int32_t tile) {
+        numbers_.push_back(tile);
         button->setCheckable(true);
         button->setObjectName(QStringLiteral("tile:%1").arg(tile));
         connect(button, &QToolButton::clicked, this, [this, tile] {
@@ -116,18 +119,30 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
         grid_->addWidget(button, index / per_row, index % per_row);
         buttons_.push_back(button);
     };
-    for (int row = 0; row < rows; ++row) {
-        for (int column = 0; column < columns; ++column) {
-            const QImage cut =
-                image.copy(column * static_cast<int>(size), row * static_cast<int>(size),
-                           static_cast<int>(size), static_cast<int>(size));
-            auto* button = new QToolButton(tiles_);
-            // Whole-number scale, so pixel art stays crisp.
-            const int scale = std::max(1, 32 / static_cast<int>(size));
-            button->setIcon(QPixmap::fromImage(cut.scaled(cut.size() * scale)));
-            button->setIconSize(cut.size() * scale);
-            button->setToolTip(tr("Tile %1").arg((row * columns) + column));
-            add(button, (row * columns) + column);
+    const auto button_for = [&](int tile, const QString& tip) {
+        const int column = tile % std::max(columns, 1);
+        const int row = tile / std::max(columns, 1);
+        const QImage cut = image.copy(column * static_cast<int>(size), row * static_cast<int>(size),
+                                      static_cast<int>(size), static_cast<int>(size));
+        auto* button = new QToolButton(tiles_);
+        // Whole-number scale, so pixel art stays crisp.
+        const int scale = std::max(1, 32 / static_cast<int>(size));
+        button->setIcon(QPixmap::fromImage(cut.scaled(cut.size() * scale)));
+        button->setIconSize(cut.size() * scale);
+        button->setToolTip(tip);
+        add(button, tile);
+    };
+    if (map->autotile) {
+        // One per terrain: its preview, the last of its 48 tiles. Painting picks the shapes.
+        hint_->setText(tr("Auto-tile: paint a terrain and its edges and corners follow. Right "
+                          "button erases. Esc stops."));
+        const int shapes = static_cast<int>(engine::assets::autotile_shapes);
+        for (int terrain = 0; (terrain + 1) * shapes <= columns * rows; ++terrain) {
+            button_for((terrain * shapes) + shapes - 1, tr("Terrain %1").arg(terrain + 1));
+        }
+    } else {
+        for (int tile = 0; tile < columns * rows; ++tile) {
+            button_for(tile, tr("Tile %1").arg(tile));
         }
     }
     auto* erase = new QToolButton(tiles_);
@@ -140,14 +155,13 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
             [this] { choose(chosen_ == -1 ? std::nullopt : std::optional<std::int32_t>(-1)); });
     grid_->addWidget(erase, (static_cast<int>(buttons_.size()) / per_row) + 1, 0, 1, per_row);
     buttons_.push_back(erase);
+    numbers_.push_back(-1);
 }
 
 void TilePalette::choose(std::optional<std::int32_t> tile) {
     chosen_ = tile;
-    for (std::size_t i = 0; i < buttons_.size(); ++i) {
-        const bool erase = i + 1 == buttons_.size();
-        const std::int32_t number = erase ? -1 : static_cast<std::int32_t>(i);
-        buttons_[i]->setChecked(tile.has_value() && *tile == number);
+    for (std::size_t i = 0; i < buttons_.size() && i < numbers_.size(); ++i) {
+        buttons_[i]->setChecked(tile.has_value() && *tile == numbers_[i]);
     }
     Q_EMIT chosen_changed(tile);
 }

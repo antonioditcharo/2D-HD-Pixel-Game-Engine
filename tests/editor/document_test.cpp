@@ -1,6 +1,7 @@
 // The editor's model, on a copy of the sample: opening, editing through reflection with
 // undo and redo, saving, picking, and the preview the scene view shows.
 
+#include "engine/assets/autotile.h"
 #include "engine/audio/audio.h"
 #include "engine/foundation/guid.h"
 #include "engine/game/behaviours.h"
@@ -3150,4 +3151,78 @@ TEST_CASE("Prefabs: made from an entity, placed as copies, and the copies update
     CHECK(doc->world().get<scene2d::Sprite>(doc->world().find(first))->tint_r == 10);
     CHECK(doc->update_prefab_copies("maps/village.dscene", error) == 0);
     CHECK(error == "That is not one of the project's prefabs.");
+}
+
+TEST_CASE("Auto-tiles: made from a picture's blocks, and painted by their neighbours") {
+    const Sample sample;
+    {
+        // A 2 x 3 block of 16-pixel tiles.
+        engine::assets::Image block;
+        block.width = 32;
+        block.height = 48;
+        block.rgba.assign(std::size_t{32} * 48 * 4, 200);
+        const std::vector<std::uint8_t> png = engine::assets::encode_png(block);
+        std::ofstream(sample.path / "assets/art/water.png", std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+    }
+    const auto d = sample.open();
+    std::string error;
+    CHECK(d->make_autotiles("art/tiles.png", error).empty()); // 48 x 16: too small
+    CHECK_FALSE(error.empty());
+    error.clear();
+    CHECK(d->make_autotiles("art/nothing.png", error).empty());
+    const std::string made = d->make_autotiles("art/water.png", error);
+    CHECK(made == "art/water_auto.png");
+    const engine::assets::AssetRecord* record = d->assets().find(made);
+    REQUIRE(record != nullptr);
+    {
+        std::string bad;
+        const std::optional<std::vector<std::uint8_t>> bytes = d->assets().read(record->guid);
+        REQUIRE(bytes.has_value());
+        const std::optional<engine::assets::Image> tiles =
+            engine::assets::decode_png(bytes.value_or(std::vector<std::uint8_t>{}), bad);
+        REQUIRE(tiles.has_value());
+        CHECK(tiles->width == 8 * 16);
+        CHECK(tiles->height == 6 * 16);
+    }
+
+    // The ground, cleared in the middle, painted as an auto-tile map.
+    const Guid ground = guid_of(*d, "ground");
+    const auto cell = [&](std::uint32_t x, std::uint32_t y) {
+        std::string bad;
+        const scene2d::TileGrid* grid =
+            d->world().get<scene2d::Tilemap>(d->world().find(ground))->grid(bad);
+        REQUIRE(grid != nullptr);
+        return grid->at(x, y);
+    };
+    REQUIRE(d->paint_tile_rect(ground, 2.5, 2.5, 7.5, 7.5, -1));
+    const reflect::TypeInfo* tilemap = d->registry().find_type<scene2d::Tilemap>();
+    REQUIRE(tilemap != nullptr);
+    REQUIRE(d->set_property(ground, *tilemap, property(*tilemap, "autotile"), reflect::Value{true},
+                            error));
+    using engine::assets::autotile_shape;
+    // Alone: its own shape, of terrain 0 (the preview chosen, 47, picks it).
+    REQUIRE(d->paint_tile(ground, 4.5, 4.5, 47));
+    CHECK(cell(4, 4) == static_cast<std::int32_t>(autotile_shape(0)));
+    // A neighbour to the east: both change shape.
+    REQUIRE(d->paint_tile(ground, 5.5, 4.5, 47));
+    CHECK(cell(4, 4) == static_cast<std::int32_t>(autotile_shape(engine::assets::east)));
+    CHECK(cell(5, 4) == static_cast<std::int32_t>(autotile_shape(engine::assets::west)));
+    // Painting a cell of the same terrain changes nothing.
+    d->end_merge();
+    const std::string label = d->undo_label();
+    REQUIRE(d->paint_tile(ground, 4.5, 4.5, 47));
+    CHECK(d->undo_label() == label);
+    // A 3 x 3 rectangle: the middle is surrounded.
+    REQUIRE(d->paint_tile_rect(ground, 3.5, 3.5, 5.5, 5.5, 47));
+    CHECK(cell(4, 4) == 46);
+    CHECK(cell(3, 3) ==
+          static_cast<std::int32_t>(autotile_shape(engine::assets::east | engine::assets::south |
+                                                   engine::assets::south_east)));
+    // Erasing the middle: its neighbours now have a hole beside them.
+    REQUIRE(d->paint_tile(ground, 4.5, 4.5, -1));
+    CHECK(cell(4, 4) == -1);
+    CHECK(cell(4, 3) ==
+          static_cast<std::int32_t>(autotile_shape(engine::assets::east | engine::assets::west)));
 }

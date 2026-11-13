@@ -143,6 +143,30 @@ nothing extra to write ([reflection.md](reflection.md)).
 - Only the tile lines between the box and its destination are checked, so the cost does
   not depend on the map's size.
 
+### Auto-tiles
+
+Terrain such as water, cliffs or paths needs a different tile at each edge and corner.
+As in RPG Maker, an artist draws a terrain as one **block of 2 × 3 tiles**: top left, how
+it looks in the palette; top right, its four inner corners (each quarter a corner cut into
+the terrain); below, a 2 × 2 patch of it with its border all round. A picture may hold many
+blocks, side by side and in rows.
+
+- **Make auto-tiles** (right-click a picture in the Assets; `Document::make_autotiles()`)
+  writes `<name>_auto.png` beside it, at the project's pixels per unit: for each block, the
+  47 shapes the terrain takes beside itself (the "blob" set), each put together from four
+  quarter tiles of the block (an outer corner, an edge, an inner corner or the middle,
+  picked by the neighbours on that quarter's sides and corner), and the preview last: 48
+  tiles a terrain, 8 a row (`assets::expand_autotiles()`). Odd tile sizes, or a picture
+  smaller than a block, are refused in plain language.
+- A tilemap with **Auto-tile** on (`autotile`) uses such a tileset: the Tiles palette
+  shows one tile per terrain, and painting it, by pencil, rectangle or fill, gives every
+  cell it touches, and those around, the shape its neighbours of the same terrain make.
+  Erasing does the same for the cells around. A corner neighbour counts only with both
+  sides beside it. Past the map's edges counts as empty. Fills treat every shape of a
+  terrain as that terrain.
+- The game draws the tiles painted, as for any map: nothing is worked out while playing.
+  Put each auto-tile terrain on its own map, over the ground.
+
 ## 5. Drawing
 
 `draw_world(world, textures, sprites, target, camera, clear)` draws every visible entity
@@ -296,7 +320,9 @@ the others run anywhere:
    Top-down Mover.
 2. **Per-tile collision shapes** from the tileset (half tiles, slopes), and collisions
    between characters, with the physics module.
-3. **Several tile layers** and autotiling rules for painting.
+3. **Auto-tiles, further**: animated terrains (water from 3 blocks side by side), and
+   rules for 2D layers in the LDtk style (grass edges by neighbour patterns, random
+   variants).
 4. **2D lights** with normal and mask maps (`plan/04` §3, Classic 2D lighting).
 5. **Diorama, further:** shadows from point lights, billboard modes other than Upright,
    directional sprite sets, and tilt-shift depth of field (`plan/04` §5 to §8).

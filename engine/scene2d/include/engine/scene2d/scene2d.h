@@ -202,6 +202,9 @@ struct Tilemap {
     /// frames a second (1 frame: still). Put animated tiles on their own map.
     std::uint32_t animation_frames = 1;
     double animation_fps = 4.0;
+    /// Painting picks each tile's shape from its neighbours: for a tileset expanded from
+    /// auto-tile blocks (assets/autotile.h), where each 48 tiles are one terrain.
+    bool autotile = false;
     double elapsed = 0.0; ///< Seconds the animation has run (hidden; saved with scenes).
 
     /// The alpha the tiles are drawn with, 0 to 255, from `opacity`.

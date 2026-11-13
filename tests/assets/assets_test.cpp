@@ -1,8 +1,10 @@
 #include "engine/assets/assets.h"
+#include "engine/assets/autotile.h"
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -10,6 +12,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace assets = engine::assets;
@@ -270,4 +273,68 @@ TEST_CASE("An asset's bytes are read by GUID") {
     REQUIRE(decoded.has_value());
     CHECK(decoded.value_or(assets::Image{}).rgba == image.rgba);
     CHECK_FALSE(db.read(Guid::generate()).has_value());
+}
+
+TEST_CASE("Auto-tiles: 47 shapes from the neighbours, each put together from quarter tiles") {
+    using namespace engine::assets;
+    CHECK(autotile_shape(0) == 0);
+    CHECK(autotile_shape(255) == 46);
+    // A corner counts only with both of its sides.
+    CHECK(autotile_shape(north_east) == autotile_shape(0));
+    CHECK(autotile_shape(north | east | north_east) != autotile_shape(north | east));
+    std::array<bool, 47> used{};
+    for (unsigned m = 0; m < 256; ++m) {
+        const std::uint32_t s = autotile_shape(static_cast<std::uint8_t>(m));
+        REQUIRE(s < 47);
+        used.at(s) = true;
+    }
+    CHECK(std::all_of(used.begin(), used.end(), [](bool u) { return u; }));
+
+    // A block of 4-pixel tiles whose every quarter (2 x 2 pixels) is coloured by where it
+    // is: red = its column (0 to 3), green = its row (0 to 5).
+    Image block;
+    block.width = 8;
+    block.height = 12;
+    for (std::uint32_t y = 0; y < block.height; ++y) {
+        for (std::uint32_t x = 0; x < block.width; ++x) {
+            block.rgba.insert(block.rgba.end(), {static_cast<std::uint8_t>(x / 2),
+                                                 static_cast<std::uint8_t>(y / 2), 0, 255});
+        }
+    }
+    std::string error;
+    const std::optional<Image> out = expand_autotiles(block, 4, error);
+    REQUIRE(out.has_value());
+    if (!out) {
+        return;
+    }
+    CHECK(out->width == 32);  // 8 tiles
+    CHECK(out->height == 24); // 6 rows
+    // The quarter of shape s at quarter q (0 NW, 1 NE, 2 SW, 3 SE): the block's (column, row).
+    const auto quarter = [&](std::uint32_t s, std::uint32_t q) {
+        const std::uint32_t x = ((s % 8) * 4) + ((q % 2) * 2);
+        const std::uint32_t y = ((s / 8) * 4) + ((q / 2) * 2);
+        const std::size_t at = ((std::size_t{y} * out->width) + x) * 4;
+        return std::pair{out->rgba[at], out->rgba[at + 1]};
+    };
+    using Q = std::pair<std::uint8_t, std::uint8_t>;
+    // Alone: the four outer corners of the patch.
+    CHECK(quarter(autotile_shape(0), 0) == Q{0, 2});
+    CHECK(quarter(autotile_shape(0), 1) == Q{3, 2});
+    CHECK(quarter(autotile_shape(0), 2) == Q{0, 5});
+    CHECK(quarter(autotile_shape(0), 3) == Q{3, 5});
+    // All round: the middle of the patch.
+    CHECK(quarter(46, 0) == Q{2, 4});
+    CHECK(quarter(46, 3) == Q{1, 3});
+    // Terrain to the north and west but not north-west: a corner cut in, top left.
+    CHECK(quarter(autotile_shape(north | west), 0) == Q{2, 0});
+    // Terrain to the west only: the top-left quarter is the top edge.
+    CHECK(quarter(autotile_shape(west), 0) == Q{2, 2});
+    // Terrain to the north only: the top-left quarter is the left edge.
+    CHECK(quarter(autotile_shape(north), 0) == Q{0, 4});
+    // The preview, last, as drawn.
+    CHECK(quarter(47, 0) == Q{0, 0});
+    CHECK(quarter(47, 3) == Q{1, 1});
+    // Odd tiles, or a picture smaller than a block, are refused.
+    CHECK_FALSE(expand_autotiles(block, 3, error).has_value());
+    CHECK_FALSE(expand_autotiles(block, 8, error).has_value());
 }

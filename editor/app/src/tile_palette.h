@@ -44,7 +44,8 @@ private:
     QLabel* hint_ = nullptr;
     QWidget* tiles_ = nullptr;
     QGridLayout* grid_ = nullptr;
-    std::vector<QToolButton*> buttons_; ///< Index = tile number; the last one erases.
+    std::vector<QToolButton*> buttons_; ///< The tiles' buttons; the last one erases.
+    std::vector<std::int32_t> numbers_; ///< The tile each button paints (-1: erase).
 };
 
 } // namespace editor

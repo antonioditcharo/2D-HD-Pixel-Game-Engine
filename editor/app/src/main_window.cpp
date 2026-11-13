@@ -244,7 +244,24 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
         changed(true);
         select(guid);
     });
-    connect(inspector_, &Inspector::edited, this, [this](bool structure) { changed(structure); });
+    connect(inspector_, &Inspector::edited, this, [this](bool structure) {
+        changed(structure);
+        // A tilemap's tileset, tile size or Auto-tile changed: its tiles to paint with too.
+        if (document_ != nullptr) {
+            const engine::world::Entity e = document_->world().find(selection_);
+            const auto* map =
+                e.is_valid() ? document_->world().get<engine::scene2d::Tilemap>(e) : nullptr;
+            const QString key =
+                map == nullptr
+                    ? QString()
+                    : text_of(map->tileset) +
+                          QStringLiteral("/%1/%2").arg(map->tile_size).arg(map->autotile ? 1 : 0);
+            if (key != palette_key_) {
+                palette_key_ = key;
+                palette_->show_tilemap(document_.get(), selection_);
+            }
+        }
+    });
     connect(inspector_, &Inspector::refused, this, &MainWindow::report);
     connect(start_, &StartPage::open_folder, this,
             [this](const QString& folder) { open_project(path_of(folder)); });
@@ -396,6 +413,25 @@ TableWindow* MainWindow::new_table(const QString& name) {
     }
     reload_assets();
     return open_table(relative);
+}
+
+QString MainWindow::make_autotiles(const QString& asset_path) {
+    if (document_ == nullptr) {
+        return {};
+    }
+    std::string error;
+    const std::string made = document_->make_autotiles(utf8_of(asset_path), error);
+    if (made.empty()) {
+        statusBar()->showMessage(tr("No auto-tiles made: %1").arg(text_of(error)), 8000);
+        return {};
+    }
+    reload_assets();
+    statusBar()->showMessage(
+        tr("Made %1: choose it as a tilemap's tileset and turn on Auto-tile, then paint "
+           "with each terrain's tile")
+            .arg(text_of(made)),
+        10000);
+    return text_of(made);
 }
 
 StoryWindow* MainWindow::open_story(const QString& asset_path) {
@@ -746,6 +782,31 @@ void MainWindow::build_actions() {
             // Pictures and sprites are drawn in Sprite Studio.
             open_sprite(relative);
         }
+    });
+    // Right-click on a picture: make auto-tiles from it.
+    asset_tree_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(asset_tree_, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
+        const QModelIndex index = asset_tree_->indexAt(at);
+        if (document_ == nullptr || !index.isValid()) {
+            return;
+        }
+        const QString file_path = asset_model_->filePath(index);
+        if (!file_path.endsWith(QStringLiteral(".png"))) {
+            return;
+        }
+        std::error_code ignored;
+        const fs::path assets = fs::weakly_canonical(document_->folder() / "assets", ignored);
+        const fs::path chosen = fs::weakly_canonical(path_of(file_path), ignored);
+        const QString relative = text_of(chosen.lexically_proximate(assets).generic_string());
+        QMenu menu(this);
+        menu.addAction(tr("Open in Sprite Studio"), this,
+                       [this, relative] { open_sprite(relative); });
+        QAction* make = menu.addAction(tr("Make auto-tiles"), this,
+                                       [this, relative] { make_autotiles(relative); });
+        make->setToolTip(tr("Each 2 x 3 tiles of this picture are a terrain; makes a tileset "
+                            "of every shape each takes, for a tilemap with Auto-tile on"));
+        menu.setToolTipsVisible(true);
+        menu.exec(asset_tree_->viewport()->mapToGlobal(at));
     });
     QAction* open = file->addAction(tr("&Open project…"), this, [this] {
         const QString folder = QFileDialog::getExistingDirectory(this, tr("Open a project"));

@@ -143,6 +143,11 @@ public:
     /// opens it. Refused over an existing file, for a name that is not a scene's, and
     /// while there are unsaved changes.
     bool create_scene(std::string_view path, std::string& error);
+    /// Expands the auto-tile blocks (2 x 3 tiles each, assets/autotile.h) of the picture at
+    /// `path` in assets/ ("art/grass.png") into a tileset beside it ("art/grass_auto.png",
+    /// replacing one there), at the project's pixels per unit. Returns its path; empty, with
+    /// `error`, if it cannot.
+    std::string make_autotiles(std::string_view path, std::string& error);
     /// Makes `path` the scene the game starts in: a project setting, as one undo step.
     bool set_start_scene(std::string_view path, std::string& error);
     /// What an entity of one of the project's other scenes is made of, by a name logic

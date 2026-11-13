@@ -123,6 +123,9 @@ public:
     /// Opens a conversation of the project (its path in assets/, a .dtalk) in the Story
     /// editor, or brings its window forward. Null, showing why, if it cannot.
     StoryWindow* open_story(const QString& asset_path);
+    /// Makes auto-tiles from the picture at `asset_path` in assets/ (Document::
+    /// make_autotiles()); returns the tileset made, or empty, saying why in the status bar.
+    QString make_autotiles(const QString& asset_path);
     /// Makes a conversation as assets/talk/<name>.dtalk, with one node, and opens it.
     StoryWindow* new_story(const QString& name);
     /// Opens a data table of the project (its path in assets/, a .dtable), or brings its
@@ -214,6 +217,7 @@ private:
     SceneView* view_ = nullptr;
     QTreeWidget* outliner_ = nullptr;
     QTreeView* asset_tree_ = nullptr;
+    QString palette_key_; ///< The tileset the palette shows, to notice when it changes.
     QFileSystemModel* asset_model_ = nullptr;
     Inspector* inspector_ = nullptr;
     TilePalette* palette_ = nullptr;

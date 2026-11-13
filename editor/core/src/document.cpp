@@ -1,17 +1,20 @@
 #include "editor/core/document.h"
 
+#include "engine/assets/autotile.h"
 #include "engine/game/behaviours.h"
 #include "engine/game/logic_world.h"
 #include "engine/game/save.h"
 #include "engine/scene2d/scene2d.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <variant>
 
@@ -24,6 +27,7 @@ namespace game = engine::game;
 namespace logic = engine::logic;
 namespace reflect = engine::reflect;
 namespace scene2d = engine::scene2d;
+namespace assets = engine::assets;
 namespace serialize = engine::serialize;
 namespace world = engine::world;
 using engine::Guid;
@@ -314,6 +318,44 @@ bool Document::open_scene(std::string_view path, std::string& error) {
     d.merging = false;
     d.saved = d.snapshot();
     return true;
+}
+
+std::string Document::make_autotiles(std::string_view path, std::string& error) {
+    const Impl& d = *impl_;
+    const fs::path file(path);
+    const engine::assets::AssetRecord* record = d.assets->find(path);
+    if (record == nullptr || file.extension() != ".png") {
+        error = "There is no picture " + std::string(path) + " in assets/.";
+        return {};
+    }
+    const std::optional<std::vector<std::uint8_t>> bytes = d.assets->read(record->guid);
+    std::optional<engine::assets::Image> image =
+        bytes ? engine::assets::decode_png(*bytes, error) : std::nullopt;
+    if (!image) {
+        if (error.empty()) {
+            error = std::string(path) + " cannot be read.";
+        }
+        return {};
+    }
+    const std::optional<engine::assets::Image> tiles =
+        assets::expand_autotiles(*image, std::max<std::uint32_t>(d.settings.ppu, 1), error);
+    if (!tiles) {
+        return {};
+    }
+    const std::vector<std::uint8_t> png = engine::assets::encode_png(*tiles);
+    const fs::path made = file.parent_path() / (file.stem().string() + "_auto.png");
+    if (png.empty() ||
+        !game::write_file_atomically(
+            d.folder / "assets" / made,
+            std::string_view(reinterpret_cast<const char*>(png.data()), png.size()), // NOLINT
+            error)) {
+        if (error.empty()) {
+            error = "The auto-tiles could not be written.";
+        }
+        return {};
+    }
+    static_cast<void>(d.assets->refresh()); // its .meta, and so its GUID
+    return made.generic_string();
 }
 
 bool Document::create_scene(std::string_view path, std::string& error) {
@@ -865,6 +907,66 @@ bool Document::raise_tile(Guid tilemap, double x, double y, double by) {
     return true;
 }
 
+namespace {
+
+/// On an auto-tile map, the terrain a tile is part of; -1 for none.
+std::int32_t terrain_of(std::int32_t tile) {
+    return tile < 0 ? -1 : tile / static_cast<std::int32_t>(assets::autotile_shapes);
+}
+
+/// On an auto-tile map, gives every painted cell from (c0, r0) to (c1, r1), and those around
+/// them, the shape its neighbours of the same terrain make. Past the map's edges is empty,
+/// as the cells a growing map will add are.
+void autotile_cells(scene2d::TileGrid& grid, std::uint32_t c0, std::uint32_t r0, std::uint32_t c1,
+                    std::uint32_t r1) {
+    if (grid.width == 0 || grid.height == 0) {
+        return;
+    }
+    c0 = c0 > 0 ? c0 - 1 : 0;
+    r0 = r0 > 0 ? r0 - 1 : 0;
+    c1 = std::min(c1 + 1, grid.width - 1);
+    r1 = std::min(r1 + 1, grid.height - 1);
+    const scene2d::TileGrid before = grid;
+    for (std::uint32_t r = r0; r <= r1; ++r) {
+        for (std::uint32_t c = c0; c <= c1; ++c) {
+            const std::int32_t terrain = terrain_of(before.at(c, r));
+            if (terrain < 0) {
+                continue;
+            }
+            const auto same = [&](std::int64_t dc, std::int64_t dr) {
+                const std::int64_t x = std::int64_t{c} + dc;
+                const std::int64_t y = std::int64_t{r} + dr;
+                if (x < 0 || y < 0 || x >= std::int64_t{before.width} ||
+                    y >= std::int64_t{before.height}) {
+                    return false;
+                }
+                return terrain_of(before.at(static_cast<std::uint32_t>(x),
+                                            static_cast<std::uint32_t>(y))) == terrain;
+            };
+            std::uint8_t m = 0;
+            const std::array<std::tuple<int, int, std::uint8_t>, 8> around{
+                {{0, -1, assets::north},
+                 {1, 0, assets::east},
+                 {0, 1, assets::south},
+                 {-1, 0, assets::west},
+                 {1, -1, assets::north_east},
+                 {1, 1, assets::south_east},
+                 {-1, 1, assets::south_west},
+                 {-1, -1, assets::north_west}}};
+            for (const auto& [dc, dr, bit] : around) {
+                if (same(dc, dr)) {
+                    m = static_cast<std::uint8_t>(m | bit);
+                }
+            }
+            grid.cells[(std::size_t{r} * grid.width) + c] =
+                (terrain * static_cast<std::int32_t>(assets::autotile_shapes)) +
+                static_cast<std::int32_t>(assets::autotile_shape(m));
+        }
+    }
+}
+
+} // namespace
+
 bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
     Impl& d = *impl_;
     const world::Entity e = d.find(tilemap);
@@ -890,7 +992,9 @@ bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
     }
     const auto cx = static_cast<std::uint32_t>(column);
     const auto cy = static_cast<std::uint32_t>(row);
-    if (parsed->at(cx, cy) == tile && cx < parsed->width && cy < parsed->height) {
+    if (cx < parsed->width && cy < parsed->height &&
+        (parsed->at(cx, cy) == tile ||
+         (map->autotile && terrain_of(parsed->at(cx, cy)) == terrain_of(tile)))) {
         return true; // already so
     }
     if (tile < 0 && (cx >= parsed->width || cy >= parsed->height)) {
@@ -907,6 +1011,9 @@ bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
         }
     }
     grid.cells[(std::size_t{cy} * grid.width) + cx] = tile;
+    if (map->autotile) {
+        autotile_cells(grid, cx, cy, cx, cy);
+    }
     serialize::Json before = d.snapshot();
     map->tiles = scene2d::format_tiles(grid);
     d.record("Paint " + d.name_of(tilemap), std::move(before), tilemap, "tilemap/paint");
@@ -994,6 +1101,9 @@ bool Document::paint_tile_rect(Guid tilemap, double x0, double y0, double x1, do
     if (!changed) {
         return true; // already so
     }
+    if (map->autotile) {
+        autotile_cells(grid, c0, r0, c1, r1);
+    }
     serialize::Json before = d.snapshot();
     map->tiles = scene2d::format_tiles(grid);
     d.record("Paint a rectangle of " + d.name_of(tilemap), std::move(before));
@@ -1020,7 +1130,11 @@ bool Document::fill_tiles(Guid tilemap, double x, double y, std::int32_t tile) {
     const auto cx = static_cast<std::uint32_t>((*at)[0]);
     const auto cy = static_cast<std::uint32_t>((*at)[1]);
     const std::int32_t old = parsed->at(cx, cy);
-    if (old == tile) {
+    // On an auto-tile map, every shape of a terrain is that terrain.
+    const auto alike = [&](std::int32_t a, std::int32_t b) {
+        return map->autotile ? terrain_of(a) == terrain_of(b) : a == b;
+    };
+    if (alike(old, tile)) {
         return true; // already so
     }
     scene2d::TileGrid grid = grown(*parsed, parsed->width, parsed->height);
@@ -1032,7 +1146,7 @@ bool Document::fill_tiles(Guid tilemap, double x, double y, std::int32_t tile) {
         open.pop_back();
         const auto visit = [&](std::uint32_t c, std::uint32_t r) {
             std::int32_t& next = grid.cells[(std::size_t{r} * grid.width) + c];
-            if (next == old) {
+            if (next != tile && alike(next, old)) {
                 next = tile;
                 open.push_back({c, r});
             }
@@ -1049,6 +1163,9 @@ bool Document::fill_tiles(Guid tilemap, double x, double y, std::int32_t tile) {
         if (cell[1] + 1 < grid.height) {
             visit(cell[0], cell[1] + 1);
         }
+    }
+    if (map->autotile) {
+        autotile_cells(grid, 0, 0, grid.width - 1, grid.height - 1);
     }
     serialize::Json before = d.snapshot();
     map->tiles = scene2d::format_tiles(grid);

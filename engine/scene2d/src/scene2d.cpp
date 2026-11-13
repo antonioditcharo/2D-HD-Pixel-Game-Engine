@@ -164,6 +164,10 @@ void register_types(reflect::Registry& registry) {
         .unit(reflect::Unit::Seconds)
         .flags(reflect::property_flag::hidden)
         .tooltip("How long the tiles have been animating.");
+    tilemap.property<&Tilemap::autotile>("autotile")
+        .display_name("Auto-tile")
+        .tooltip("Painting picks each tile's edges and corners from its neighbours. For a "
+                 "tileset made with Make auto-tiles in the Assets.");
     tilemap.property<&Tilemap::opacity>("opacity").range(0.0, 1.0).step(0.05).tooltip(
         "How solid the tiles look: lower for water over a riverbed, or glass, so "
         "what is behind shows through.");
