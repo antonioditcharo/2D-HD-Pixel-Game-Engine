@@ -38,6 +38,15 @@ Logic then uses:
 | *The number in the party*, *The party's experience* | Values |
 | *When the party wins*, *loses*, *gets away* | Events of the battle object |
 
+**Random encounters.** An **Encounter Area** (`encounter_area`) on an entity covers
+*width* × *height* tiles centred on the bottom of its position, like a Trigger Area. While
+the player walks inside it, the tiles walked count; every *At least* to *At most* tiles
+(12 to 24 by default, picked at random each time), a battle starts against one of its
+*Enemy groups*, picked at random: `slime, slime | bat` (groups separated by `|`). Nothing
+counts during a message, a battle or a menu, or when arriving in a scene. Turn *Enabled* off
+for an area cleared of monsters. Its count and choices are saved with games
+(`update_encounters()`).
+
 ## 3. Fighting
 
 The world dims and stops behind the battle screen: the enemies across the top, each with
@@ -69,8 +78,8 @@ game over, or waking at an inn).
 
 ## 4. Next increments
 
-1. **Encounters**: random battles in areas of the map, visible enemies that start one on
-   touch, and battle backgrounds.
+1. **Visible enemies** that start a battle on touch (a Rule can already: *When … walks in*,
+   then *Start a battle*), and battle backgrounds.
 2. **Levels and growth**: experience raising stats through formula columns, equipment, and
    status effects (poison, sleep).
 3. **Smarter enemies**: skills, and Brains choosing them.

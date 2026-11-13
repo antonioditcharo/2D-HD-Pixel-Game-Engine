@@ -174,6 +174,27 @@ struct Trigger {
 /// "Interactable": tells Rules when the player presses Interact while facing it within
 /// reach ("interacted", with the mover's name as "who"). For people to talk to, signs and
 /// chests.
+/// "Encounter Area": random battles while the player walks inside it, as classic RPGs have
+/// them in grass and caves. It covers `width` x `height` tiles centred on the bottom of its
+/// position; every `steps_min` to `steps_max` tiles walked inside, a battle starts against
+/// one of its `groups` ("slime, slime | bat": groups separated by |, enemies by commas).
+struct EncounterArea {
+    double width = 4.0;
+    double height = 4.0;
+    std::string groups;
+    double steps_min = 12.0; ///< Tiles walked between battles, at least...
+    double steps_max = 24.0; ///< ...and at most.
+    bool enabled = true;
+    double walked = 0.0;    ///< Tiles walked inside since the last battle (hidden; saved).
+    double next = 0.0;      ///< Tiles to walk before the next one; 0 picks (hidden; saved).
+    std::uint32_t seed = 0; ///< Its random choices (hidden; saved).
+};
+
+/// One step: the player (player_position()) walked `walked` tiles; every enabled Encounter
+/// Area the player is inside counts them, and the first whose count comes due gives the
+/// enemies of one of its groups, picked at random, for a battle. Nothing otherwise.
+[[nodiscard]] std::optional<std::string> update_encounters(world::World& world, double walked);
+
 /// "Prefab": this entity (and what is under it) is a copy of a prefab, a reusable object
 /// saved as a ".dprefab" file; the editor updates copies from it.
 struct PrefabLink {

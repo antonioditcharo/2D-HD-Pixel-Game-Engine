@@ -575,3 +575,28 @@ TEST_CASE("The camera follows, smooths, keeps a dead zone, looks ahead and shake
     camera.shake(-1.0, 1.0); // nonsense is ignored
     CHECK(camera.shake_left == 0.0);
 }
+
+TEST_CASE("Encounter Areas start battles as the player walks inside them") {
+    Fixture f;
+    const world::Entity grass = f.place("grass", 5.0, 5.0);
+    game::EncounterArea* area = f.w->add<game::EncounterArea>(grass);
+    REQUIRE(area != nullptr);
+    area->groups = "slime, slime | bat";
+    area->steps_min = 3.0;
+    area->steps_max = 3.0;
+    // Outside: nothing however far.
+    f.at(f.hero) = scene2d::Transform2D{20.0, 20.0};
+    CHECK_FALSE(game::update_encounters(*f.w, 100.0).has_value());
+    // Inside: after 3 tiles walked, a battle against one of its groups.
+    f.at(f.hero) = scene2d::Transform2D{5.0, 4.0};
+    CHECK_FALSE(game::update_encounters(*f.w, 1.0).has_value());
+    CHECK_FALSE(game::update_encounters(*f.w, 1.5).has_value());
+    const std::optional<std::string> enemies = game::update_encounters(*f.w, 0.5);
+    REQUIRE(enemies.has_value());
+    const bool known = *enemies == "slime, slime " || *enemies == " bat";
+    CHECK(known);
+    // Counting starts again; off, none.
+    CHECK_FALSE(game::update_encounters(*f.w, 2.0).has_value());
+    f.w->get<game::EncounterArea>(grass)->enabled = false;
+    CHECK_FALSE(game::update_encounters(*f.w, 10.0).has_value());
+}

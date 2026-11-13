@@ -556,6 +556,7 @@ struct Runtime::Impl {
     BattleObject battle;
     std::optional<BattleScreen> battle_screen;
     GameMenu menu;
+    std::optional<std::array<double, 2>> player_was; ///< For encounters: where the player stood.
     ConversationPlayer conversation;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
@@ -874,6 +875,17 @@ void Runtime::step() {
         emit(*r.vm, *r.world, entity, "arrived");
     }
     update_camera(r.camera, *r.world, dt);
+    // Encounters: the distance the player walked counts inside Encounter Areas.
+    if (const std::optional<std::array<double, 2>> now = player_position(*r.world)) {
+        if (r.player_was && !talking && !r.battle_screen && !r.menu.open()) {
+            const double walked =
+                std::hypot((*now)[0] - (*r.player_was)[0], (*now)[1] - (*r.player_was)[1]);
+            if (const std::optional<std::string> enemies = update_encounters(*r.world, walked)) {
+                r.battle.start(*enemies);
+            }
+        }
+        r.player_was = now;
+    }
     advance_day(r.lighting, dt);
     // Physics: dynamic bodies move, and bodies that start touching tell Rules.
     for (const auto& [first, second] : r.physics->step(*r.world, moves, dt, r.settings.ppu)) {
@@ -1701,6 +1713,7 @@ bool Runtime::change_scene(std::string_view scene, std::string_view where,
                            std::vector<serialize::Issue>& issues) {
     Impl& r = *impl_;
     r.camera.placed = false; // it jumps to the new scene rather than gliding
+    r.player_was.reset();    // arriving is not walking
     const std::optional<Guid> guid = Guid::parse(scene);
     const assets::AssetRecord* record = guid ? r.assets.find(*guid) : r.assets.find(scene);
     if (record == nullptr || !record->path.ends_with(".dscene")) {

@@ -224,6 +224,48 @@ void register_behaviours(reflect::Registry& registry) {
         .text("When {who} walks out")
         .tooltip("Happens when a walking character leaves the area.");
 
+    auto encounter = registry.add_type<EncounterArea>("encounter_area")
+                         .display_name("Encounter Area")
+                         .category("Events")
+                         .tooltip("Random battles while the player walks inside it.");
+    encounter.property<&EncounterArea::width>("width")
+        .range(0.0, 256.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("How wide the area is, centred on the position.");
+    encounter.property<&EncounterArea::height>("height")
+        .range(0.0, 256.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .tooltip("How tall the area is, upwards from the position.");
+    encounter.property<&EncounterArea::groups>("groups")
+        .display_name("Enemy groups")
+        .tooltip("Who it may be: groups separated by |, enemies (rows of data/enemies) by "
+                 "commas: slime, slime | bat");
+    encounter.property<&EncounterArea::steps_min>("steps_min")
+        .range(1.0, 1000.0)
+        .step(1.0)
+        .unit(reflect::Unit::Tiles)
+        .display_name("At least")
+        .tooltip("Tiles walked inside between battles, at least.");
+    encounter.property<&EncounterArea::steps_max>("steps_max")
+        .range(1.0, 1000.0)
+        .step(1.0)
+        .unit(reflect::Unit::Tiles)
+        .display_name("At most")
+        .tooltip("Tiles walked inside between battles, at most.");
+    encounter.property<&EncounterArea::enabled>("enabled").tooltip(
+        "Turn off for no battles here, such as after a boss is beaten.");
+    encounter.property<&EncounterArea::walked>("walked")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("Tiles walked since the last battle.");
+    encounter.property<&EncounterArea::next>("next")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("Tiles to walk before the next battle.");
+    encounter.property<&EncounterArea::seed>("seed")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("Its random choices.");
+
     auto prefab = registry.add_type<PrefabLink>("prefab_link")
                       .display_name("Prefab")
                       .category("Objects")
@@ -364,6 +406,7 @@ bool register_behaviour_components(world::World& world) {
     const bool walker = world.register_component<Walker>();
     const bool particles = world.register_component<ParticleEmitter>();
     const bool prefab = world.register_component<PrefabLink>();
+    const bool encounter = world.register_component<EncounterArea>();
     const bool walk = world.register_component<WalkAnimation>();
     const bool body = world.register_component<Body>();
     const bool trigger = world.register_component<Trigger>();
@@ -371,8 +414,8 @@ bool register_behaviour_components(world::World& world) {
     const bool simulated = world.register_component<PhysicsBody>();
     const bool sound = world.register_component<SoundSource>();
     const bool jumping = world.register_component<Jumping>();
-    return mover && walker && particles && prefab && walk && body && trigger && interactable &&
-           simulated && sound && jumping;
+    return mover && walker && particles && prefab && encounter && walk && body && trigger &&
+           interactable && simulated && sound && jumping;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -648,6 +691,70 @@ std::vector<TriggerEvent> update_triggers(world::World& world) {
         }
     }
     return events;
+}
+
+std::optional<std::string> update_encounters(world::World& world, double walked) {
+    const reflect::TypeInfo* type = world.registry().find_type<EncounterArea>();
+    const std::optional<std::array<double, 2>> player = player_position(world);
+    if (type == nullptr || !player || !std::isfinite(walked) || walked <= 0.0) {
+        return std::nullopt;
+    }
+    std::optional<std::string> found;
+    world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        EncounterArea* area = ref.as<EncounterArea>();
+        const scene2d::Transform2D* at = world.get<scene2d::Transform2D>(entity);
+        if (found || area == nullptr || at == nullptr || !area->enabled) {
+            return;
+        }
+        const scene2d::Box box = feet_box(at->x, at->y, area->width, area->height);
+        const double px = (*player)[0];
+        const double py = (*player)[1];
+        if (px < box.left || px >= box.right || py <= box.top || py > box.bottom) {
+            return;
+        }
+        if (area->seed == 0) {
+            std::uint32_t hash = 2166136261U;
+            for (const char c : world.guid(entity).to_string()) {
+                hash = (hash ^ static_cast<std::uint8_t>(c)) * 16777619U;
+            }
+            area->seed = hash == 0 ? 1U : hash;
+        }
+        const auto random = [area] {
+            area->seed ^= area->seed << 13U;
+            area->seed ^= area->seed >> 17U;
+            area->seed ^= area->seed << 5U;
+            return static_cast<double>(area->seed % 10000U) / 10000.0;
+        };
+        const double low = std::max(1.0, std::min(area->steps_min, area->steps_max));
+        const double high = std::max(low, area->steps_max);
+        if (!(area->next > 0.0)) {
+            area->next = low + ((high - low) * random());
+        }
+        area->walked += walked;
+        if (area->walked < area->next) {
+            return;
+        }
+        area->walked = 0.0;
+        area->next = 0.0;
+        // One of its groups, at random.
+        std::vector<std::string> groups;
+        std::string group;
+        for (const char c : area->groups + "|") {
+            if (c == '|') {
+                if (group.find_first_not_of(" \t") != std::string::npos) {
+                    groups.push_back(group);
+                }
+                group.clear();
+            } else {
+                group += c;
+            }
+        }
+        if (!groups.empty()) {
+            found = groups[static_cast<std::size_t>(random() * static_cast<double>(groups.size())) %
+                           groups.size()];
+        }
+    });
+    return found;
 }
 
 world::Entity find_interaction(const world::World& world, world::Entity mover_entity) {
