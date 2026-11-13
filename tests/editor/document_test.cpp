@@ -845,12 +845,26 @@ TEST_CASE("Picking finds what is drawn on top at a point") {
     CHECK(name_at(10.9, 8.5) == "hero");
 }
 
-TEST_CASE("A scene placed in another as a door to it, which the game walks through") {
+TEST_CASE("A scene placed in another as a door to it, with its door back, which the game walks "
+          "through") {
     const Sample sample;
     const auto d = sample.open();
     REQUIRE(d->scene_path() == "maps/village.dscene");
     const std::size_t before = d->entities().size();
     std::string error;
+    const fs::path road_file = sample.path / "assets" / "maps" / "road.dscene";
+    // The road's entity called door_to_village, as its file has it (null if none).
+    const auto back_on_disk = [&]() -> serialize::Json {
+        std::ifstream in(road_file, std::ios::binary);
+        const serialize::Json road = serialize::Json::parse(in);
+        for (const serialize::Json& entity : road.at("entities")) {
+            if (entity.value("name", std::string()) == "door_to_village") {
+                return entity;
+            }
+        }
+        return nullptr;
+    };
+    REQUIRE(back_on_disk().is_null());
     // Where the hero stands, so the game walks in at once.
     const Guid door = d->place_door("maps/road.dscene", 10.01, 9.0, error);
     INFO(error);
@@ -877,15 +891,24 @@ TEST_CASE("A scene placed in another as a door to it, which the game walks throu
         }
         return found;
     };
+    // The road had no door back, so one is made there, in the same step: each door's Rule
+    // arrives at the other. Rules about it check, though it is in the road and not saved.
     REQUIRE(doors_file() != nullptr);
-    CHECK(lines() == std::vector<std::string>{"When [who] walks in (door_to_road)",
-                                              "Go to scene “maps/road.dscene” (game)"});
+    CHECK(lines() == std::vector<std::string>{
+                         "When [who] walks in (door_to_road)",
+                         "Go to scene “maps/road.dscene”, arriving at “door_to_village” (game)",
+                         "When [who] walks in (door_to_village)",
+                         "Go to scene “maps/village.dscene”, arriving at “door_to_road” (game)"});
     CHECK(d->check_logic(doors).empty());
-    // A second door to the same scene: numbered, its Rule in the same file.
+    CHECK(d->dirty());
+    CHECK(back_on_disk().is_null()); // until saved
+    // A second door to the same scene: numbered, arriving at the same door back (no other
+    // is made), its Rule in the same file.
     const Guid second = d->place_door("maps/road.dscene", 3.0, 3.0, error);
     REQUIRE(second.is_valid());
     CHECK(d->world().name(d->world().find(second)) == "door_to_road_2");
-    CHECK(doors_file()->rules.size() == 2);
+    REQUIRE(doors_file()->rules.size() == 3);
+    CHECK(lines().back() == "Go to scene “maps/road.dscene”, arriving at “door_to_village” (game)");
     // Refused, changing nothing: the scene open here, one that is not there, no place.
     CHECK_FALSE(d->place_door("maps/village.dscene", 3.0, 3.0, error).is_valid());
     CHECK(error == "That is the scene open here: a door leads to another one.");
@@ -896,34 +919,41 @@ TEST_CASE("A scene placed in another as a door to it, which the game walks throu
             .is_valid());
     CHECK(d->entities().size() == before + 2);
     CHECK(d->undo_label() == "Place a door to road");
-    // One undo takes the second door and its Rule; another the first, and the file.
+    // One undo takes the second door and its Rule; another the first, the door back, and
+    // the file.
     REQUIRE(d->undo());
     CHECK(d->entities().size() == before + 1);
-    CHECK(doors_file()->rules.size() == 1);
+    CHECK(doors_file()->rules.size() == 2);
     REQUIRE(d->undo());
     CHECK(d->entities().size() == before);
     CHECK(doors_file() == nullptr);
     REQUIRE(d->redo());
     REQUIRE(d->save(error));
     CHECK(fs::exists(sample.path / "assets" / "logic" / "doors.drules"));
-
-    // The village dropped into the road: a door back, which arrives at the village's door
-    // to the road, and that door now arrives at this one. One step.
-    REQUIRE(d->open_scene("maps/road.dscene", error));
-    const Guid back = d->place_door("maps/village.dscene", 2.0, 3.0, error);
-    INFO(error);
-    REQUIRE(back.is_valid());
-    CHECK(d->world().name(d->world().find(back)) == "door_to_village");
-    CHECK(lines() == std::vector<std::string>{
-                         "When [who] walks in (door_to_road)",
-                         "Go to scene “maps/road.dscene”, arriving at “door_to_village” (game)",
-                         "When [who] walks in (door_to_village)",
-                         "Go to scene “maps/village.dscene”, arriving at “door_to_road” (game)"});
-    CHECK(d->check_logic(doors).empty());
-    REQUIRE(d->undo()); // both doors' Rules as they were, in one step
-    CHECK(lines() == std::vector<std::string>{"When [who] walks in (door_to_road)",
-                                              "Go to scene “maps/road.dscene” (game)"});
+    CHECK_FALSE(d->dirty());
+    // Saved, the door back is in the road's file: where the road's hero starts (3, 9),
+    // with a Trigger Area.
+    const serialize::Json made = back_on_disk();
+    REQUIRE_FALSE(made.is_null());
+    CHECK(made["components"]["transform_2d"]["x"] == 3.0);
+    CHECK(made["components"]["transform_2d"]["y"] == 9.0);
+    CHECK(made["components"].contains("trigger"));
+    // Undone and saved, it leaves the road's file again; redone and saved, it is back.
+    REQUIRE(d->undo());
+    CHECK(d->dirty());
+    REQUIRE(d->save(error));
+    CHECK(back_on_disk().is_null());
     REQUIRE(d->redo());
+    REQUIRE(d->save(error));
+    REQUIRE_FALSE(back_on_disk().is_null());
+
+    // In the road, the door back is there, its Rule checks, and it can be moved.
+    REQUIRE(d->open_scene("maps/road.dscene", error));
+    const std::vector<world::Entity> backs = d->world().find_named("door_to_village");
+    REQUIRE(backs.size() == 1);
+    CHECK(d->world().get<game::Trigger>(backs[0]) != nullptr);
+    CHECK(d->check_logic(doors).empty());
+    REQUIRE(d->move_entity(d->world().guid(backs[0]), 2.0, 3.0));
     REQUIRE(d->save(error));
 
     // Played: the hero stands in the door, so the game fades out to the road and in again,
@@ -953,6 +983,92 @@ TEST_CASE("A scene placed in another as a door to it, which the game walks throu
     const world::Entity arrived = runtime->world().find_named("hero").at(0);
     CHECK(runtime->world().get<scene2d::Transform2D>(arrived)->x == 2.0);
     CHECK(runtime->world().get<scene2d::Transform2D>(arrived)->y == 3.0);
+}
+
+TEST_CASE("Undoing to before a door back was made puts the other scene's file back on save") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    const fs::path road_file = sample.path / "assets" / "maps" / "road.dscene";
+    const auto road_has_back = [&] {
+        std::ifstream in(road_file, std::ios::binary);
+        const std::string text{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+        return text.find("door_to_village") != std::string::npos;
+    };
+    // A step before the door, then the door (and its door back in the road), saved.
+    REQUIRE(d->create_entity("marker", 1.0, 1.0).is_valid());
+    REQUIRE(d->place_door("maps/road.dscene", 10.0, 9.0, error).is_valid());
+    REQUIRE(d->save(error));
+    CHECK(road_has_back());
+    // Undone past the door to before the first step, and saved: the road as it was.
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    CHECK(d->world().find_named("marker").empty());
+    CHECK(d->dirty());
+    REQUIRE(d->save(error));
+    CHECK_FALSE(road_has_back());
+    // The doors' logic file, made by the door, goes too, with its .meta.
+    CHECK_FALSE(fs::exists(sample.path / "assets" / "logic" / "doors.drules"));
+    CHECK_FALSE(fs::exists(sample.path / "assets" / "logic" / "doors.drules.meta"));
+    CHECK_FALSE(d->dirty());
+    // Redone and saved: the door back again.
+    REQUIRE(d->redo());
+    REQUIRE(d->redo());
+    REQUIRE(d->save(error));
+    CHECK(road_has_back());
+    CHECK(fs::exists(sample.path / "assets" / "logic" / "doors.drules"));
+    CHECK(fs::exists(sample.path / "assets" / "logic" / "doors.drules.meta"));
+    CHECK_FALSE(d->dirty());
+}
+
+TEST_CASE("A door to a scene whose door back was made by hand arrives at that one") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    const std::string doors = "logic/doors.drules";
+    // In the road, a door to the village made by hand: a Trigger Area, and a Rule that
+    // simply goes there.
+    REQUIRE(d->open_scene("maps/road.dscene", error));
+    const Guid made = d->create_entity("door_to_village", 2.0, 3.0);
+    const reflect::TypeInfo* trigger = d->registry().find_type<game::Trigger>();
+    REQUIRE(trigger != nullptr);
+    REQUIRE(d->add_component(made, *trigger));
+    REQUIRE(d->create_logic_file(doors, error));
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(doors, editor::LogicEvent{"door_to_village", "entered", ""}, error);
+    const engine::logic::BlockId go =
+        d->add_logic_step(doors, rule, editor::LogicAction{"game", "go_to_scene", ""}, error);
+    REQUIRE(go.is_valid());
+    REQUIRE(
+        d->set_logic_slot(doors, go, 0, reflect::Value{std::string("maps/village.dscene")}, error));
+    REQUIRE(d->save(error));
+    const std::string road_before = [&] {
+        std::ifstream in(sample.path / "assets" / "maps" / "road.dscene", std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    }();
+    // From the village, a door to the road: no other door is made there; the two arrive at
+    // each other, in one step, and the road's file is left as it is.
+    REQUIRE(d->open_scene("maps/village.dscene", error));
+    REQUIRE(d->place_door("maps/road.dscene", 10.0, 9.0, error).is_valid());
+    std::vector<std::string> lines;
+    for (const editor::LogicFile& file : d->logic()) {
+        if (file.path == doors) {
+            for (const editor::LogicLine& line : editor::describe(file.asset, *d)) {
+                lines.push_back(line.text);
+            }
+        }
+    }
+    CHECK(lines == std::vector<std::string>{
+                       "When [who] walks in (door_to_village)",
+                       "Go to scene “maps/village.dscene”, arriving at “door_to_road” (game)",
+                       "When [who] walks in (door_to_road)",
+                       "Go to scene “maps/road.dscene”, arriving at “door_to_village” (game)"});
+    CHECK(d->check_logic(doors).empty());
+    REQUIRE(d->save(error));
+    std::ifstream in(sample.path / "assets" / "maps" / "road.dscene", std::ios::binary);
+    CHECK(std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()} ==
+          road_before);
 }
 
 TEST_CASE("Turning and scaling a sprite, each a step of undo that a drag merges") {

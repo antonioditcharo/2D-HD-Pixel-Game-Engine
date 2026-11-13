@@ -1203,8 +1203,9 @@ TEST_CASE("Pictures are dragged from the assets into the scene") {
     CHECK(listed_sound);
     REQUIRE(e.window.document()->undo());
 
-    // A scene dropped there becomes a door to it: selected, and its Rule, in a new
-    // logic/doors.drules, shown in the Logic view. One undo takes it all away.
+    // A scene dropped there becomes a door to it: selected, and its Rule and its door
+    // back's (made in the road), in a new logic/doors.drules, shown in the Logic view. One
+    // undo takes it all away.
     const std::unique_ptr<QMimeData> road = drag_data(e.sample.path / "assets/maps/road.dscene");
     drop(*road, view->from_map(6.5, 8.0));
     CHECK(e.window.document()->undo_label() == "Place a door to road");
@@ -1213,7 +1214,7 @@ TEST_CASE("Pictures are dragged from the assets into the scene") {
         QTreeWidget* logic = e.window.logic_view();
         for (int i = 0; i < logic->topLevelItemCount(); ++i) {
             if (logic->topLevelItem(i)->text(0) == QStringLiteral("logic/doors.drules")) {
-                return logic->topLevelItem(i)->childCount() == 1;
+                return logic->topLevelItem(i)->childCount() == 2;
             }
         }
         return false;

@@ -191,10 +191,12 @@ public:
     /// "maps/cave.dscene") at map point (x, y), snapped to whole pixels: an entity
     /// "door_to_cave" (numbered if the name is taken) with a Trigger Area, and in
     /// logic/doors.drules (made if missing) a Rule "When [who] walks in (door_to_cave)"
-    /// that goes to that scene. All one undo step ("Place a door to cave"). Returns the
-    /// door's GUID, or an invalid one, with `error` in plain language, for a scene that is
-    /// not one of the project's, the scene open here, or a point that is not a number;
-    /// then nothing changes.
+    /// that goes to that scene, arriving at its door back here. If it has none, one is
+    /// made there (where its player starts, else at the same point), with its own Rule
+    /// coming back to this door; that scene's file changes on save(). All one undo step
+    /// ("Place a door to cave"). Returns the door's GUID, or an invalid one, with `error`
+    /// in plain language, for a scene that is not one of the project's, the scene open
+    /// here, or a point that is not a number; then nothing changes.
     engine::Guid place_door(std::string_view scene, double x, double y, std::string& error);
     bool delete_entity(engine::Guid entity);
     /// Deletes several entities as one step of undo ("Delete 3 entities"). Ones already

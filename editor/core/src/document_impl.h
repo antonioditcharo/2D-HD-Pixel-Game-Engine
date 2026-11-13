@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,8 +36,16 @@ struct Document::Impl {
     /// What the entities of the project's other scenes are made of, by each name logic can
     /// use for them: Rules about them are checked and read as the game will run them.
     std::map<std::string, std::vector<const engine::reflect::TypeInfo*>, std::less<>> elsewhere;
-    /// Reads `elsewhere` again from the scene files (all but the open one).
+    /// Reads `elsewhere` again from the other scenes: their edits not yet saved (`others`),
+    /// else their files.
     void read_elsewhere();
+    /// Another scene's JSON as it is now: from `others` if changed here, else its file;
+    /// nothing if it cannot be read.
+    [[nodiscard]] std::optional<engine::serialize::Json> other_scene(const std::string& path) const;
+    /// Other scenes changed here and not yet saved (a door back placed in one), as their
+    /// files' JSON, by path in assets/. Save writes them; opening another scene needs the
+    /// changes saved first, so they only ever belong to the scene open now.
+    engine::serialize::Json others = engine::serialize::Json::object();
     /// Loads the scene file at `path` (in assets/) into the world, replacing what is
     /// there; false with `issues` if it cannot be loaded, changing nothing.
     bool load_scene(const std::string& path, std::vector<engine::serialize::Issue>& issues);
@@ -51,7 +60,7 @@ struct Document::Impl {
     engine::serialize::Json saved;
 
     /// Everything an edit can change: {"scene": the scene file's JSON, "logic": {path:
-    /// each logic file's JSON}}.
+    /// each logic file's JSON}, "project": the settings, "others": `others`}.
     [[nodiscard]] engine::serialize::Json snapshot() const;
     /// Puts back a snapshot: the world and the logic files.
     void restore(const engine::serialize::Json& state);

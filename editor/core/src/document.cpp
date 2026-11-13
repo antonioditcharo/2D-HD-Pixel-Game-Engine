@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <variant>
 
@@ -88,7 +89,8 @@ serialize::Json Document::Impl::snapshot() const {
     }
     return serialize::Json{{"scene", serialize::scene_to_json(*world)},
                            {"logic", std::move(files)},
-                           {"project", game::project_to_json(settings)}};
+                           {"project", game::project_to_json(settings)},
+                           {"others", others}};
 }
 
 void Document::Impl::restore(const serialize::Json& state) {
@@ -109,6 +111,11 @@ void Document::Impl::restore(const serialize::Json& state) {
         if (loaded.asset.has_value()) {
             logic.push_back(LogicFile{path, std::move(*loaded.asset)});
         }
+    }
+    // Other scenes as they were then, and so what logic can name in them.
+    if (state.at("others") != others) {
+        others = state.at("others");
+        read_elsewhere();
     }
 }
 
@@ -190,17 +197,30 @@ bool Document::Impl::load_scene(const std::string& path, std::vector<Issue>& iss
     return true;
 }
 
+std::optional<serialize::Json> Document::Impl::other_scene(const std::string& path) const {
+    if (others.contains(path)) {
+        return std::optional<serialize::Json>(std::in_place, others.at(path));
+    }
+    std::ifstream in(folder / "assets" / path, std::ios::binary);
+    if (!in) {
+        return std::nullopt;
+    }
+    const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    std::vector<Issue> ignored; // told when that scene is opened
+    std::optional<serialize::Json> json = serialize::parse(text, ignored);
+    if (json && !json->is_object()) {
+        return std::nullopt;
+    }
+    return json;
+}
+
 void Document::Impl::read_elsewhere() {
     elsewhere.clear();
     for (const engine::assets::AssetRecord& record : assets->assets()) {
         if (!record.path.ends_with(".dscene") || record.path == scene_path) {
             continue;
         }
-        std::ifstream in(folder / "assets" / record.path, std::ios::binary);
-        const std::string text{std::istreambuf_iterator<char>(in),
-                               std::istreambuf_iterator<char>()};
-        std::vector<Issue> ignored; // told when that scene is opened
-        const std::optional<serialize::Json> json = serialize::parse(text, ignored);
+        const std::optional<serialize::Json> json = other_scene(record.path);
         if (!json) {
             continue;
         }
@@ -280,7 +300,10 @@ bool Document::open_scene(std::string_view path, std::string& error) {
         return false;
     }
     std::vector<Issue> issues;
+    serialize::Json others = std::move(d.others); // saved already (not dirty)
+    d.others = serialize::Json::object();
     if (!d.load_scene(record->path, issues)) {
+        d.others = std::move(others);
         error = issues.empty() ? std::string("The scene could not be opened.")
                                : issues.front().path + ": " + issues.front().message;
         return false;
@@ -532,11 +555,8 @@ std::string door_name(std::string_view stem) {
     return name;
 }
 
-/// Whether the scene file at `file` has an entity named `name` (false if it cannot be
-/// read).
-bool scene_has_entity(const fs::path& file, std::string_view name) {
-    std::ifstream in(file, std::ios::binary);
-    const serialize::Json json = serialize::Json::parse(in, nullptr, false);
+/// Whether the scene in `json` has an entity named `name`.
+bool scene_has_entity(const serialize::Json& json, std::string_view name) {
     if (!json.is_object() || !json.contains("entities") || !json["entities"].is_array()) {
         return false;
     }
@@ -545,6 +565,41 @@ bool scene_has_entity(const fs::path& file, std::string_view name) {
             return entity.is_object() && entity.contains("name") && entity["name"].is_string() &&
                    entity["name"].get_ref<const std::string&>() == name;
         });
+}
+
+/// The scene in `json` with a door added: an entity `name` with a Trigger Area where the
+/// player starts there (the first Top-down Mover), or else at (x, y). Nothing if the scene
+/// cannot be loaded.
+std::optional<serialize::Json> with_door(const serialize::Json& json, reflect::Registry& registry,
+                                         const std::string& name, double x, double y) {
+    world::World scratch(registry);
+    scene2d::register_components(scratch);
+    game::register_behaviour_components(scratch);
+    const serialize::SceneLoad loaded = serialize::scene_from_json(json, scratch);
+    if (loaded.entities.empty() && !loaded.issues.empty()) {
+        return std::nullopt;
+    }
+    if (const reflect::TypeInfo* mover = registry.find_type<game::TopDownMover>()) {
+        bool found = false;
+        scratch.each(*mover, [&](world::Entity entity, reflect::ObjectRef) {
+            const auto* feet = scratch.get<scene2d::Transform2D>(entity);
+            if (!found && feet != nullptr) {
+                x = feet->x;
+                y = feet->y;
+                found = true;
+            }
+        });
+    }
+    const world::Entity door = scratch.create(name);
+    if (scratch.add<scene2d::Transform2D>(door) == nullptr ||
+        scratch.add<game::Trigger>(door) == nullptr) {
+        return std::nullopt;
+    }
+    // Asked for after both are added: adding one moves the others in memory.
+    auto* at = scratch.get<scene2d::Transform2D>(door);
+    at->x = x;
+    at->y = y;
+    return std::optional<serialize::Json>(std::in_place, serialize::scene_to_json(scratch));
 }
 
 } // namespace
@@ -571,6 +626,32 @@ Guid Document::place_door(std::string_view scene, double x, double y, std::strin
     for (int n = 2; !d.world->find_named(name).empty(); ++n) {
         name = base + "_" + std::to_string(n);
     }
+    // The other scene as it is now (with a door back made earlier and not yet saved).
+    const std::string there(scene);
+    const std::optional<serialize::Json> other = d.other_scene(there);
+    // A door back from there (placed earlier) is where the player arrives, and through it
+    // arrives at this one. Arriving in a trigger area does not count as walking in, so
+    // nobody is sent straight back (game.md, scenes). With none, one is made there.
+    const std::string back = door_name(fs::path(d.scene_path).stem().string());
+    const bool had_back = other && scene_has_entity(*other, back);
+    const double units = static_cast<double>(std::max<std::uint32_t>(d.settings.ppu, 1));
+    const double at_x = std::round(x * units) / units;
+    const double at_y = std::round(y * units) / units;
+    std::optional<serialize::Json> with_back =
+        other && !had_back ? with_door(*other, d.registry, back, at_x, at_y) : std::nullopt;
+    if (with_back && !d.others.contains(there)) {
+        // That scene as its file has it, in every state undo and redo can go back to and
+        // in the saved one: whichever is saved, its file is then written as it should be.
+        d.others[there] = *other;
+        for (std::vector<Step>* list : {&d.undo, &d.redo}) {
+            for (Step& step : *list) {
+                for (serialize::Json* state : {&step.before, &step.after}) {
+                    (*state)["others"].emplace(there, *other);
+                }
+            }
+        }
+        d.saved["others"].emplace(there, *other);
+    }
     // Made of ordinary edits, then folded into one step; undone at once if one fails.
     end_merge();
     const std::size_t steps = d.undo.size();
@@ -583,9 +664,7 @@ Guid Document::place_door(std::string_view scene, double x, double y, std::strin
         d.merging = false;
         return Guid{};
     };
-    const double units = static_cast<double>(std::max<std::uint32_t>(d.settings.ppu, 1));
-    const Guid door =
-        create_entity(name, std::round(x * units) / units, std::round(y * units) / units);
+    const Guid door = create_entity(name, at_x, at_y);
     const reflect::TypeInfo* trigger = d.registry.find_type<game::Trigger>();
     if (!door.is_valid() || trigger == nullptr || !add_component(door, *trigger)) {
         error = "The door could not be made.";
@@ -595,11 +674,12 @@ Guid Document::place_door(std::string_view scene, double x, double y, std::strin
     if (d.logic_file(doors) == nullptr && !create_logic_file(doors, error)) {
         return fail();
     }
-    // A door back from there (placed earlier): the player arrives at it, and through it
-    // arrives at this one. Arriving in a trigger area does not count as walking in, so
-    // nobody is sent straight back (game.md, scenes).
-    const std::string back = door_name(fs::path(d.scene_path).stem().string());
-    const bool has_back = scene_has_entity(d.folder / "assets" / scene, back);
+    const bool made_back = with_back.has_value();
+    if (made_back) {
+        d.others[there] = std::move(*with_back);
+        d.read_elsewhere(); // so Rules can name the door back
+    }
+    const bool has_back = had_back || made_back;
     const logic::BlockId rule = add_logic_rule(doors, LogicEvent{name, "entered", {}}, error);
     const logic::BlockId go =
         rule.is_valid()
@@ -612,14 +692,27 @@ Guid Document::place_door(std::string_view scene, double x, double y, std::strin
         (has_back && !set_logic_slot(doors, go, 1, reflect::Value{back}, error))) {
         return fail();
     }
-    if (has_back) {
+    if (made_back) {
+        // The new door back's own Rule: here, arriving at this door.
+        const logic::BlockId back_rule =
+            add_logic_rule(doors, LogicEvent{back, "entered", {}}, error);
+        const logic::BlockId back_go =
+            back_rule.is_valid()
+                ? add_logic_step(doors, back_rule, LogicAction{"game", "go_to_scene_at", {}}, error)
+                : logic::BlockId{};
+        if (!back_go.is_valid() ||
+            !set_logic_slot(doors, back_go, 0, reflect::Value{d.scene_path}, error) ||
+            !set_logic_slot(doors, back_go, 1, reflect::Value{name}, error)) {
+            return fail();
+        }
+    } else if (had_back) {
         // The door back's own Rule, if it simply goes here, now arrives at this door.
         for (LogicFile& file : d.logic) {
-            for (logic::Rule& other : file.asset.rules) {
-                if (other.object != back || other.event != "entered") {
+            for (logic::Rule& other_rule : file.asset.rules) {
+                if (other_rule.object != back || other_rule.event != "entered") {
                     continue;
                 }
-                for (logic::Stmt& step : other.actions) {
+                for (logic::Stmt& step : other_rule.actions) {
                     const auto* to = step.arguments.size() == 1
                                          ? std::get_if<std::string>(&step.arguments[0].literal)
                                          : nullptr;
@@ -1209,9 +1302,44 @@ bool Document::save(std::string& error) {
         saved_file = json;
         written_logic = true;
     }
+    // Files made here and then undone away (a door's logic/doors.drules) go again, with
+    // their .meta, so the game does not run Rules about what is no longer there.
+    std::vector<std::string> gone;
+    for (const auto& [path, json] : d.saved["logic"].items()) {
+        if (!state.at("logic").contains(path)) {
+            gone.push_back(path);
+        }
+    }
+    for (const std::string& path : gone) {
+        std::error_code failed;
+        const fs::path file = d.folder / "assets" / path;
+        fs::remove(file, failed);
+        if (!failed) {
+            fs::remove(fs::path(file.string() + ".meta"), failed);
+        }
+        if (failed) {
+            error = "assets/" + path + ": it could not be removed (" + failed.message() + ").";
+            return false;
+        }
+        d.saved["logic"].erase(path);
+        written_logic = true;
+    }
     if (written_logic) {
         // A new file gets its .meta, and so its GUID, as any asset does.
         static_cast<void>(d.assets->refresh());
+    }
+    // Other scenes changed here (a door back), or put back by undo.
+    for (const auto& [path, json] : state.at("others").items()) {
+        serialize::Json& saved_file = d.saved["others"][path];
+        if (json == saved_file) {
+            continue;
+        }
+        if (!game::write_file_atomically(d.folder / "assets" / path, serialize::to_text(json),
+                                         error)) {
+            error.insert(0, "assets/" + path + ": ");
+            return false;
+        }
+        saved_file = json;
     }
     d.merging = false;
     return true;
