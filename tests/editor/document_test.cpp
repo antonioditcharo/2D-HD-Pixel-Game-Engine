@@ -1341,10 +1341,35 @@ TEST_CASE("A new platformer: seen from the side, the hero jumps onto a ledge") {
         const auto d = editor::Document::open(folder, issues);
         REQUIRE(d != nullptr);
         CHECK(issues.empty());
-        CHECK(d->entities().size() == 2);
+        CHECK(d->entities().size() == 5); // the level, the hero and three coins
         const world::Entity hero = d->world().find_named("hero").at(0);
         CHECK(d->world().get<game::Jumping>(hero) != nullptr);
         CHECK(d->world().get<game::TopDownMover>(hero)->hitbox_height == 1.0);
+        // The coins: a picture and a Trigger Area each, and Rules that pick them up.
+        for (const char* name : {"coin_1", "coin_2", "coin_3"}) {
+            CAPTURE(name);
+            REQUIRE(d->world().find_named(name).size() == 1);
+            const world::Entity coin = d->world().find_named(name).at(0);
+            CHECK(d->world().get<scene2d::Sprite>(coin) != nullptr);
+            CHECK(d->world().get<game::Trigger>(coin) != nullptr);
+        }
+        CHECK(d->check_logic("logic/coins.drules").empty());
+        const auto coins =
+            std::find_if(d->logic().begin(), d->logic().end(),
+                         [](const editor::LogicFile& f) { return f.path == "logic/coins.drules"; });
+        REQUIRE(coins != d->logic().end());
+        std::vector<std::string> first;
+        for (const editor::LogicLine& line : editor::describe(coins->asset, *d)) {
+            if (first.size() < 6) {
+                first.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') +
+                                line.text);
+            }
+        }
+        CHECK(first == std::vector<std::string>{
+                           "When [who] walks in (coin_1)", "  Give 1 “coin” (inventory)",
+                           "  Set visible of coin_1 to no", "  Set enabled of coin_1 to no",
+                           "  If the player has at least 3 “coin” (inventory):",
+                           "    Say “You found all the coins!” (dialogue)"});
         if (test_support::gpu() != nullptr) {
             // Looking at (10, 6): the map's corner is at pixel (0, -6).
             const auto preview = editor::Preview::create(error);
@@ -1363,6 +1388,7 @@ TEST_CASE("A new platformer: seen from the side, the hero jumps onto a ledge") {
             CHECK(at(120, 125) == std::array<int, 3>{120, 122, 132}); // the first ledge
             CHECK(at(5, 50) == std::array<int, 3>{120, 122, 132});    // the west wall
             CHECK(at(46, 148) == std::array<int, 3>{52, 96, 180});    // the hero's tunic
+            CHECK(at(120, 116) == std::array<int, 3>{240, 196, 64});  // the first coin
         }
     }
     {
@@ -1402,6 +1428,50 @@ TEST_CASE("A new platformer: seen from the side, the hero jumps onto a ledge") {
         CHECK(hero().x == doctest::Approx(8.0));
         const world::Entity e = runtime->world().find_named("hero").at(0);
         CHECK(runtime->world().get<game::Jumping>(e)->on_ground);
+        // On the way, the hero walked into the first coin: one carried, that coin hidden
+        // and its area off; the others still there.
+        CHECK(runtime->inventory().count_of("coin") == 1);
+        const world::Entity first = runtime->world().find_named("coin_1").at(0);
+        CHECK_FALSE(runtime->world().get<scene2d::Sprite>(first)->visible);
+        CHECK_FALSE(runtime->world().get<game::Trigger>(first)->enabled);
+        const world::Entity second = runtime->world().find_named("coin_2").at(0);
+        CHECK(runtime->world().get<scene2d::Sprite>(second)->visible);
+        CHECK(runtime->world().get<game::Trigger>(second)->enabled);
+    }
+    {
+        // The other two coins moved onto the first, and played the same way: all three
+        // picked up at once, and the message says so (once).
+        std::vector<serialize::Issue> issues;
+        const auto d = editor::Document::open(folder, issues);
+        REQUIRE(d != nullptr);
+        for (const char* name : {"coin_2", "coin_3"}) {
+            REQUIRE(d->move_entity(d->world().guid(d->world().find_named(name).at(0)), 7.5, 8.0));
+        }
+        REQUIRE(d->save(error));
+        engine::input::Recording replay;
+        const auto right = engine::input::Binding::key(engine::input::Key::Right);
+        const auto space = engine::input::Binding::key(engine::input::Key::Space);
+        replay.record(0, right, true);
+        replay.record(20, space, true);
+        replay.record(22, space, false);
+        replay.record(60, right, false);
+        game::RuntimeOptions options;
+        options.graphics = false;
+        options.replay = &replay;
+        options.audio = game::AudioMode::Headless;
+        options.save_folder = folder / "saves";
+        const std::unique_ptr<game::Runtime> runtime = game::Runtime::open(folder, options, issues);
+        CHECK(issues.empty());
+        REQUIRE(runtime != nullptr);
+        for (int i = 0; i < 120; ++i) {
+            runtime->step();
+        }
+        CHECK(runtime->inventory().count_of("coin") == 3);
+        REQUIRE(runtime->dialogue().is_open());
+        REQUIRE(runtime->dialogue().current() != nullptr);
+        CHECK(*runtime->dialogue().current() == "You found all the coins!");
+        CHECK(runtime->dialogue().close_current());
+        CHECK_FALSE(runtime->dialogue().is_open()); // said once
     }
     std::error_code ignored;
     fs::remove_all(folder, ignored);

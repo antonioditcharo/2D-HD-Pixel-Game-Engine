@@ -184,13 +184,13 @@ TEST_CASE("File > New project makes a starter game and opens it") {
     auto* problems = e.window.logic_panel()->findChild<QLabel*>(QStringLiteral("logic_problems"));
     REQUIRE(problems != nullptr);
     CHECK(problems->text() == QStringLiteral("logic/story.drules runs: no problems."));
-    // The platformer: the level and the hero, who jumps.
+    // The platformer: the level, the hero, who jumps, and coins.
     const fs::path folder_side =
         fs::temp_directory_path() / ("sparxel-new-app-" + Guid::generate().to_string());
     REQUIRE(e.window.new_project(folder_side, QStringLiteral("Up We Go"),
                                  editor::ProjectTemplate::Platformer));
     QApplication::processEvents();
-    CHECK(e.window.document()->entities().size() == 2);
+    CHECK(e.window.document()->entities().size() == 5); // with three coins
     e.window.select(e.guid("hero"));
     CHECK(e.window.document()->world().get<engine::game::Jumping>(
               e.window.document()->world().find(e.guid("hero"))) != nullptr);

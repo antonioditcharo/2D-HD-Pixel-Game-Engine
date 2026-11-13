@@ -2,6 +2,7 @@
 
 #include "engine/assets/assets.h"
 #include "engine/game/runtime.h"
+#include "engine/logic/ir.h"
 #include "engine/scene2d/scene2d.h"
 #include "engine/serialize/json.h"
 
@@ -114,6 +115,69 @@ std::string side_tiles() {
     set(11, 14, 6, 2);
     set(15, 18, 4, 2);
     return scene2d::format_tiles(grid);
+}
+
+/// A gold coin standing on the bottom of its tile, lit from the top left.
+assets::Image coin() {
+    assets::Image image;
+    image.width = tile;
+    image.height = tile;
+    image.rgba.assign(std::size_t{tile} * tile * 4, 0);
+    constexpr Rgb gold{240, 196, 64};
+    constexpr Rgb shade{196, 144, 36};
+    constexpr Rgb shine{255, 240, 160};
+    // A disc of radius 5 around (8, 10), its lower right edge darker, a glint near the top.
+    for (std::uint32_t y = 0; y < tile; ++y) {
+        for (std::uint32_t x = 0; x < tile; ++x) {
+            const int dx = static_cast<int>(x) - 8;
+            const int dy = static_cast<int>(y) - 10;
+            const int distance = (dx * dx) + (dy * dy);
+            if (distance <= 25) {
+                put(image, x, y, distance >= 13 && dx + dy > 0 ? shade : gold);
+            }
+        }
+    }
+    put(image, 6, 7, shine);
+    put(image, 7, 7, shine);
+    put(image, 6, 8, shine);
+    return image;
+}
+
+/// Where the platformer's coins are: one on each ledge.
+constexpr std::array<std::array<double, 2>, 3> coin_places{{{7.5, 8.0}, {13.0, 6.0}, {17.0, 4.0}}};
+
+/// The platformer's logic: walking into a coin gives the player one and takes it away
+/// (hidden, its area off); with all three, a message says so.
+engine::serialize::Json coin_rules() {
+    namespace logic = engine::logic;
+    namespace ir = engine::logic::ir;
+    using engine::reflect::Value;
+    logic::LogicAsset coins;
+    coins.name = "coins";
+    std::uint64_t block = 1;
+    for (std::size_t i = 1; i <= coin_places.size(); ++i) {
+        const std::string name = "coin_" + std::to_string(i);
+        logic::Rule rule;
+        rule.id = logic::BlockId{block++};
+        rule.object = name;
+        rule.event = "entered";
+        rule.actions.push_back(ir::do_action(
+            block++, "inventory", "give",
+            {ir::literal(Value{std::string("coin")}), ir::literal(Value{std::int64_t{1}})}));
+        rule.actions.push_back(ir::set(block++, name, "visible", ir::literal(Value{false})));
+        rule.actions.push_back(ir::set(block++, name, "enabled", ir::literal(Value{false})));
+        const std::uint64_t test = block++;
+        rule.actions.push_back(ir::if_then(
+            test,
+            ir::call("inventory", "has_at_least",
+                     {ir::literal(Value{std::string("coin")}),
+                      ir::literal(Value{static_cast<std::int64_t>(coin_places.size())})}),
+            {ir::do_action(block++, "dialogue", "say",
+                           {ir::literal(Value{std::string("You found all the coins!")})})},
+            {}));
+        coins.rules.push_back(std::move(rule));
+    }
+    return serialize::logic_to_json(coins);
 }
 
 /// The visual novel's backdrop, the size of the screen: a sky growing paler towards the
@@ -287,6 +351,22 @@ serialize::Json entity(std::string_view entity_name, serialize::Json components)
 /// create_project() for a platformer, into its folders, made already, with its pictures.
 bool create_platformer(const fs::path& folder, std::string_view name, std::string& error,
                        const std::string& tileset_id, const std::string& hero_id) {
+    // Its coins: their picture and their logic.
+    const fs::path assets_folder = folder / "assets";
+    std::error_code failed;
+    fs::create_directories(assets_folder / "logic", failed);
+    if (failed || !write_png(assets_folder / "art" / "coin.png", coin()) ||
+        !write_text(assets_folder / "logic" / "coins.drules", serialize::to_text(coin_rules()))) {
+        error = "The project's folder could not be written to.";
+        return false;
+    }
+    assets::AssetDatabase database(assets_folder);
+    database.refresh();
+    const assets::AssetRecord* coin_png = database.find("art/coin.png");
+    if (coin_png == nullptr) {
+        error = "The project's pictures could not be read back.";
+        return false;
+    }
     serialize::Json entities = serialize::Json::array();
     entities.push_back(entity(
         "level", {{"tilemap", {{"tiles", side_tiles()}, {"tileset", tileset_id}, {"solid", true}}},
@@ -296,6 +376,14 @@ bool create_platformer(const fs::path& folder, std::string_view name, std::strin
                                        {"top_down_mover", {{"speed", 5.0}, {"hitbox_height", 1.0}}},
                                        {"jumping", serialize::Json::object()},
                                        {"transform_2d", {{"x", 3.0}, {"y", 10.0}}}}));
+    // A coin on each ledge, picked up by walking into it.
+    for (std::size_t i = 0; i < coin_places.size(); ++i) {
+        entities.push_back(
+            entity("coin_" + std::to_string(i + 1),
+                   {{"sprite", {{"image", coin_png->guid.to_string()}}},
+                    {"trigger", serialize::Json::object()},
+                    {"transform_2d", {{"x", coin_places.at(i)[0]}, {"y", coin_places.at(i)[1]}}}}));
+    }
     const serialize::Json scene{
         {"format", "sparxel.scene"}, {"version", 1}, {"entities", std::move(entities)}};
     engine::game::ProjectSettings settings;
@@ -308,7 +396,6 @@ bool create_platformer(const fs::path& folder, std::string_view name, std::strin
         error = "The project's files could not be written.";
         return false;
     }
-    assets::AssetDatabase database(folder / "assets");
     database.refresh(); // the scene's ".meta"
     return true;
 }
