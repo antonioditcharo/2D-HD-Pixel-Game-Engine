@@ -252,6 +252,24 @@ bool StoryEditor::add_speaker(std::string_view name, std::string_view color) {
     return true;
 }
 
+bool StoryEditor::set_speaker(std::string_view name, const game::Speaker& value) {
+    const auto found = std::find_if(conversation_.speakers.begin(), conversation_.speakers.end(),
+                                    [name](const game::Speaker& s) { return s.name == name; });
+    if (found == conversation_.speakers.end()) {
+        return false;
+    }
+    game::Speaker next = value;
+    next.name = found->name;
+    next.pitch = std::isfinite(next.pitch) ? std::clamp(next.pitch, 0.25, 4.0) : 1.0;
+    if (next == *found) {
+        return false;
+    }
+    game::Conversation before = conversation_;
+    *found = std::move(next);
+    record("Change speaker " + found->name, std::move(before), "speaker:" + found->name);
+    return true;
+}
+
 std::string StoryEditor::undo_text() const {
     return undo_.empty() ? std::string() : undo_.back().label;
 }

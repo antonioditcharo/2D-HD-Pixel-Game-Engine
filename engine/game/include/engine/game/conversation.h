@@ -68,7 +68,10 @@ struct TalkNode {
     /// All must hold for the node to be said; otherwise the conversation goes on to `next`.
     std::vector<TalkCondition> conditions;
     std::vector<TalkEffect> effects; ///< Done as the node is said.
-    double x = 0.0;                  ///< Where the editor's graph shows it.
+    /// Another picture of the speaker for this line (a mood: "portraits/elder_glad.png");
+    /// empty shows the speaker's own.
+    std::string portrait;
+    double x = 0.0; ///< Where the editor's graph shows it.
     double y = 0.0;
 
     friend bool operator==(const TalkNode&, const TalkNode&) = default;
@@ -77,6 +80,9 @@ struct TalkNode {
 struct Speaker {
     std::string name;
     std::string color = "#ffd27a"; ///< The name plate's colour, "#rrggbb".
+    std::string portrait; ///< A picture in assets/ shown beside their words; empty for none.
+    std::string voice;    ///< A sound in assets/ played as their words are typed (blips).
+    double pitch = 1.0;   ///< The voice's pitch, 0.25 to 4.
 
     friend bool operator==(const Speaker&, const Speaker&) = default;
 };

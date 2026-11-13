@@ -4,8 +4,10 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QDoubleSpinBox>
 #include <QFontMetrics>
 #include <QFormLayout>
 #include <QGraphicsPathItem>
@@ -438,6 +440,57 @@ bool StoryWindow::eventFilter(QObject* watched, QEvent* event) {
     return QMainWindow::eventFilter(watched, event);
 }
 
+QComboBox* StoryWindow::asset_box(QWidget* parent, const std::vector<std::string>& extensions,
+                                  const std::string& now, const QString& none) const {
+    auto* box = new QComboBox(parent);
+    box->setEditable(true);
+    box->addItem(QString());
+    box->lineEdit()->setPlaceholderText(none);
+    // The project's assets folder: the one the conversation is in, or above it.
+    std::filesystem::path root = file_.parent_path();
+    while (!root.empty() && root.filename() != "assets" && root != root.parent_path()) {
+        root = root.parent_path();
+    }
+    std::error_code ec;
+    if (root.filename() == "assets" && std::filesystem::is_directory(root, ec)) {
+        QStringList found;
+        for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+             !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+            std::string extension = it->path().extension().string();
+            std::ranges::transform(extension, extension.begin(), [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+            if (!extension.empty() &&
+                std::ranges::find(extensions, extension.substr(1)) != extensions.end()) {
+                const std::u8string relative =
+                    it->path().lexically_relative(root).generic_u8string();
+                found << QString::fromUtf8(reinterpret_cast<const char*>(relative.data()), // NOLINT
+                                           static_cast<qsizetype>(relative.size()));
+            }
+        }
+        found.sort();
+        box->addItems(found);
+    }
+    box->setCurrentText(text_of(now));
+    return box;
+}
+
+void StoryWindow::change_speaker(const std::string& name,
+                                 const std::function<void(game::Speaker&)>& change) {
+    if (refreshing_ || editor_ == nullptr) {
+        return;
+    }
+    const game::Speaker* now = editor_->conversation().speaker(name);
+    if (now == nullptr) {
+        return;
+    }
+    game::Speaker next = *now;
+    change(next);
+    if (editor_->set_speaker(name, next)) {
+        refresh_title();
+    }
+}
+
 void StoryWindow::change_node(const std::function<void(game::TalkNode&)>& change, bool structure) {
     if (refreshing_ || editor_ == nullptr) {
         return;
@@ -519,13 +572,78 @@ void StoryWindow::refresh_inspector() {
     connect(speaker, &QComboBox::currentTextChanged, this, [this](const QString& text) {
         change_node([&](game::TalkNode& n) { n.speaker = utf8(text.trimmed()); });
     });
-    connect(speaker->lineEdit(), &QLineEdit::editingFinished, this, [this, speaker] {
+    // Once the speaker is settled, their look shows below (rebuilt only if it changed, so
+    // a click elsewhere keeps its focus).
+    const std::string shown_look =
+        c.speaker(node->speaker) != nullptr ? node->speaker : std::string();
+    const auto settle = [this, speaker, shown_look] {
         if (editor_->add_speaker(utf8(speaker->currentText().trimmed()))) {
             refresh_title();
         }
         editor_->end_merge();
-    });
+        const game::TalkNode* now = editor_->node(selected_);
+        const std::string wanted = now != nullptr && editor_->conversation().speaker(now->speaker)
+                                       ? now->speaker
+                                       : std::string();
+        if (wanted != shown_look) {
+            QTimer::singleShot(0, this, [this] { refresh_inspector(); });
+        }
+    };
+    connect(speaker->lineEdit(), &QLineEdit::editingFinished, this, settle);
+    connect(speaker, &QComboBox::activated, this, settle);
     form->addRow(tr("Speaker"), speaker);
+
+    // How the speaker looks and sounds, in all their lines (of this conversation, and when
+    // Rules make them speak).
+    if (const game::Speaker* who = c.speaker(node->speaker)) {
+        const QString who_name = text_of(who->name); // Qt captures stay cheap to copy
+        form->addRow(
+            new QLabel(tr("<b>%1</b> in every line").arg(who_name.toHtmlEscaped()), panel));
+        auto* colour = new QPushButton(text_of(who->color), panel);
+        colour->setObjectName(QStringLiteral("speaker_color"));
+        colour->setToolTip(tr("The colour of their name on the plate above the message"));
+        colour->setStyleSheet(QStringLiteral("QPushButton { color: %1; font-weight: bold; }")
+                                  .arg(text_of(who->color)));
+        connect(colour, &QPushButton::clicked, this, [this, colour, who_name] {
+            const QColor picked =
+                QColorDialog::getColor(QColor(colour->text()), this, tr("Name plate colour"));
+            if (picked.isValid()) {
+                const QString hex = picked.name(QColor::HexRgb);
+                change_speaker(utf8(who_name), [&](game::Speaker& s) { s.color = utf8(hex); });
+                colour->setText(hex);
+                colour->setStyleSheet(
+                    QStringLiteral("QPushButton { color: %1; font-weight: bold; }").arg(hex));
+            }
+        });
+        form->addRow(tr("Name colour"), colour);
+        auto* portrait = asset_box(panel, {"png"}, who->portrait, tr("(none)"));
+        portrait->setObjectName(QStringLiteral("speaker_portrait"));
+        portrait->setToolTip(tr("A picture in assets/ standing on the message box while they "
+                                "speak"));
+        connect(portrait, &QComboBox::currentTextChanged, this, [this, who_name](const QString& t) {
+            change_speaker(utf8(who_name),
+                           [&](game::Speaker& s) { s.portrait = utf8(t.trimmed()); });
+        });
+        form->addRow(tr("Portrait"), portrait);
+        auto* voice = asset_box(panel, {"wav", "ogg", "flac", "mp3"}, who->voice, tr("(silent)"));
+        voice->setObjectName(QStringLiteral("speaker_voice"));
+        voice->setToolTip(tr("A short sound in assets/ blipped as their words are typed (needs a "
+                             "text speed above 0 in the Project view)"));
+        connect(voice, &QComboBox::currentTextChanged, this, [this, who_name](const QString& t) {
+            change_speaker(utf8(who_name), [&](game::Speaker& s) { s.voice = utf8(t.trimmed()); });
+        });
+        form->addRow(tr("Voice"), voice);
+        auto* pitch = new QDoubleSpinBox(panel);
+        pitch->setObjectName(QStringLiteral("speaker_pitch"));
+        pitch->setRange(0.25, 4.0);
+        pitch->setSingleStep(0.05);
+        pitch->setValue(who->pitch);
+        pitch->setToolTip(tr("How high their voice is: 1 as recorded, 2 an octave up"));
+        connect(pitch, &QDoubleSpinBox::valueChanged, this, [this, who_name](double v) {
+            change_speaker(utf8(who_name), [&](game::Speaker& s) { s.pitch = v; });
+        });
+        form->addRow(tr("Voice pitch"), pitch);
+    }
 
     auto* words = new QPlainTextEdit(text_of(node->text), panel);
     words->setObjectName(QStringLiteral("node_text"));
@@ -535,6 +653,15 @@ void StoryWindow::refresh_inspector() {
         change_node([&](game::TalkNode& n) { n.text = utf8(words->toPlainText()); });
     });
     form->addRow(tr("Says"), words);
+
+    auto* mood = asset_box(panel, {"png"}, node->portrait, tr("(the speaker's own)"));
+    mood->setObjectName(QStringLiteral("node_portrait"));
+    mood->setToolTip(tr("Another picture of the speaker for this line only: a mood, such as "
+                        "glad or angry"));
+    connect(mood, &QComboBox::currentTextChanged, this, [this](const QString& t) {
+        change_node([&](game::TalkNode& n) { n.portrait = utf8(t.trimmed()); });
+    });
+    form->addRow(tr("Portrait here"), mood);
 
     auto* next = target_box(node->next);
     next->setObjectName(QStringLiteral("node_next"));

@@ -58,6 +58,9 @@ public:
     bool remove_choice(std::string_view id, std::size_t index);
     /// Adds a speaker (unless one has the name) with a name plate colour.
     bool add_speaker(std::string_view name, std::string_view color = "#ffd27a");
+    /// Changes how a speaker looks and sounds (plate colour, portrait, voice, pitch); the
+    /// name stays. Typing merges into one step.
+    bool set_speaker(std::string_view name, const engine::game::Speaker& value);
 
     // ----- Undo -----
     [[nodiscard]] bool can_undo() const noexcept { return !undo_.empty(); }

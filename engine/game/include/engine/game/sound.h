@@ -29,6 +29,8 @@ public:
         : engine_(engine), assets_(assets), world_(world) {}
 
     void play_sound(const std::string& sound);
+    /// Plays a sound at `pitch` (1 as recorded), for voice blips; not a logic action.
+    void play_voice(const std::string& sound, double pitch);
     /// Plays a sound where `where` (an entity's name) is: quieter the further it is from
     /// the player, silent hearing_range tiles away, and from the side it is on.
     void play_sound_at(const std::string& sound, const std::string& where);

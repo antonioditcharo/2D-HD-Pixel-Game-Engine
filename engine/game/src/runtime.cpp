@@ -535,6 +535,31 @@ void register_types(reflect::Registry& registry) {
 // Runtime
 // ---------------------------------------------------------------------------------------
 
+/// "#rrggbb" as a colour; `fallback` if it is not one.
+render::Color hex_color(std::string_view hex, render::Color fallback) {
+    if (hex.size() != 7 || hex[0] != '#') {
+        return fallback;
+    }
+    std::array<std::uint8_t, 3> parts{};
+    for (std::size_t i = 0; i < 3; ++i) {
+        unsigned value = 0;
+        for (const char c : hex.substr(1 + (i * 2), 2)) {
+            value *= 16;
+            if (c >= '0' && c <= '9') {
+                value += static_cast<unsigned>(c - '0');
+            } else if (c >= 'a' && c <= 'f') {
+                value += static_cast<unsigned>(c - 'a' + 10);
+            } else if (c >= 'A' && c <= 'F') {
+                value += static_cast<unsigned>(c - 'A' + 10);
+            } else {
+                return fallback;
+            }
+        }
+        parts.at(i) = static_cast<std::uint8_t>(value);
+    }
+    return render::Color{parts[0], parts[1], parts[2], 255};
+}
+
 /// The actions the player may rebind on the Options page.
 constexpr std::array<std::string_view, 7> rebindable{
     "move_up", "move_down", "move_left", "move_right", "interact", "cancel", "menu"};
@@ -644,6 +669,16 @@ void options_from_json(const serialize::Json& json, GameMenu::Options& options,
     }
 }
 
+/// How the speaker of the message showing looks: its own look, else the cast's.
+const SpeakerLook& speaker_look(const DialogueObject& dialogue,
+                                const std::map<std::string, SpeakerLook, std::less<>>& cast) {
+    if (!dialogue.current_look().empty()) {
+        return dialogue.current_look();
+    }
+    const auto found = cast.find(dialogue.current_speaker());
+    return found != cast.end() ? found->second : dialogue.current_look();
+}
+
 struct Runtime::Impl {
     explicit Impl(ProjectSettings project, const fs::path& root)
         : settings(std::move(project)), assets(root / "assets"),
@@ -681,7 +716,12 @@ struct Runtime::Impl {
     double typing_wait = 0.0; ///< Seconds a [pause] still holds typing.
     std::size_t pauses_done = 0;
     double message_seconds = 0.0; ///< How long it has shown, for waves and shakes.
-    input::InputState idle;       ///< No controls held: what movement sees while a message is open.
+    std::size_t blipped = 0;      ///< Bytes of rich.plain the voice has gone past.
+    std::size_t letters = 0;      ///< Letters (not spaces) typed, for every other blip.
+    /// Every speaker of the project's conversations, by name: how Rules' "{speaker} says"
+    /// shows them too.
+    std::map<std::string, SpeakerLook, std::less<>> cast;
+    input::InputState idle; ///< No controls held: what movement sees while a message is open.
     std::unique_ptr<audio::AudioEngine> audio_engine;
     AudioObject audio_object;
     std::vector<std::string> problems;
@@ -885,6 +925,23 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         return here;
     };
     for (const assets::AssetRecord& record : r.assets.assets()) {
+        if (!record.path.ends_with(".dtalk")) {
+            continue;
+        }
+        const std::optional<std::vector<std::uint8_t>> bytes = r.assets.read(record.guid);
+        std::string ignored; // a broken conversation is reported when it is played
+        const std::optional<Conversation> talk =
+            bytes ? parse_conversation(
+                        std::string_view(reinterpret_cast<const char*>(bytes->data()), // NOLINT
+                                         bytes->size()),
+                        ignored)
+                  : std::nullopt;
+        for (const Speaker& speaker : talk ? talk->speakers : std::vector<Speaker>{}) {
+            r.cast.try_emplace(speaker.name, SpeakerLook{speaker.portrait, speaker.voice,
+                                                         speaker.pitch, speaker.color});
+        }
+    }
+    for (const assets::AssetRecord& record : r.assets.assets()) {
         if (!is_logic_asset(record.path)) {
             continue;
         }
@@ -993,6 +1050,8 @@ void Runtime::step() {
             r.typing_wait = 0.0;
             r.pauses_done = 0;
             r.message_seconds = 0.0;
+            r.blipped = 0;
+            r.letters = 0;
         }
         const double step_seconds = r.clock.step_seconds();
         r.message_seconds += step_seconds;
@@ -1017,6 +1076,22 @@ void Runtime::step() {
                 }
                 r.typed = std::min(next, size);
             }
+        }
+        // The speaker's voice: a blip every other letter typed, at most one a step, its
+        // pitch varied a little so it sounds like talk.
+        const auto now = static_cast<std::size_t>(r.typed);
+        bool blip = false;
+        for (; r.blipped < now && r.blipped < r.rich.plain.size(); ++r.blipped) {
+            const char letter = r.rich.plain[r.blipped];
+            if (letter != ' ' && letter != '\n') {
+                blip = blip || r.letters % 2 == 0;
+                ++r.letters;
+            }
+        }
+        const SpeakerLook& look = speaker_look(r.dialogue, r.cast);
+        if (blip && text_speed > 0.0 && !look.voice.empty()) {
+            const double vary = 1.0 + (0.04 * (static_cast<double>(r.letters % 3) - 1.0));
+            r.audio_object.play_voice(look.voice, look.pitch * vary);
         }
     } else {
         r.typing_for.clear();
@@ -1154,6 +1229,7 @@ void Runtime::step() {
                                         : static_cast<double>(r.rich.plain.size());
             if (r.typed < page_end) {
                 r.typed = page_end;
+                r.blipped = static_cast<std::size_t>(page_end); // no burst of blips
                 r.typing_wait = 0.0;
                 while (r.pauses_done < r.rich.pauses.size() &&
                        static_cast<double>(r.rich.pauses[r.pauses_done].first) <= page_end) {
@@ -1479,6 +1555,24 @@ bool Runtime::draw() {
             *r.white, one,
             render::Rect{box.x + 1.0F, box.y + 1.0F, box.width - 2.0F, box.height - 2.0F},
             render::Color{18, 20, 40, 240});
+        const SpeakerLook& look = speaker_look(r.dialogue, r.cast);
+        // The speaker's portrait, standing on the box's right end, as large as drawn
+        // (smaller only if the screen has no room).
+        if (const assets::AssetRecord* record =
+                look.portrait.empty() ? nullptr : r.assets.find(look.portrait)) {
+            if (const render::Texture* picture =
+                    r.textures != nullptr ? r.textures->get(record->guid) : nullptr) {
+                const auto w = static_cast<float>(picture->width());
+                const auto h = static_cast<float>(picture->height());
+                const float room = box.y + 1.0F;
+                const float scale = h > room && h > 0.0F ? room / h : 1.0F;
+                r.sprites->draw(
+                    *picture, one,
+                    render::Rect{std::floor(box.x + box.width - (w * scale) - message_padding),
+                                 std::floor(box.y + 1.0F - (h * scale)), w * scale, h * scale},
+                    render::Color{255, 255, 255, 255});
+            }
+        }
         // Who speaks, on a plate above the box's left end.
         if (const std::string& speaker = r.dialogue.current_speaker(); !speaker.empty()) {
             const float plate_width =
@@ -1493,7 +1587,8 @@ bool Runtime::draw() {
                 render::Rect{box.x + 1.0F, plate_y + 1.0F, plate_width - 2.0F, plate_height - 2.0F},
                 render::Color{40, 30, 60, 245});
             ui::draw_text(*r.sprites, *r.font, font, speaker, box.x + message_padding,
-                          plate_y + message_padding - 1.0F, render::Color{255, 210, 122, 255});
+                          plate_y + message_padding - 1.0F,
+                          hex_color(look.color, render::Color{255, 210, 122, 255}));
         }
         const std::size_t first = r.page * static_cast<std::size_t>(box.lines);
         for (std::size_t i = first;

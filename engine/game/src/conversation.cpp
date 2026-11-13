@@ -114,6 +114,11 @@ std::optional<Conversation> parse_conversation(std::string_view text, std::strin
                 if (const std::string colour = text_at(s, "color"); !colour.empty()) {
                     speaker.color = colour;
                 }
+                speaker.portrait = text_at(s, "portrait");
+                speaker.voice = text_at(s, "voice");
+                if (s.contains("pitch") && s["pitch"].is_number()) {
+                    speaker.pitch = std::clamp(s["pitch"].get<double>(), 0.25, 4.0);
+                }
                 c.speakers.push_back(std::move(speaker));
             }
         }
@@ -128,6 +133,7 @@ std::optional<Conversation> parse_conversation(std::string_view text, std::strin
             node.speaker = text_at(n, "speaker");
             node.text = text_at(n, "text");
             node.next = text_at(n, "next");
+            node.portrait = text_at(n, "portrait");
             node.conditions = read_conditions(n);
             node.x = n.contains("x") && n["x"].is_number() ? n["x"].get<double>() : 0.0;
             node.y = n.contains("y") && n["y"].is_number() ? n["y"].get<double>() : 0.0;
@@ -165,7 +171,17 @@ std::string conversation_to_text(const Conversation& conversation) {
     json["start"] = conversation.start;
     Json speakers = Json::array();
     for (const Speaker& s : conversation.speakers) {
-        speakers.push_back({{"name", s.name}, {"color", s.color}});
+        Json speaker{{"name", s.name}, {"color", s.color}};
+        if (!s.portrait.empty()) {
+            speaker["portrait"] = s.portrait;
+        }
+        if (!s.voice.empty()) {
+            speaker["voice"] = s.voice;
+        }
+        if (s.pitch != 1.0) {
+            speaker["pitch"] = s.pitch;
+        }
+        speakers.push_back(std::move(speaker));
     }
     json["speakers"] = std::move(speakers);
     Json nodes = Json::array();
@@ -176,6 +192,9 @@ std::string conversation_to_text(const Conversation& conversation) {
         }
         if (!node.next.empty()) {
             n["next"] = node.next;
+        }
+        if (!node.portrait.empty()) {
+            n["portrait"] = node.portrait;
         }
         if (!node.conditions.empty()) {
             n["if"] = write_conditions(node.conditions);
@@ -349,6 +368,13 @@ std::string ConversationPlayer::update(DialogueObject& dialogue, InventoryObject
         dialogue.say_as(node->speaker, node->text);
     } else {
         dialogue.ask_as(node->speaker, node->text, answers);
+    }
+    // How the speaker looks and sounds, with this line's own picture if it has one.
+    if (const Speaker* speaker = conversation_.speaker(node->speaker)) {
+        dialogue.set_look(SpeakerLook{node->portrait.empty() ? speaker->portrait : node->portrait,
+                                      speaker->voice, speaker->pitch, speaker->color});
+    } else if (!node->portrait.empty()) {
+        dialogue.set_look(SpeakerLook{node->portrait, {}, 1.0, {}});
     }
     shown_ = true;
     return {};

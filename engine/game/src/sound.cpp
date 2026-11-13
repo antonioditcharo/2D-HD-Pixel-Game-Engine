@@ -46,6 +46,12 @@ void AudioObject::play_sound(const std::string& sound) {
     }
 }
 
+void AudioObject::play_voice(const std::string& sound, double pitch) {
+    if (const std::string key = prepare(sound); !key.empty()) {
+        engine_->play_sound(key, 1.0, std::clamp(pitch, 0.25, 4.0));
+    }
+}
+
 void AudioObject::play_sound_at(const std::string& sound, const std::string& where) {
     const world::Entity entity = world_ != nullptr ? resolve(*world_, where) : world::Entity{};
     const scene2d::Transform2D* at =

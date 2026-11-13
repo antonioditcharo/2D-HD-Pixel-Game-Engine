@@ -13,10 +13,14 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "editor/core/story.h"
 
 class QAction;
+class QComboBox;
+class QString;
+class QWidget;
 class QFormLayout;
 class QGraphicsScene;
 class QGraphicsView;
@@ -76,6 +80,13 @@ private:
     void refresh_list();
     void refresh_inspector();
     void refresh_title();
+    /// A box picking a file of the project's assets with one of `extensions` ("png"), by
+    /// its path in assets/, showing `now`; empty shows `none`.
+    QComboBox* asset_box(QWidget* parent, const std::vector<std::string>& extensions,
+                         const std::string& now, const QString& none) const;
+    /// Changes how the speaker `name` looks and sounds with `change`.
+    void change_speaker(const std::string& name,
+                        const std::function<void(engine::game::Speaker&)>& change);
     /// Changes the chosen node with `change`; `structure` rebuilds the inspector after.
     void change_node(const std::function<void(engine::game::TalkNode&)>& change,
                      bool structure = false);

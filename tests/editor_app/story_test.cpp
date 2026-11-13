@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QGraphicsItem>
 #include <QGraphicsScene>
 #include <QLineEdit>
@@ -13,6 +14,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "main_window.h"
@@ -25,6 +27,10 @@ TEST_CASE("File > New conversation opens the Story editor; nodes are made, edite
     const fs::path path =
         fs::temp_directory_path() / ("sparxel-story-app-" + Guid::generate().to_string());
     fs::copy(fs::path(SPARXEL_SAMPLES_DIR) / "hello", path, fs::copy_options::recursive);
+    fs::create_directories(path / "assets" / "faces");
+    fs::create_directories(path / "assets" / "sfx");
+    std::ofstream(path / "assets" / "faces" / "elder.png", std::ios::binary) << "png";
+    std::ofstream(path / "assets" / "sfx" / "blip.wav", std::ios::binary) << "wav";
     {
         editor::MainWindow window(SPARXEL_PLAYER);
         window.show();
@@ -46,6 +52,33 @@ TEST_CASE("File > New conversation opens the Story editor; nodes are made, edite
         speaker->setCurrentText(QStringLiteral("Elder"));
         CHECK(story->editor()->node("start")->text == "Welcome, traveller.");
         CHECK(story->editor()->node("start")->speaker == "Elder");
+
+        // Settling on the speaker shows how they look and sound: a portrait and a voice
+        // from the project's assets, and a pitch.
+        Q_EMIT speaker->lineEdit()->editingFinished();
+        QApplication::processEvents();
+        auto* portrait =
+            story->inspector()->findChild<QComboBox*>(QStringLiteral("speaker_portrait"));
+        REQUIRE(portrait != nullptr);
+        CHECK(portrait->findText(QStringLiteral("faces/elder.png")) > 0);
+        portrait->setCurrentText(QStringLiteral("faces/elder.png"));
+        auto* voice = story->inspector()->findChild<QComboBox*>(QStringLiteral("speaker_voice"));
+        REQUIRE(voice != nullptr);
+        CHECK(voice->findText(QStringLiteral("sfx/blip.wav")) > 0);
+        voice->setCurrentText(QStringLiteral("sfx/blip.wav"));
+        auto* pitch =
+            story->inspector()->findChild<QDoubleSpinBox*>(QStringLiteral("speaker_pitch"));
+        REQUIRE(pitch != nullptr);
+        pitch->setValue(1.5);
+        const engine::game::Speaker* elder = story->editor()->conversation().speaker("Elder");
+        REQUIRE(elder != nullptr);
+        CHECK(elder->portrait == "faces/elder.png");
+        CHECK(elder->voice == "sfx/blip.wav");
+        CHECK(elder->pitch == doctest::Approx(1.5));
+        auto* mood = story->inspector()->findChild<QComboBox*>(QStringLiteral("node_portrait"));
+        REQUIRE(mood != nullptr);
+        mood->setCurrentText(QStringLiteral("faces/elder.png"));
+        CHECK(story->editor()->node("start")->portrait == "faces/elder.png");
 
         // A node after it, said by the same speaker, and a choice leading back.
         const std::string next = story->new_node();

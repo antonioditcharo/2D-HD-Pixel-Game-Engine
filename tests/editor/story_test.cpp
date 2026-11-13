@@ -88,3 +88,22 @@ TEST_CASE("Story: conversations are saved and read back the same") {
     std::error_code ignored;
     fs::remove_all(folder, ignored);
 }
+
+TEST_CASE("Story: a speaker's look is changed with undo, typing as one step") {
+    editor::StoryEditor story(editor::StoryEditor::blank());
+    REQUIRE(story.add_speaker("Elder"));
+    game::Speaker look = *story.conversation().speaker("Elder");
+    look.name = "Someone else"; // the name stays
+    look.portrait = "f";
+    CHECK(story.set_speaker("Elder", look));
+    look.portrait = "faces/elder.png";
+    look.pitch = 9.0; // kept to 4
+    CHECK(story.set_speaker("Elder", look));
+    const game::Speaker* elder = story.conversation().speaker("Elder");
+    REQUIRE(elder != nullptr);
+    CHECK(elder->portrait == "faces/elder.png");
+    CHECK(elder->pitch == 4.0);
+    CHECK_FALSE(story.set_speaker("Nobody", look));
+    CHECK(story.undo()); // both changes, one step
+    CHECK(story.conversation().speaker("Elder")->portrait.empty());
+}

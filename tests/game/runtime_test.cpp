@@ -2195,7 +2195,11 @@ game::Conversation elder_talk() {
 } // namespace
 
 TEST_CASE("Conversations are read and written the same, and checked for broken ways") {
-    const game::Conversation talk = elder_talk();
+    game::Conversation talk = elder_talk();
+    talk.speakers[0].portrait = "faces/elder.png";
+    talk.speakers[0].voice = "sfx/blip.wav";
+    talk.speakers[0].pitch = 0.8;
+    talk.nodes[2].portrait = "faces/elder_glad.png";
     std::string error;
     const std::optional<game::Conversation> back =
         game::parse_conversation(game::conversation_to_text(talk), error);
@@ -3076,4 +3080,86 @@ TEST_CASE("Rebinding a key another action has takes it; an action left with none
     const bool swapped = options.keys[4].second.find('X') != std::string::npos &&
                          options.keys[4].second.find("Backspace") != std::string::npos;
     CHECK(swapped);
+}
+
+TEST_CASE("Speakers' voices blip as their words are typed; Rules' speakers use the cast") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["text_speed"] = 30.0; // a letter every other step
+        settings["width"] = 320;
+        settings["height"] = 180;
+        write_json(project.folder.path / game::project_file, settings);
+        Project::write_sound(project.folder.path / "assets/blip.wav",
+                             test_support::wav(4800, 8000));
+        game::Conversation talk = elder_talk();
+        talk.speakers[0].voice = "blip.wav";
+        talk.speakers[0].pitch = 1.5;
+        talk.speakers[0].portrait = "face.png";
+        talk.speakers[0].color = "#40ff60";
+        std::ofstream(project.folder.path / "assets/talk.dtalk", std::ios::binary)
+            << game::conversation_to_text(talk);
+        Project::write_png(project.folder.path / "assets/face.png",
+                           render::Color{250, 0, 250, 255});
+        logic::LogicAsset rules;
+        rules.name = "say";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "dialogue", "say_as",
+                                       {Project::text("Elder"), Project::text("Hello there.")})},
+                        {}});
+        write_json(project.folder.path / "assets/logic/say.drules",
+                   serialize::logic_to_json(rules));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->audio() != nullptr);
+    runtime->step();
+    REQUIRE(runtime->dialogue().current() != nullptr);
+    CHECK(runtime->dialogue().current_speaker() == "Elder");
+    // The Rules' line has no look of its own: the Elder's comes from the conversation.
+    CHECK(runtime->dialogue().current_look().empty());
+    bool heard = false;
+    for (int i = 0; i < 12; ++i) {
+        runtime->step();
+        heard = heard || runtime->audio()->playing_sounds() > 0;
+    }
+    CHECK(heard);
+    // The portrait stands on the box, and the plate shows the Elder's colour.
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    bool portrait = false;
+    bool plate = false;
+    for (std::size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        portrait = portrait || (pixels[i] == 250 && pixels[i + 1] == 0 && pixels[i + 2] == 250);
+        plate = plate || (pixels[i] == 64 && pixels[i + 1] == 255 && pixels[i + 2] == 96);
+    }
+    CHECK(portrait);
+    CHECK(plate);
+}
+
+TEST_CASE("A conversation gives each line its speaker's look, with the line's own portrait") {
+    game::Conversation talk = elder_talk();
+    talk.speakers[0].portrait = "faces/elder.png";
+    talk.speakers[0].voice = "sfx/blip.wav";
+    talk.nodes[0].portrait = "faces/elder_glad.png";
+    game::ConversationPlayer player;
+    game::DialogueObject dialogue;
+    game::InventoryObject bag;
+    game::QuestObject quests;
+    player.start(talk, "talk/elder.dtalk");
+    CHECK(player.update(dialogue, bag, quests, dialogue.flags()).empty());
+    CHECK(dialogue.current_look().portrait == "faces/elder_glad.png");
+    CHECK(dialogue.current_look().voice == "sfx/blip.wav");
+    dialogue.close_current();
+    CHECK(player.update(dialogue, bag, quests, dialogue.flags()).empty());
+    CHECK(dialogue.current_look().portrait == "faces/elder.png");
 }

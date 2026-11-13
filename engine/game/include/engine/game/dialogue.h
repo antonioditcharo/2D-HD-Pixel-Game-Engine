@@ -19,6 +19,19 @@
 
 namespace engine::game {
 
+/// How a speaker looks and sounds in the message box; empty parts are not shown or played.
+struct SpeakerLook {
+    std::string portrait; ///< A picture in assets/.
+    std::string voice;    ///< A sound in assets/, blipped as words are typed.
+    double pitch = 1.0;
+    std::string color; ///< The name plate's colour, "#rrggbb"; empty for the usual gold.
+
+    [[nodiscard]] bool empty() const noexcept {
+        return portrait.empty() && voice.empty() && color.empty();
+    }
+    friend bool operator==(const SpeakerLook&, const SpeakerLook&) = default;
+};
+
 class DialogueObject {
 public:
     /// Queues a message; it shows once those before it are closed.
@@ -33,6 +46,10 @@ public:
     [[nodiscard]] bool is_open() const noexcept { return !queue_.empty(); }
     /// Who says the message showing; empty for none.
     [[nodiscard]] const std::string& current_speaker() const noexcept;
+    /// Gives the message queued last a look (its speaker's portrait, voice, colour).
+    void set_look(SpeakerLook look);
+    /// The look of the message showing; empty for none.
+    [[nodiscard]] const SpeakerLook& current_look() const noexcept;
 
     /// Plays the conversation in `file` (its path in assets/, such as "talk/elder.dtalk")
     /// from its start (or, with `node`, from that node). The runtime takes the request.
@@ -82,6 +99,7 @@ private:
         std::string text;
         std::vector<std::string> choices;
         std::string speaker;
+        SpeakerLook look;
     };
     std::optional<ConversationRequest> request_;
     std::map<std::string, bool, std::less<>> flags_;

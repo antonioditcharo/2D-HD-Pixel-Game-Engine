@@ -59,6 +59,17 @@ const std::string& DialogueObject::current_speaker() const noexcept {
     return queue_.empty() ? none : queue_.front().speaker;
 }
 
+void DialogueObject::set_look(SpeakerLook look) {
+    if (!queue_.empty()) {
+        queue_.back().look = std::move(look);
+    }
+}
+
+const SpeakerLook& DialogueObject::current_look() const noexcept {
+    static const SpeakerLook none;
+    return queue_.empty() ? none : queue_.front().look;
+}
+
 void DialogueObject::start_conversation(const std::string& file) {
     start_conversation_at(file, {});
 }
