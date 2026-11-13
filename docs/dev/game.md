@@ -409,6 +409,25 @@ sends an entity's own event, such as an animation's "finished", `game::emit()` s
 under each name that reaches the entity (`names_of()`): its GUID, then its name if no
 other entity shares it. A Rule runs once, whichever name it uses (tested).
 
+### Creating and removing things
+
+Logic makes things while the game plays, from prefabs ([editor.md](editor.md), Make a
+prefab): a coin dropped by a beaten enemy, a crate from a machine, a monster joining a
+fight. On the **game** object:
+
+| Block | What it does |
+|---|---|
+| *Create {prefab} at {where}* | A copy of the prefab (`prefabs/coin.dprefab`) where something of that name (or GUID) stands: a chest, the player |
+| *Create {prefab} at {x}, {y}* | The same at a point on the map, in tiles |
+| *Remove {name}* | Takes something out of the scene, with everything under it |
+| *The name of the last thing created* | A value, such as *coin_2* |
+
+Copies are named after the prefab's first entity, numbered after the first (*coin*,
+*coin_2*, *coin_3*), so Rules can name each one; they have new GUIDs, behave as placed
+ones do, and are saved with games. Copies and removals happen at the end of the step
+logic asked for them. A prefab that is not there, or a name nothing has, is reported in the
+game's problems in plain language and nothing changes.
+
 ### Quests and the journal
 
 The **quests** object (`QuestObject`, [`quests.h`](../../engine/game/include/engine/game/quests.h))

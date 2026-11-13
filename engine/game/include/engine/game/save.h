@@ -83,6 +83,30 @@ public:
     };
     /// The requests made since the last call, oldest first.
     [[nodiscard]] std::vector<Request> take_requests() { return std::exchange(requests_, {}); }
+
+    // ----- Making and removing things while playing (plan/02 E9) -----
+    /// Makes a copy of a prefab (".dprefab", by its path in assets/) where something of
+    /// that name is; the runtime takes the request.
+    void create(const std::string& prefab, const std::string& where) {
+        spawns_.push_back(Spawn{prefab, where, 0.0, 0.0, false});
+    }
+    /// The same at (x, y), in tiles.
+    void create_at(const std::string& prefab, double x, double y) {
+        spawns_.push_back(Spawn{prefab, {}, x, y, false});
+    }
+    /// Removes the entity of that name (or GUID), and what is under it.
+    void remove(const std::string& name) { spawns_.push_back(Spawn{{}, name, 0.0, 0.0, true}); }
+    struct Spawn {
+        std::string prefab;
+        std::string where; ///< The entity to create at, or to remove.
+        double x = 0.0;
+        double y = 0.0;
+        bool remove = false;
+    };
+    [[nodiscard]] std::vector<Spawn> take_spawns() { return std::exchange(spawns_, {}); }
+    /// The name of the last copy made, for Rules to act on it.
+    [[nodiscard]] std::string last_created() const { return last_created_; }
+    void set_last_created(std::string name) { last_created_ = std::move(name); }
     /// The save folder; empty if there is none.
     [[nodiscard]] std::filesystem::path folder() const;
 
@@ -91,6 +115,8 @@ private:
     mutable std::filesystem::path resolved_;
     mutable bool has_resolved_ = false;
     std::vector<Request> requests_;
+    std::vector<Spawn> spawns_;
+    std::string last_created_;
     std::optional<SceneRequest> scene_request_;
     std::string scene_path_;
     std::string scene_guid_;

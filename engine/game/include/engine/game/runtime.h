@@ -253,6 +253,9 @@ private:
     explicit Runtime(std::unique_ptr<Impl> impl);
     /// The player's options: read at start, kept after each change, put into effect.
     void load_options();
+    /// Makes a copy of a prefab for logic (SaveObject::create()); returns its name, or empty
+    /// with `error`.
+    std::string create_copy(const SaveObject::Spawn& spawn, std::string& error);
     void save_options();
     void apply_options();
     std::unique_ptr<Impl> impl_;

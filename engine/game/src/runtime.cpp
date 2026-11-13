@@ -1502,6 +1502,23 @@ void Runtime::step() {
     ++r.steps;
 
     // 6. Saving and loading that logic asked for, now that no script is running.
+    // Things created and removed by logic.
+    for (const SaveObject::Spawn& spawn : r.save_object.take_spawns()) {
+        if (spawn.remove) {
+            const world::Entity gone = resolve(*r.world, spawn.where);
+            if (!gone.is_valid() || !r.world->destroy(gone)) {
+                r.problems.push_back("There is nothing called " + spawn.where + " to remove.");
+            }
+            continue;
+        }
+        std::string error;
+        const std::string made = create_copy(spawn, error);
+        if (made.empty()) {
+            r.problems.push_back("Could not create " + spawn.prefab + ": " + error);
+        } else {
+            r.save_object.set_last_created(made);
+        }
+    }
     for (const SaveObject::Request& request : r.save_object.take_requests()) {
         if (request.load) {
             std::vector<serialize::Issue> issues;
@@ -2183,6 +2200,68 @@ bool Runtime::load_from_slot(std::int64_t slot, std::vector<serialize::Issue>& i
 
 std::filesystem::path Runtime::save_folder() const {
     return impl_->save_object.folder();
+}
+
+std::string Runtime::create_copy(const SaveObject::Spawn& spawn, std::string& error) {
+    const Impl& r = *impl_; // the world and assets are reached through pointers
+    const std::optional<Guid> guid = Guid::parse(spawn.prefab);
+    const assets::AssetRecord* record = guid ? r.assets.find(*guid) : r.assets.find(spawn.prefab);
+    if (record == nullptr || !record->path.ends_with(".dprefab")) {
+        error = "there is no prefab " + spawn.prefab + " in assets/.";
+        return {};
+    }
+    // Where: at something, or at a point.
+    double x = spawn.x;
+    double y = spawn.y;
+    if (!spawn.where.empty()) {
+        const world::Entity at = resolve(*r.world, spawn.where);
+        const auto* place = at.is_valid() ? r.world->get<scene2d::Transform2D>(at) : nullptr;
+        if (place == nullptr) {
+            error = "there is no " + spawn.where + " to create it at.";
+            return {};
+        }
+        x = place->x;
+        y = place->y;
+    }
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        error = "that point is not on the map.";
+        return {};
+    }
+    const std::optional<std::vector<std::uint8_t>> bytes = r.assets.read(record->guid);
+    std::vector<serialize::Issue> issues;
+    const std::optional<serialize::Json> json = bytes ? parse_bytes(*bytes, issues) : std::nullopt;
+    if (!json || !json->contains("entities") || !(*json)["entities"].is_array() ||
+        (*json)["entities"].empty()) {
+        error = record->path + " cannot be read as a prefab.";
+        return {};
+    }
+    const serialize::SceneLoad loaded =
+        serialize::scene_from_json(serialize::with_new_guids(*json), *r.world);
+    if (loaded.entities.empty()) {
+        error = loaded.issues.empty() ? std::string("the prefab is empty.")
+                                      : loaded.issues.front().message;
+        return {};
+    }
+    const world::Entity root = loaded.entities.front();
+    auto* place = r.world->get<scene2d::Transform2D>(root);
+    if (place == nullptr) {
+        place = r.world->add<scene2d::Transform2D>(root);
+    }
+    if (place != nullptr) {
+        place->x = x;
+        place->y = y;
+    }
+    // A name of its own: the prefab's, numbered after the first.
+    std::string base(r.world->name(root));
+    if (base.empty()) {
+        base = fs::path(record->path).stem().string();
+    }
+    std::string name = base;
+    for (int n = 2; r.world->find_named(name).size() > (name == base ? 1U : 0U); ++n) {
+        name = base + "_" + std::to_string(n);
+    }
+    r.world->set_name(root, name);
+    return name;
 }
 
 void Runtime::load_options() {

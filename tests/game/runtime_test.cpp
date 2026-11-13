@@ -3851,3 +3851,58 @@ TEST_CASE("The pause menu's Items and Skills pages heal the party between battle
     CHECK(party.condition().at("hero").first == 40);  // 30 + 15, up to 40
     CHECK(party.condition().at("mage").second == 9);  // 12 - 3
 }
+
+TEST_CASE("Logic creates copies of prefabs while playing, and removes things") {
+    const Project project;
+    {
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        const world::Entity coin = w.create("coin");
+        w.add<scene2d::Transform2D>(coin)->x = 99.0; // where it is in the prefab: replaced
+        w.add<game::Trigger>(coin);
+        std::filesystem::create_directories(project.folder.path / "assets/prefabs");
+        write_json(project.folder.path / "assets/prefabs/coin.dprefab",
+                   serialize::scene_to_json(w));
+        logic::LogicAsset rules;
+        rules.name = "spawn";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "",
+            "game_start",
+            {},
+            {ir::do_action(2, "game", "create",
+                           {Project::text("prefabs/coin.dprefab"), Project::text("elder")}),
+             ir::do_action(3, "game", "create_at",
+                           {Project::text("prefabs/coin.dprefab"), ir::literal(reflect::Value{3.0}),
+                            ir::literal(reflect::Value{4.0})}),
+             ir::do_action(4, "game", "remove", {Project::text("rock")}),
+             ir::do_action(5, "game", "create",
+                           {Project::text("prefabs/nothing.dprefab"), Project::text("elder")}),
+             ir::do_action(6, "game", "remove", {Project::text("ghost")})},
+            {}});
+        write_json(project.folder.path / "assets/logic/spawn.drules",
+                   serialize::logic_to_json(rules));
+    }
+    const auto runtime = project.open(no_graphics(nullptr));
+    runtime->step();
+    runtime->step();
+    const world::World& w = runtime->world();
+    REQUIRE(w.find_named("coin").size() == 1);
+    REQUIRE(w.find_named("coin_2").size() == 1);
+    // The first at the elder (0, 3), the second at (3, 4).
+    CHECK(w.get<scene2d::Transform2D>(w.find_named("coin").at(0))->y == 3.0);
+    CHECK(w.get<scene2d::Transform2D>(w.find_named("coin_2").at(0))->x == 3.0);
+    CHECK(w.get<game::Trigger>(w.find_named("coin_2").at(0)) != nullptr);
+    CHECK(w.find_named("rock").empty());
+    // What could not be done is said in plain language.
+    const std::vector<std::string>& problems = runtime->problems();
+    const auto said = [&problems](const std::string& line) {
+        return std::find(problems.begin(), problems.end(), line) != problems.end();
+    };
+    CHECK(said("Could not create prefabs/nothing.dprefab: there is no prefab "
+               "prefabs/nothing.dprefab in assets/."));
+    CHECK(said("There is nothing called ghost to remove."));
+}

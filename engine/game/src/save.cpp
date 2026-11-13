@@ -95,6 +95,21 @@ void register_save_types(reflect::Registry& registry) {
         .text("Go to scene {scene}, arriving at {where}")
         .tooltip("Leaves this scene for another, and puts the player where something of "
                  "that name is in it: a door, a stair.");
+    game.action<&SaveObject::create>("create", {"prefab", "where"})
+        .text("Create {prefab} at {where}")
+        .tooltip("A copy of a prefab (prefabs/coin.dprefab) where something of that name is: a "
+                 "chest, the player. Copies are named after the prefab, numbered after the "
+                 "first: coin, coin_2.");
+    game.action<&SaveObject::create_at>("create_at", {"prefab", "x", "y"})
+        .text("Create {prefab} at {x}, {y}")
+        .tooltip("A copy of a prefab at a place on the map, in tiles.");
+    game.action<&SaveObject::remove>("remove", {"name"})
+        .text("Remove {name}")
+        .tooltip("Takes something out of the scene, with what is under it: a coin picked "
+                 "up, an enemy beaten.");
+    game.getter<&SaveObject::last_created>("last_created")
+        .text("The name of the last thing created")
+        .tooltip("Such as coin_3: to remember it, or to remove it later.");
     game.condition<&SaveObject::in_scene>("in_scene", {"scene"})
         .text("The scene is {scene}")
         .tooltip("Whether the scene being played is this one.");
