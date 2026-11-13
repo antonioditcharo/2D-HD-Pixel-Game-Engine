@@ -593,6 +593,9 @@ TEST_CASE("Encounter Areas start battles as the player walks inside them") {
     CHECK_FALSE(game::update_encounters(*f.w, 1.5).has_value());
     const std::optional<std::string> enemies = game::update_encounters(*f.w, 0.5);
     REQUIRE(enemies.has_value());
+    if (!enemies) {
+        return;
+    }
     const bool known = *enemies == "slime, slime " || *enemies == " bat";
     CHECK(known);
     // Counting starts again; off, none.

@@ -42,6 +42,9 @@ TEST_CASE("Story: nodes are added after others, renamed with what leads to them,
     CHECK(story.undo_text() == "Change ask");
     const std::optional<std::size_t> yes = story.add_choice("ask", error);
     REQUIRE(yes.has_value());
+    if (!yes) {
+        return;
+    }
     game::TalkNode with_choice = *story.node("ask");
     with_choice.choices[*yes].next = "nowhere";
     CHECK_FALSE(story.set_node("ask", with_choice, error));

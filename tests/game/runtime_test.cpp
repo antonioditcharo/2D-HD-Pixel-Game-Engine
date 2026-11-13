@@ -2527,6 +2527,9 @@ TEST_CASE("Battles: commands, speed order, skills, items, victory, and the same 
     std::optional<game::Battle> started = game::Battle::start(
         tables.data(), {"hero", "mage"}, {{"hero", {30, 0}}}, {"slime", "slime", "bat"}, 42, error);
     REQUIRE(started.has_value());
+    if (!started) {
+        return;
+    }
     game::Battle battle = std::move(*started);
     REQUIRE(battle.fighters().size() == 5);
     CHECK(battle.fighters()[0].hp == 30); // carried in from before
