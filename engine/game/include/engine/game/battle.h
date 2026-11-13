@@ -10,12 +10,14 @@
 
 #include "engine/game/tables.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace engine::game {
@@ -34,7 +36,16 @@ struct Fighter {
     std::int64_t speed = 1;
     std::vector<std::string> skills; ///< Rows of the skills table it can use.
     std::int64_t level = 1;          ///< A party member's; enemies stay at 1.
-    std::int64_t xp = 0;             ///< An enemy's, given when it is beaten.
+    /// Status effects on it now (rows of data/states), with the rounds each has left.
+    std::vector<std::pair<std::string, std::int64_t>> states;
+    std::vector<std::string> resists; ///< States it cannot get (from what it wears).
+    std::string inflicts;             ///< An enemy's: a state its attacks may give...
+    std::int64_t inflict_chance = 0;  ///< ...this often, in percent.
+    [[nodiscard]] bool has_state(std::string_view state) const noexcept {
+        return std::any_of(states.begin(), states.end(),
+                           [state](const auto& s) { return s.first == state; });
+    }
+    std::int64_t xp = 0; ///< An enemy's, given when it is beaten.
     std::int64_t gold = 0;
     bool defending = false;
 
@@ -46,8 +57,24 @@ struct BattleSkill {
     std::string name;
     std::int64_t mp_cost = 0;
     std::int64_t power = 10;
-    bool heals = false; ///< Heals an ally, rather than hurting an enemy.
-    bool all = false;   ///< Every enemy (or ally) at once.
+    bool heals = false;             ///< Heals an ally, rather than hurting an enemy.
+    bool all = false;               ///< Every enemy (or ally) at once.
+    std::string inflicts;           ///< A state it may give (rows of data/states)...
+    std::int64_t chance = 100;      ///< ...this often, in percent.
+    std::vector<std::string> cures; ///< States it ends ("all" for every one).
+};
+
+/// A status effect: poison, sleep, a blessing (a row of data/states).
+struct StatusEffect {
+    std::string id;
+    std::string name = "Poisoned"; ///< As in "Slime is poisoned!".
+    std::int64_t turns = 3;        ///< Rounds it lasts.
+    std::int64_t hp_per_turn = 0;  ///< At each round's end: below 0 hurts, above heals.
+    bool skip_turn = false;        ///< Asleep, frozen: it cannot act.
+    bool ends_on_hit = false;      ///< Damage ends it (sleep).
+    std::int64_t attack = 0;       ///< Added to the fighter's numbers while it lasts.
+    std::int64_t defense = 0;
+    std::int64_t speed = 0;
 };
 
 struct BattleCommand {
@@ -66,6 +93,7 @@ struct BattleData {
     const Table* skills = nullptr;  ///< name, mp_cost, power, heals, all
     const Table* items = nullptr;   ///< name, heal
     const Table* levels = nullptr;  ///< xp: the experience each level needs (optional)
+    const Table* states = nullptr;  ///< name, turns, hp_per_turn, skip_turn, ends_on_hit
     /// Party members' levels, by row; those missing are at level 1.
     std::map<std::string, std::int64_t, std::less<>> member_levels;
     /// What party members wear, by row: rows of `items` with a slot.
@@ -129,6 +157,9 @@ public:
     [[nodiscard]] std::int64_t xp() const noexcept;
     [[nodiscard]] std::int64_t gold() const noexcept;
     [[nodiscard]] const BattleSkill* skill(std::string_view id) const noexcept;
+    [[nodiscard]] const StatusEffect* state(std::string_view id) const noexcept;
+    /// Whether a fighter cannot act now (asleep).
+    [[nodiscard]] bool held(const Fighter& f) const noexcept;
     /// Whether `name` is a row of the items table, and not equipment: usable in battle.
     [[nodiscard]] bool is_item(std::string_view name) const {
         return data_.items != nullptr && data_.items->row(name) != nullptr &&
@@ -141,13 +172,23 @@ public:
 
 private:
     void fight_round();
+    /// Fights rounds while no one of the party can choose (all asleep).
+    void advance();
     void act(std::size_t who, const BattleCommand& command);
+    /// Gives `target` a state (unless it resists, or the chance fails); renewed if it has it.
+    void inflict(std::size_t target, const std::string& state, std::int64_t chance);
+    /// Ends states on `target`: those named, or every one for "all".
+    void cure(std::size_t target, const std::vector<std::string>& states);
+    void end_state(Fighter& f, std::size_t index);
+    /// The round's end: states hurt or heal, and run out.
+    void tick_states();
     [[nodiscard]] std::uint32_t next_random();
     void check_end();
 
     BattleData data_;
     std::vector<Fighter> fighters_;
     std::vector<BattleSkill> skills_;
+    std::vector<StatusEffect> states_;
     std::map<std::size_t, BattleCommand> chosen_;
     std::vector<std::string> messages_;
     std::map<std::string, std::int64_t, std::less<>> used_items_;

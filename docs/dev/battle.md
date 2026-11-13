@@ -23,9 +23,10 @@ optional; what is missing takes the value in brackets.
 | Table | A row per | Columns |
 |---|---|---|
 | `data/party` | Party member | `name` (the row's), `max_hp` (10), `max_mp` (0), `attack` (5), `defense` (0), `speed` (5), `skills` (rows of `data/skills`, separated by commas; `fire@3` is learned at level 3), and for each of the five numbers a `<number>_growth` column (0): how much it rises each level (`attack_growth`) |
-| `data/enemies` | Kind of enemy | the same, plus `xp` and `gold` given when it is beaten, and `image`: a picture of it, by its path in `assets/`, drawn above its name |
-| `data/skills` | Skill | `name`, `mp_cost` (0), `power` (10), `heals` (no: it hurts an enemy; yes: it heals someone of the party), `all` (no: one target; yes: every enemy, or every ally) |
-| `data/items` | Item usable in battle, or equipment | `name`, `heal`: HP it gives back. The party uses what the inventory holds. **Equipment** has a `slot`: *weapon*, *shield*, *head*, *body* or *accessory*, and adds its `max_hp`, `max_mp`, `attack`, `defense` and `speed` to whoever wears it; it is not offered as an item in battle |
+| `data/enemies` | Kind of enemy | the same, plus `xp` and `gold` given when it is beaten, `image`: a picture of it, by its path in `assets/`, drawn above its name, and `inflicts` with `chance`: a state its attacks may give (a bat whose bite puts to sleep) |
+| `data/skills` | Skill | `name`, `mp_cost` (0), `power` (10), `heals` (no: it hurts an enemy; yes: it heals someone of the party), `all` (no: one target; yes: every enemy, or every ally), `inflicts` (a row of `data/states` it gives) with `chance` (100, in percent), `cures` (rows of `data/states` it ends, or *all*). A skill of power 0 that inflicts or cures does only that |
+| `data/items` | Item usable in battle, or equipment | `name`, `heal`: HP it gives back. The party uses what the inventory holds. **Equipment** has a `slot`: *weapon*, *shield*, *head*, *body* or *accessory*, and adds its `max_hp`, `max_mp`, `attack`, `defense` and `speed` to whoever wears it; it is not offered as an item in battle. Items may also have `cures` (as for skills: an *Antidote* with `cures` *poison*), and equipment `resists` (rows of `data/states` its wearer cannot get) |
+| `data/states` | Status effect | `name` (said as *Slime is poisoned!*: an adjective such as *Poisoned*, *Asleep*), `turns` (3: rounds it lasts), `hp_per_turn` (0: below 0 hurts at each round's end, above heals), `skip_turn` (no: yes, and they cannot act), `ends_on_hit` (no: yes, and damage ends it, as sleep), and `attack`, `defense`, `speed` added while it lasts |
 | `data/levels` | Level (named `1`, `2`, … or in order) | `xp`: all the experience needed to reach it (a formula such as `row * row * 10` works). Its last row is the highest level. Without the table: 10 for level 2, 30 for 3, 60 for 4, 100 for 5 (5 × level × (level − 1)), up to 99 |
 
 Logic then uses:
@@ -70,6 +71,15 @@ from the menu to the member before, taking back their choice).
 4. What happens is told line by line in the menu's place (*Slime A takes 7 damage.*), read
    with Interact.
 
+**Status effects.** A state given says so (*Slime is poisoned!*); given again, it lasts
+its full turns again; a wearer of equipment that resists it is spared (*Hero is not
+asleep.*). At each round's end, states hurt or heal (*Slime takes 2 damage
+(poisoned).*), count down, and end (*Slime is no longer poisoned.*). Someone who cannot act
+says so on their turn and is not asked to choose; when no one of the party can choose,
+rounds go on by themselves. Damage ends states that end on a hit; falling ends them all.
+The battle screen lists each fighter's states in purple, beside the party's HP and under
+the enemies' bars. States end with the battle.
+
 **Numbers.** Damage is the skill's power (0 for an attack) plus attack × 2, minus the
 target's defence, at least 1; halved for a defender; then up to a tenth more or less, at
 random. Healing is the skill's power, or the item's `heal`, up to the maximum. Fleeing
@@ -93,6 +103,6 @@ game over, or waking at an inn).
 
 1. **Visible enemies** that start a battle on touch (a Rule can already: *When … walks in*,
    then *Start a battle*), and battle backgrounds.
-2. **Status effects**: poison, sleep, and equipment that guards against them.
+2. **States that last** after battles (poison walking on the map), and cures at inns.
 3. **Smarter enemies**: skills, and Brains choosing them.
 4. **A battle-screen designer** in the UI workspace, and animations for attacks.

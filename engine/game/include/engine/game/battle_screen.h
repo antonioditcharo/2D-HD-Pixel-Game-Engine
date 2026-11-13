@@ -168,6 +168,8 @@ public:
 
 private:
     enum class Mode : std::uint8_t { Command, Skill, Item, Target };
+    /// The names of a fighter's states: "Poisoned Asleep".
+    [[nodiscard]] std::string states_of(const Fighter& f) const;
     void pull_messages();
     [[nodiscard]] std::vector<std::size_t> targets() const;
 

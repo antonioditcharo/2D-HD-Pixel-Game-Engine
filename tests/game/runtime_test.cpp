@@ -3525,3 +3525,109 @@ TEST_CASE("Equipment is worn from logic and from the pause menu's Equip page, an
     CHECK(other->party().equipped("hero", "weapon") == "sword");
     CHECK(other->party().equipped("hero", "head") == "cap");
 }
+
+TEST_CASE("Status effects: given by skills and attacks, hurting each round, held, woken, cured") {
+    BattleTables tables;
+    game::Table states;
+    states.columns = {
+        {"name", game::ColumnKind::Text},         {"turns", game::ColumnKind::Whole},
+        {"hp_per_turn", game::ColumnKind::Whole}, {"skip_turn", game::ColumnKind::YesNo},
+        {"ends_on_hit", game::ColumnKind::YesNo}, {"defense", game::ColumnKind::Whole}};
+    states.rows.push_back(
+        {"poison", {{"name", "Poisoned"}, {"turns", "2"}, {"hp_per_turn", "-2"}}});
+    states.rows.push_back(
+        {"sleep",
+         {{"name", "Asleep"}, {"turns", "3"}, {"skip_turn", "yes"}, {"ends_on_hit", "yes"}}});
+    states.rows.push_back({"guard", {{"name", "Guarded"}, {"turns", "5"}, {"defense", "4"}}});
+    tables.skills.columns.push_back({"inflicts", game::ColumnKind::Text});
+    tables.skills.columns.push_back({"cures", game::ColumnKind::Text});
+    tables.skills.rows.push_back(
+        {"venom", {{"name", "Venom"}, {"power", "0"}, {"inflicts", "poison"}}});
+    tables.skills.rows.push_back(
+        {"lullaby", {{"name", "Lullaby"}, {"power", "0"}, {"inflicts", "sleep"}}});
+    tables.skills.rows.push_back(
+        {"ward",
+         {{"name", "Ward"}, {"power", "0"}, {"heals", "yes"}, {"inflicts", ""}, {"cures", "all"}}});
+    tables.party.rows[1].cells["skills"] = "venom, lullaby, ward";
+    tables.party.rows[1].cells["max_mp"] = "0";
+    game::BattleData data = tables.data();
+    data.states = &states;
+    std::string error;
+    std::optional<game::Battle> started =
+        game::Battle::start(data, {"mage"}, {}, {"slime"}, 7, error);
+    REQUIRE(started.has_value());
+    if (!started) {
+        return;
+    }
+    game::Battle& b = *started;
+    const auto said = [&b](const std::string& line) {
+        const std::vector<std::string> lines = b.take_messages();
+        return std::find(lines.begin(), lines.end(), line) != lines.end();
+    };
+    static_cast<void>(b.take_messages());
+    const std::map<std::string, std::int64_t, std::less<>> none;
+    // Poison: given, then 2 damage at the end of each of its 2 rounds, then gone.
+    const std::int64_t hp = b.fighters()[1].hp;
+    REQUIRE(b.choose({game::BattleCommand::Kind::Skill, "venom", 1}, none, error));
+    const std::vector<std::string> first = b.take_messages();
+    CHECK(std::find(first.begin(), first.end(), "Slime is poisoned!") != first.end());
+    CHECK(std::find(first.begin(), first.end(), "Slime takes 2 damage (poisoned).") !=
+          first.end());
+    CHECK(b.fighters()[1].hp == hp - 2);
+    REQUIRE(b.choose({game::BattleCommand::Kind::Defend, {}, 0}, none, error));
+    CHECK(said("Slime is no longer poisoned."));
+    CHECK(b.fighters()[1].hp == hp - 4);
+    CHECK(b.fighters()[1].states.empty());
+    // Sleep: the slime cannot act until hit.
+    REQUIRE(b.choose({game::BattleCommand::Kind::Skill, "lullaby", 1}, none, error));
+    CHECK(b.fighters()[1].has_state("sleep"));
+    REQUIRE(b.choose({game::BattleCommand::Kind::Defend, {}, 0}, none, error));
+    CHECK(said("Slime is asleep and cannot act."));
+    REQUIRE(b.choose({game::BattleCommand::Kind::Attack, {}, 1}, none, error));
+    CHECK_FALSE(b.fighters()[1].has_state("sleep"));
+}
+
+TEST_CASE("Status effects: equipment resists them; an asleep party fights on by itself") {
+    BattleTables tables;
+    game::Table states;
+    states.columns = {{"name", game::ColumnKind::Text},
+                      {"skip_turn", game::ColumnKind::YesNo},
+                      {"turns", game::ColumnKind::Whole}};
+    states.rows.push_back({"sleep", {{"name", "Asleep"}, {"skip_turn", "yes"}, {"turns", "2"}}});
+    states.rows.push_back({"poison", {{"name", "Poisoned"}}});
+    tables.enemies.columns.push_back({"inflicts", game::ColumnKind::Text});
+    tables.enemies.rows[1].cells["inflicts"] = "sleep"; // the bat's bite
+    tables.items.columns.push_back({"slot", game::ColumnKind::Text});
+    tables.items.columns.push_back({"resists", game::ColumnKind::Text});
+    tables.items.rows.push_back({"charm", {{"slot", "accessory"}, {"resists", "poison, sleep"}}});
+    game::BattleData data = tables.data();
+    data.states = &states;
+    std::string error;
+    // With the charm, the bat's bite does not put the hero to sleep.
+    data.member_equipment["hero"] = {"charm"};
+    std::optional<game::Battle> guarded =
+        game::Battle::start(data, {"hero"}, {}, {"bat"}, 3, error);
+    REQUIRE(guarded.has_value());
+    const std::map<std::string, std::int64_t, std::less<>> none;
+    if (guarded) {
+        REQUIRE(guarded->choose({game::BattleCommand::Kind::Defend, {}, 0}, none, error));
+        const std::vector<std::string> lines = guarded->take_messages();
+        CHECK(std::find(lines.begin(), lines.end(), "Hero is not asleep.") != lines.end());
+        CHECK_FALSE(guarded->fighters()[0].has_state("sleep"));
+    }
+    // Without it, the hero falls asleep, and rounds go on without them choosing.
+    data.member_equipment.clear();
+    std::optional<game::Battle> bitten = game::Battle::start(data, {"hero"}, {}, {"bat"}, 3, error);
+    REQUIRE(bitten.has_value());
+    if (bitten) {
+        REQUIRE(bitten->choose({game::BattleCommand::Kind::Defend, {}, 0}, none, error));
+        // Either the hero chooses again (awake), or the battle is over: never stuck.
+        const bool going =
+            bitten->chooser().has_value() || bitten->outcome() != game::BattleOutcome::Fighting;
+        CHECK(going);
+        const std::vector<std::string> lines = bitten->take_messages();
+        CHECK(std::find(lines.begin(), lines.end(), "Hero is asleep!") != lines.end());
+        CHECK(std::find(lines.begin(), lines.end(), "Hero is asleep and cannot act.") !=
+              lines.end());
+    }
+}

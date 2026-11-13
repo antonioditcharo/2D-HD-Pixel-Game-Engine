@@ -169,6 +169,16 @@ std::optional<Fighter> make_fighter(const BattleData& data, const std::string& i
     f.skills = enemy ? list(text(table, id, "skills", "")) : skills_at(table, id, f.level);
     f.xp = enemy ? std::max<std::int64_t>(0, whole(table, id, "xp", 0)) : 0;
     f.gold = enemy ? std::max<std::int64_t>(0, whole(table, id, "gold", 0)) : 0;
+    if (enemy) {
+        f.inflicts = text(table, id, "inflicts", "");
+        f.inflict_chance = std::clamp<std::int64_t>(whole(table, id, "chance", 100), 0, 100);
+    }
+    f.resists = list(text(table, id, "resists", ""));
+    for (const std::string& item : worn) {
+        for (std::string& state : list(text(data.items, item, "resists", ""))) {
+            f.resists.push_back(std::move(state));
+        }
+    }
     return f;
 }
 
@@ -228,7 +238,25 @@ Battle::start(const BattleData& data, const std::vector<std::string>& party,
             s.power = whole(data.skills, row.id, "power", 10);
             s.heals = whole(data.skills, row.id, "heals", 0) != 0;
             s.all = whole(data.skills, row.id, "all", 0) != 0;
+            s.inflicts = text(data.skills, row.id, "inflicts", "");
+            s.chance = std::clamp<std::int64_t>(whole(data.skills, row.id, "chance", 100), 0, 100);
+            s.cures = list(text(data.skills, row.id, "cures", ""));
             b.skills_.push_back(std::move(s));
+        }
+    }
+    if (data.states != nullptr) {
+        for (const TableRow& row : data.states->rows) {
+            StatusEffect e;
+            e.id = row.id;
+            e.name = text(data.states, row.id, "name", row.id);
+            e.turns = std::max<std::int64_t>(1, whole(data.states, row.id, "turns", 3));
+            e.hp_per_turn = whole(data.states, row.id, "hp_per_turn", 0);
+            e.skip_turn = whole(data.states, row.id, "skip_turn", 0) != 0;
+            e.ends_on_hit = whole(data.states, row.id, "ends_on_hit", 0) != 0;
+            e.attack = whole(data.states, row.id, "attack", 0);
+            e.defense = whole(data.states, row.id, "defense", 0);
+            e.speed = whole(data.states, row.id, "speed", 0);
+            b.states_.push_back(std::move(e));
         }
     }
     if (std::none_of(b.fighters_.begin(), b.fighters_.end(),
@@ -246,6 +274,121 @@ Battle::start(const BattleData& data, const std::vector<std::string>& party,
     return b;
 }
 
+const StatusEffect* Battle::state(std::string_view id) const noexcept {
+    for (const StatusEffect& e : states_) {
+        if (e.id == id) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
+bool Battle::held(const Fighter& f) const noexcept {
+    return std::any_of(f.states.begin(), f.states.end(), [this](const auto& s) {
+        const StatusEffect* e = state(s.first);
+        return e != nullptr && e->skip_turn;
+    });
+}
+
+namespace {
+
+/// "Poisoned" as in "Slime is poisoned!".
+std::string lower(std::string words) {
+    if (!words.empty() && words[0] >= 'A' && words[0] <= 'Z') {
+        words[0] = static_cast<char>(words[0] - 'A' + 'a');
+    }
+    return words;
+}
+
+} // namespace
+
+void Battle::inflict(std::size_t target, const std::string& id, std::int64_t chance) {
+    const StatusEffect* e = state(id);
+    if (e == nullptr || target >= fighters_.size() || !fighters_[target].alive()) {
+        return;
+    }
+    Fighter& t = fighters_[target];
+    if (std::find(t.resists.begin(), t.resists.end(), id) != t.resists.end()) {
+        messages_.push_back(t.name + " is not " + lower(e->name) + ".");
+        return;
+    }
+    if (chance < 100 && static_cast<std::int64_t>(next_random() % 100U) >= chance) {
+        return;
+    }
+    for (auto& [have, left] : t.states) {
+        if (have == id) {
+            left = e->turns; // renewed
+            return;
+        }
+    }
+    t.states.emplace_back(id, e->turns);
+    t.attack += e->attack;
+    t.defense += e->defense;
+    t.speed += e->speed;
+    messages_.push_back(t.name + " is " + lower(e->name) + "!");
+}
+
+void Battle::end_state(Fighter& f, std::size_t index) {
+    if (const StatusEffect* e = state(f.states[index].first)) {
+        f.attack -= e->attack;
+        f.defense -= e->defense;
+        f.speed -= e->speed;
+        if (f.alive()) {
+            messages_.push_back(f.name + " is no longer " + lower(e->name) + ".");
+        }
+    }
+    f.states.erase(f.states.begin() + static_cast<std::ptrdiff_t>(index));
+}
+
+void Battle::cure(std::size_t target, const std::vector<std::string>& ids) {
+    if (target >= fighters_.size()) {
+        return;
+    }
+    Fighter& t = fighters_[target];
+    const bool all = std::find(ids.begin(), ids.end(), "all") != ids.end();
+    for (std::size_t i = t.states.size(); i-- > 0;) {
+        if (all || std::find(ids.begin(), ids.end(), t.states[i].first) != ids.end()) {
+            end_state(t, i);
+        }
+    }
+}
+
+void Battle::tick_states() {
+    for (Fighter& f : fighters_) {
+        if (!f.alive()) {
+            continue;
+        }
+        for (std::size_t i = f.states.size(); i-- > 0 && f.alive();) {
+            const StatusEffect* e = state(f.states[i].first);
+            if (e != nullptr && e->hp_per_turn < 0) {
+                const std::int64_t damage = std::min(-e->hp_per_turn, f.hp);
+                f.hp -= damage;
+                messages_.push_back(f.name + " takes " + std::to_string(damage) + " damage (" +
+                                    lower(e->name) + ").");
+                if (!f.alive()) {
+                    messages_.push_back(f.name + (f.enemy ? " is beaten!" : " falls!"));
+                    f.states.clear();
+                    break;
+                }
+            } else if (e != nullptr && e->hp_per_turn > 0) {
+                const std::int64_t before = f.hp;
+                f.hp = std::min(f.max_hp, f.hp + e->hp_per_turn);
+                messages_.push_back(f.name + " recovers " + std::to_string(f.hp - before) + " HP.");
+            }
+            if (--f.states[i].second <= 0) {
+                end_state(f, i);
+            }
+        }
+    }
+    check_end();
+}
+
+void Battle::advance() {
+    while (outcome_ == BattleOutcome::Fighting && !chooser()) {
+        fight_round();
+    }
+}
+
 const BattleSkill* Battle::skill(std::string_view id) const noexcept {
     for (const BattleSkill& s : skills_) {
         if (s.id == id) {
@@ -260,7 +403,8 @@ std::optional<std::size_t> Battle::chooser() const noexcept {
         return std::nullopt;
     }
     for (std::size_t i = 0; i < fighters_.size(); ++i) {
-        if (!fighters_[i].enemy && fighters_[i].alive() && !chosen_.contains(i)) {
+        if (!fighters_[i].enemy && fighters_[i].alive() && !chosen_.contains(i) &&
+            !held(fighters_[i])) {
             return i;
         }
     }
@@ -343,9 +487,7 @@ bool Battle::choose(const BattleCommand& command,
         break;
     }
     chosen_[*who] = command;
-    if (!chooser()) {
-        fight_round();
-    }
+    advance();
     return true;
 }
 
@@ -392,10 +534,15 @@ void Battle::fight_round() {
             chosen_[i] =
                 BattleCommand{BattleCommand::Kind::Attack, {}, party[next_random() % party.size()]};
         }
+        // Those who cannot act still have a turn, to say so.
+        if (!fighters_[i].enemy && fighters_[i].alive() && held(fighters_[i])) {
+            chosen_[i] = BattleCommand{BattleCommand::Kind::Defend, {}, 0};
+        }
     }
-    // Defenders defend from the start of the round.
+    // Defenders defend from the start of the round (not those held: they only wait).
     for (const auto& [who, command] : chosen_) {
-        fighters_[who].defending = command.kind == BattleCommand::Kind::Defend;
+        fighters_[who].defending =
+            command.kind == BattleCommand::Kind::Defend && !held(fighters_[who]);
     }
     // Fastest first; on a tie, the party, then by place.
     std::vector<std::size_t> order;
@@ -423,10 +570,20 @@ void Battle::fight_round() {
     }
     chosen_.clear();
     reserved_items_.clear();
+    if (outcome_ == BattleOutcome::Fighting) {
+        tick_states();
+    }
 }
 
 void Battle::act(std::size_t who, const BattleCommand& command) {
     Fighter& me = fighters_[who];
+    for (const auto& [id, left] : me.states) {
+        const StatusEffect* e = state(id);
+        if (e != nullptr && e->skip_turn) {
+            messages_.push_back(me.name + " is " + lower(e->name) + " and cannot act.");
+            return;
+        }
+    }
     // A target that fell already this round: the next one of the same side still standing.
     const auto retarget = [&](std::size_t target) {
         if (target < fighters_.size() && fighters_[target].alive()) {
@@ -453,6 +610,15 @@ void Battle::act(std::size_t who, const BattleCommand& command) {
         messages_.push_back(t.name + " takes " + std::to_string(damage) + " damage.");
         if (!t.alive()) {
             messages_.push_back(t.name + (t.enemy ? " is beaten!" : " falls!"));
+            t.states.clear();
+            return;
+        }
+        // A hit wakes the sleeping.
+        for (std::size_t i = t.states.size(); i-- > 0;) {
+            const StatusEffect* e = state(t.states[i].first);
+            if (e != nullptr && e->ends_on_hit) {
+                end_state(t, i);
+            }
         }
     };
     const auto heal = [&](std::size_t target, std::int64_t amount) {
@@ -467,6 +633,10 @@ void Battle::act(std::size_t who, const BattleCommand& command) {
         messages_.push_back(me.name + " attacks!");
         if (target < fighters_.size() && fighters_[target].alive()) {
             hurt(target, 0);
+            // Some enemies' attacks poison, or put to sleep.
+            if (!me.inflicts.empty()) {
+                inflict(target, me.inflicts, me.inflict_chance);
+            }
         }
         break;
     }
@@ -487,10 +657,19 @@ void Battle::act(std::size_t who, const BattleCommand& command) {
             }
             if (s->heals) {
                 if (fighters_[i].alive()) {
-                    heal(i, s->power);
+                    if (s->power > 0 || s->cures.empty()) {
+                        heal(i, s->power);
+                    }
+                    cure(i, s->cures);
                 }
             } else if (fighters_[i].alive()) {
-                hurt(i, s->power);
+                // A skill of power 0 that gives a state only gives it (Sleep, Poison).
+                if (s->power > 0 || s->inflicts.empty()) {
+                    hurt(i, s->power);
+                }
+                if (!s->inflicts.empty()) {
+                    inflict(i, s->inflicts, s->chance);
+                }
             }
         }
         break;
@@ -503,7 +682,13 @@ void Battle::act(std::size_t who, const BattleCommand& command) {
         messages_.push_back(me.name + " uses " + name + ".");
         ++used_items_[command.what];
         if (command.target < fighters_.size() && fighters_[command.target].alive()) {
-            heal(command.target, whole(data_.items, command.what, "heal", 0));
+            const std::int64_t amount = whole(data_.items, command.what, "heal", 0);
+            const std::vector<std::string> cures =
+                list(text(data_.items, command.what, "cures", ""));
+            if (amount > 0 || cures.empty()) {
+                heal(command.target, amount);
+            }
+            cure(command.target, cures);
         }
         break;
     }

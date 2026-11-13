@@ -222,6 +222,15 @@ void register_battle_types(reflect::Registry& registry) {
 
 // ----- The screen -----
 
+std::string BattleScreen::states_of(const Fighter& f) const {
+    std::string out;
+    for (const auto& [id, left] : f.states) {
+        const StatusEffect* e = battle_.state(id);
+        out += (out.empty() ? "" : " ") + (e != nullptr ? e->name : id);
+    }
+    return out;
+}
+
 BattleScreen::BattleScreen(Battle battle) : battle_(std::move(battle)) {
     pull_messages();
 }
@@ -471,6 +480,10 @@ void BattleScreen::draw(
             }
             const render::Color colour = !f.alive() ? dim : (aimed == enemies[k] ? gold : text);
             write((aimed == enemies[k] ? "> " : "") + f.name, x, y, colour);
+            // Its states, under its HP bar, in purple.
+            if (f.alive() && !f.states.empty()) {
+                write(states_of(f), x, y + line + 4, render::Color{200, 150, 255, 255});
+            }
             if (f.alive()) {
                 bar(x, y + line + 1, std::min(slot - (2 * pad), 48.0F), f.hp, f.max_hp,
                     render::Color{220, 70, 70, 255});
@@ -496,10 +509,15 @@ void BattleScreen::draw(
         const float y = top + pad + (line * static_cast<float>(k));
         const render::Color colour =
             !f.alive() ? dim : (choosing == party[k] || aimed == party[k] ? gold : text);
-        write(((choosing == party[k] || aimed == party[k]) ? "> " : "") + f.name + "  HP " +
-                  std::to_string(f.hp) + "/" + std::to_string(f.max_hp) +
-                  (f.max_mp > 0 ? "  MP " + std::to_string(f.mp) : std::string()),
-              pad, y, colour);
+        const std::string status = ((choosing == party[k] || aimed == party[k]) ? "> " : "") +
+                                   f.name + "  HP " + std::to_string(f.hp) + "/" +
+                                   std::to_string(f.max_hp) +
+                                   (f.max_mp > 0 ? "  MP " + std::to_string(f.mp) : std::string());
+        write(status, pad, y, colour);
+        if (f.alive() && !f.states.empty()) {
+            write(states_of(f), pad + static_cast<float>(ui::measure(font, status + "  ")), y,
+                  render::Color{200, 150, 255, 255});
+        }
     }
     const std::string* reading = message();
     if (reading != nullptr) {

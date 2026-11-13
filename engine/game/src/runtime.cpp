@@ -1320,6 +1320,7 @@ void Runtime::step() {
         BattleData data{r.tables.find("data/party"), r.tables.find("data/enemies"),
                         r.tables.find("data/skills"), r.tables.find("data/items")};
         data.levels = r.tables.find("data/levels");
+        data.states = r.tables.find("data/states");
         data.member_levels = r.party.levels();
         data.member_equipment = r.party.all_equipment();
         std::vector<std::string> members = r.party.members();
