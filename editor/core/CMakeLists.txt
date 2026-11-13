@@ -7,6 +7,7 @@ add_library(editor_core STATIC
     src/logic_text.cpp
     src/new_project.cpp
     src/preview.cpp
+    src/sfx.cpp
     src/sprite.cpp
 )
 add_library(editor::core ALIAS editor_core)

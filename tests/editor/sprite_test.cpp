@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "editor/core/sfx.h"
 #include "editor/core/sprite.h"
 
 namespace fs = std::filesystem;
@@ -508,4 +509,59 @@ TEST_CASE("A sprite is saved with its sheet, and read back the same") {
             "{\"format\": \"sparxel.sprite\", \"version\": 1, \"width\": 0, \"height\": 2}", error)
             .has_value());
     CHECK_FALSE(sprite::load(folder.path / "missing.dsprite", error).has_value());
+}
+
+TEST_CASE("Sound effects: each kind sounds its way, the same every time, and saves as WAV") {
+    namespace sfx = editor::sfx;
+    // The same seed, the same sound; another seed, another of the same kind.
+    const sfx::Params coin = sfx::make(sfx::Preset::Coin, 7);
+    CHECK(sfx::synthesize(coin) == sfx::synthesize(sfx::make(sfx::Preset::Coin, 7)));
+    CHECK(sfx::synthesize(coin) != sfx::synthesize(sfx::make(sfx::Preset::Coin, 8)));
+    CHECK(coin.arpeggio > 1.0); // a coin's two notes
+
+    // As long as its envelope, starting and ending quiet.
+    sfx::Params p;
+    p.attack = 0.05;
+    p.sustain = 0.1;
+    p.decay = 0.1;
+    const std::vector<float> samples = sfx::synthesize(p, 10000);
+    CHECK(samples.size() == 2500);
+    CHECK(std::abs(samples.front()) < 0.01F);
+    CHECK(std::abs(samples.back()) < 0.05F);
+
+    // A jump rises: more waves in its second half than its first.
+    const sfx::Params jump = sfx::make(sfx::Preset::Jump, 3);
+    CHECK(jump.slide > 0.0);
+    const std::vector<float> rising = sfx::synthesize(jump, 44100);
+    const auto crossings = [&](std::size_t from, std::size_t to) {
+        int count = 0;
+        for (std::size_t i = from + 1; i < to; ++i) {
+            count += (rising[i - 1] < 0.0F) != (rising[i] < 0.0F) ? 1 : 0;
+        }
+        return count;
+    };
+    const std::size_t half = rising.size() / 2;
+    CHECK(crossings(half, rising.size()) > crossings(0, half));
+
+    // Numbers out of range are kept in it; a mutation stays near.
+    sfx::Params wild;
+    wild.frequency = 1e9;
+    wild.sustain = 100.0;
+    wild.duty = -3.0;
+    const sfx::Params tame = sfx::clamped(wild);
+    CHECK(tame.frequency == 4000.0);
+    CHECK(tame.attack + tame.sustain + tame.decay <= sfx::longest + 1e-9);
+    CHECK(tame.duty == 0.05);
+    const sfx::Params near = sfx::mutate(coin, 99);
+    CHECK(std::abs(near.frequency - coin.frequency) <= coin.frequency * 0.11);
+
+    // A mono 16-bit WAV, which the engine's audio reads.
+    const std::vector<std::uint8_t> wav = sfx::to_wav(samples, 10000);
+    CHECK(wav.size() == 44 + (samples.size() * 2));
+    CHECK(std::string(wav.begin(), wav.begin() + 4) == "RIFF");
+    CHECK(std::string(wav.begin() + 8, wav.begin() + 12) == "WAVE");
+    for (const sfx::Preset preset : sfx::presets) {
+        CHECK_FALSE(sfx::synthesize(sfx::make(preset, 1)).empty());
+        CHECK_FALSE(sfx::preset_name(preset).empty());
+    }
 }

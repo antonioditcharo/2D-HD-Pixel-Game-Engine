@@ -44,6 +44,7 @@
 #include "logic_panel.h"
 #include "project_panel.h"
 #include "scene_view.h"
+#include "sfx_generator.h"
 #include "sprite_studio.h"
 #include "start_page.h"
 #include "tile_palette.h"
@@ -320,6 +321,22 @@ void MainWindow::show_search() {
     search_->field()->setFocus();
 }
 
+SfxGenerator* MainWindow::show_sfx_generator() {
+    if (document_ == nullptr) {
+        return nullptr;
+    }
+    auto* generator = new SfxGenerator(document_->folder() / "assets" / "sfx", this);
+    generator->setAttribute(Qt::WA_DeleteOnClose);
+    connect(generator, &SfxGenerator::saved, this, [this](const fs::path& file) {
+        reload_assets();
+        statusBar()->showMessage(tr("Saved %1: drag it into the scene, or play it from logic")
+                                     .arg(path_text(file.filename())),
+                                 6000);
+    });
+    generator->show();
+    return generator;
+}
+
 bool MainWindow::starting() const noexcept {
     return stack_->currentWidget() == start_;
 }
@@ -460,6 +477,9 @@ void MainWindow::build_actions() {
         }
     });
     sprite_action->setObjectName(QStringLiteral("new_sprite"));
+    QAction* sound_action =
+        file->addAction(tr("New sound &effect…"), this, [this] { show_sfx_generator(); });
+    sound_action->setObjectName(QStringLiteral("new_sound"));
     sprite_action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+N")));
     QAction* start =
         file->addAction(tr("Start the game in this scene"), this, [this] { start_here(); });

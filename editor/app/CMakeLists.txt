@@ -13,6 +13,8 @@ add_library(editor_app STATIC
     src/scene_view.cpp
     src/scene_view.h
     src/search.cpp
+    src/sfx_generator.cpp
+    src/sfx_generator.h
     src/search.h
     src/sprite_studio.cpp
     src/sprite_studio.h

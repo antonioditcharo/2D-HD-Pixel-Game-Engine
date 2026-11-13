@@ -102,6 +102,31 @@ one ([editor.md](editor.md)).
 - `AudioObject::apply(changes)` forgets sounds whose files changed, so they are read again
   next time (hot reload).
 
+
+## The sound effect generator
+
+**File ▸ New sound effect…** in the editor opens a generator of retro sound effects, as
+sfxr and its descendants make them (`plan/02` J2). A button for each kind (**Coin**,
+**Jump**, **Hit**, **Explosion**, **Power-up**, **Laser**, **Blip**) makes a sound of that
+kind and plays it; each click makes another, different one of the kind. **Mutate** nudges
+every number a little for a variation. Every number can be changed by hand: the **wave**
+(square, saw, sine, triangle or noise), the envelope (**attack**, **sustain**, **decay**),
+the **pitch** and how it **slides** (octaves a second, up or down), **vibrato**, the square
+wave's **duty** and its sweep, a **jump** in pitch partway through (a coin's two notes),
+**brightness** (a low-pass filter) and **volume**. **Save to the project** writes a mono
+16-bit WAV, `assets/sfx/<name>.wav`, which shows in the assets at once, ready to drag into
+the scene or play from logic. Names that are taken or would leave the folder are refused.
+
+The model is [`editor/core/sfx.h`](../../editor/core/include/editor/core/sfx.h), without Qt:
+`make()` (a preset and a seed, so the same seed gives the same sound), `mutate()`,
+`clamped()` (every number within its range, at most 5 s long), `synthesize()` (samples from
+the numbers alone: the same numbers always give the same samples) and `to_wav()`. The
+window plays through the engine's own audio, so what is heard is what the game plays.
+Tests check that the same seed gives the same sound and another seed another, that the
+length is the envelope's and starts and ends quiet, that a jump rises, that numbers are kept
+in range, and the WAV's form; the window's test makes an explosion, mutates it and saves it
+into a project.
+
 ## 5. Tests
 
 All mix headless and read the samples, so they run anywhere, with no sound card:

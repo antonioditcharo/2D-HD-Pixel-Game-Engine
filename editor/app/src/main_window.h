@@ -34,6 +34,7 @@ class Inspector;
 class SceneView;
 class SpriteStudio;
 class StartPage;
+class SfxGenerator;
 class TilePalette;
 
 class MainWindow : public QMainWindow {
@@ -110,6 +111,8 @@ public:
     /// Opens Search everything, empty, its results all there.
     void show_search();
     [[nodiscard]] SearchBox* search_box() const noexcept { return search_; }
+    /// Opens the sound effect generator, saving into the project's assets/sfx.
+    SfxGenerator* show_sfx_generator();
     /// Reads the assets folder again, and draws again the pictures that changed (hot
     /// reload): after Sprite Studio saves, and when the editor comes back to the front.
     void reload_assets();

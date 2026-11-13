@@ -9,6 +9,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QImage>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QTableWidget>
 #include <QTreeWidget>
@@ -17,6 +18,7 @@
 
 #include "main_window.h"
 #include "scene_view.h"
+#include "sfx_generator.h"
 #include "sprite_studio.h"
 
 namespace fs = std::filesystem;
@@ -172,4 +174,24 @@ TEST_CASE("A picture of the scene opens in Sprite Studio, and the scene shows it
     CHECK(after != before);
     // Files that are neither pictures nor sprites are refused.
     CHECK(p.window.open_sprite(QStringLiteral("sfx/chime.wav")) == nullptr);
+}
+
+TEST_CASE("File > New sound effect makes a sound of a kind and saves it into the project") {
+    Project p;
+    editor::SfxGenerator* generator = p.window.show_sfx_generator();
+    REQUIRE(generator != nullptr);
+    const editor::sfx::Params first = generator->params();
+    generator->make(editor::sfx::Preset::Explosion);
+    CHECK(generator->params().wave == editor::sfx::Wave::Noise);
+    CHECK(generator->name_field()->text() == QStringLiteral("explosion"));
+    generator->mutate();
+    CHECK_FALSE(generator->params().frequency == first.frequency);
+    std::string error;
+    REQUIRE(generator->save(QStringLiteral("boom"), error));
+    CHECK(fs::exists(p.path / "assets" / "sfx" / "boom.wav"));
+    CHECK(p.window.document()->assets().find("sfx/boom.wav") != nullptr);
+    CHECK_FALSE(generator->save(QStringLiteral("boom"), error));
+    CHECK(error == "There is a sound called boom already.");
+    CHECK_FALSE(generator->save(QStringLiteral("../x"), error));
+    generator->close();
 }
