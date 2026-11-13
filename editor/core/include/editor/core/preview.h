@@ -34,9 +34,7 @@ public:
     [[nodiscard]] std::optional<engine::assets::Image> render(Document& document, double x,
                                                               double y, std::string& error);
     /// Draws with `look` in place of the project's (a preset being hovered), until reset.
-    void set_look_override(std::optional<engine::render::Look> look) {
-        look_override_ = look;
-    }
+    void set_look_override(std::optional<engine::render::Look> look) { look_override_ = look; }
 
     /// Forgets the pictures that `changes` (from the document's AssetDatabase::refresh())
     /// modified or removed, so the next render() draws them as they are now: a sprite

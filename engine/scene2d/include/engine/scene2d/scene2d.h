@@ -188,7 +188,7 @@ struct Tilemap {
     double opacity = 1.0;
     double animation_fps = 4.0;
     double elapsed = 0.0; ///< Seconds the animation has run (hidden; saved with scenes).
-    std::string tileset;         ///< The GUID of a PNG asset.
+    std::string tileset;  ///< The GUID of a PNG asset.
     std::string tiles;
     /// Each tile's own height, for terrain built tile by tile: text like `tiles`, a number
     /// per cell (0 to 16, halves and quarters allowed); an empty cell, or a cell past the

@@ -200,6 +200,11 @@ public:
     /// it by its sides through cells of the same tile, as one undo step. Only inside the
     /// map as it is: returns false outside it.
     bool fill_tiles(engine::Guid tilemap, double x, double y, std::int32_t tile);
+    /// Random variants, as Tiled's random mode: while set, painting any of `tiles` (by
+    /// pencil, rectangle or fill) paints one of them, picked at random for each cell, so
+    /// grass and rocks do not repeat. Empty (or one tile) for none. Not on auto-tile maps.
+    void set_tile_variants(std::vector<std::int32_t> tiles);
+    [[nodiscard]] const std::vector<std::int32_t>& tile_variants() const noexcept;
     /// Raises (or with `by` below 0, lowers) the tile of `tilemap` under map point (x, y), as
     /// tall as it stands now plus `by`, kept within 0 to 16: Diorama terrain built tile by
     /// tile (its Tile heights). A stroke of raising on one map is one undo step, as painting

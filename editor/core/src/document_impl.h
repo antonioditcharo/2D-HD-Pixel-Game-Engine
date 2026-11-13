@@ -28,6 +28,8 @@ struct Step {
 
 struct Document::Impl {
     std::filesystem::path folder;
+    std::vector<std::int32_t> variants; ///< Random tile variants (set_tile_variants()).
+    std::uint32_t variant_round = 0;    ///< Changes each paint, so strokes differ.
     engine::game::ProjectSettings settings;
     engine::reflect::Registry registry;
     std::unique_ptr<engine::assets::AssetDatabase> assets;

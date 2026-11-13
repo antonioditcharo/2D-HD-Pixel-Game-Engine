@@ -986,6 +986,29 @@ TEST_CASE("Painting a tilemap from the palette, a stroke at a time") {
     CHECK(cell(4, 3) == 0);
     tool(0);
 
+    // Scatter, with path and stone as random variants, at full density: the 3 x 3 cells
+    // around the cursor, each one of the two.
+    start_painting();
+    palette->toggle_variant(2);
+    CHECK(e.window.document()->tile_variants() == std::vector<std::int32_t>{1, 2});
+    auto* density = palette->findChild<QSpinBox*>(QStringLiteral("scatter_density"));
+    REQUIRE(density != nullptr);
+    density->setValue(100);
+    tool(5);
+    CHECK(view->paint_tool() == editor::SceneView::PaintTool::Scatter);
+    mouse(view, QEvent::MouseButtonPress, view->from_map(10.5, 6.5), Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, view->from_map(10.5, 6.5), Qt::LeftButton);
+    for (std::uint32_t y = 5; y <= 7; ++y) {
+        for (std::uint32_t x = 9; x <= 11; ++x) {
+            const bool varied = cell(x, y) == 1 || cell(x, y) == 2;
+            CHECK(varied);
+        }
+    }
+    CHECK(cell(12, 6) == 0);
+    e.window.undo();
+    CHECK(cell(10, 6) == 0);
+    tool(0);
+
     // Escape stops painting; so does selecting something else.
     path = palette->findChild<QToolButton*>(QStringLiteral("tile:1"));
     REQUIRE(path != nullptr);

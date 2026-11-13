@@ -3260,3 +3260,38 @@ TEST_CASE("Collecting texts to translate: Rules' words, the menus', once each, k
     // Collecting again adds nothing new.
     CHECK(d->collect_translations(error) == 0);
 }
+
+TEST_CASE("Random tile variants: each cell painted with one of them, at random") {
+    const Sample sample;
+    const auto d = sample.open();
+    const Guid ground = guid_of(*d, "ground");
+    const auto cell = [&](std::uint32_t x, std::uint32_t y) {
+        std::string bad;
+        const scene2d::TileGrid* grid =
+            d->world().get<scene2d::Tilemap>(d->world().find(ground))->grid(bad);
+        REQUIRE(grid != nullptr);
+        return grid->at(x, y);
+    };
+    d->set_tile_variants({1, 2});
+    CHECK(d->tile_variants().size() == 2);
+    REQUIRE(d->paint_tile_rect(ground, 2.5, 2.5, 7.5, 7.5, 1));
+    std::set<std::int32_t> seen;
+    for (std::uint32_t y = 2; y <= 7; ++y) {
+        for (std::uint32_t x = 2; x <= 7; ++x) {
+            seen.insert(cell(x, y));
+        }
+    }
+    CHECK(seen == std::set<std::int32_t>{1, 2}); // both, and nothing else
+    // A pencil over a cell holding one of them leaves it.
+    d->end_merge();
+    const std::int32_t before = cell(4, 4);
+    REQUIRE(d->paint_tile(ground, 4.5, 4.5, before == 1 ? 2 : 1));
+    CHECK(cell(4, 4) == before);
+    // A tile not among them paints itself; without variants, the tile chosen.
+    REQUIRE(d->paint_tile(ground, 10.5, 1.5, 0));
+    CHECK(cell(10, 1) == 0);
+    d->set_tile_variants({});
+    REQUIRE(d->paint_tile_rect(ground, 2.5, 2.5, 3.5, 3.5, 1));
+    CHECK(cell(3, 3) == 1);
+    CHECK(cell(2, 2) == 1);
+}

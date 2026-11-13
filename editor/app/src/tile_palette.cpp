@@ -4,12 +4,14 @@
 #include "engine/assets/autotile.h"
 #include "engine/scene2d/scene2d.h"
 
+#include <QApplication>
 #include <QButtonGroup>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
 #include <QPixmap>
+#include <QSpinBox>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -35,7 +37,7 @@ TilePalette::TilePalette(QWidget* parent) : QWidget(parent) {
     rows->setContentsMargins(0, 0, 0, 0);
     rows->setHorizontalSpacing(2);
     auto* group = new QButtonGroup(this);
-    const std::array<std::pair<QString, QString>, 5> tools{
+    const std::array<std::pair<QString, QString>, 6> tools{
         std::pair{tr("Pencil"), tr("Paint cell by cell along the stroke")},
         std::pair{tr("Rectangle"), tr("Drag out a rectangle: it is painted on release")},
         std::pair{tr("Fill"), tr("Click a cell: every cell of the same tile joined to it")},
@@ -44,8 +46,10 @@ TilePalette::TilePalette(QWidget* parent) : QWidget(parent) {
                      "lowers it)")},
         std::pair{tr("Lower"),
                   tr("Diorama: each tile the stroke passes sinks half a tile (the right button "
-                     "raises it)")}};
-    for (int i = 0; i < 5; ++i) {
+                     "raises it)")},
+        std::pair{tr("Scatter"), tr("Paints some of the cells around the cursor, at random: "
+                                    "flowers and rocks sprinkled. Ctrl+click tiles for a mix")}};
+    for (int i = 0; i < 6; ++i) {
         auto* button = new QToolButton(tools_);
         button->setText(tools.at(static_cast<std::size_t>(i)).first);
         button->setToolTip(tools.at(static_cast<std::size_t>(i)).second);
@@ -56,6 +60,15 @@ TilePalette::TilePalette(QWidget* parent) : QWidget(parent) {
         rows->addWidget(button, i / 3, i % 3);
     }
     rows->setColumnStretch(3, 1);
+    auto* density = new QSpinBox(tools_);
+    density->setObjectName(QStringLiteral("scatter_density"));
+    density->setRange(1, 100);
+    density->setValue(25);
+    density->setSuffix(QStringLiteral("%"));
+    density->setToolTip(tr("Scatter: how many of the cells around the cursor it paints"));
+    rows->addWidget(new QLabel(tr("Density"), tools_), 2, 0);
+    rows->addWidget(density, 2, 1, 1, 2);
+    connect(density, &QSpinBox::valueChanged, this, [this](int v) { Q_EMIT density_changed(v); });
     connect(group, &QButtonGroup::idClicked, this, [this](int id) {
         tool_ = id;
         Q_EMIT tool_changed(id);
@@ -113,6 +126,15 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
         button->setCheckable(true);
         button->setObjectName(QStringLiteral("tile:%1").arg(tile));
         connect(button, &QToolButton::clicked, this, [this, tile] {
+            // Ctrl+click: several tiles, painted at random.
+            if (QApplication::keyboardModifiers().testFlag(Qt::ControlModifier) && tile >= 0) {
+                toggle_variant(tile);
+                return;
+            }
+            if (!variants_.empty()) {
+                variants_.clear();
+                Q_EMIT variants_changed(variants_);
+            }
             choose(chosen_ == tile ? std::nullopt : std::optional<std::int32_t>(tile));
         });
         const int index = static_cast<int>(buttons_.size());
@@ -160,10 +182,39 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
 
 void TilePalette::choose(std::optional<std::int32_t> tile) {
     chosen_ = tile;
-    for (std::size_t i = 0; i < buttons_.size() && i < numbers_.size(); ++i) {
-        buttons_[i]->setChecked(tile.has_value() && *tile == numbers_[i]);
+    if (!tile || *tile < 0) {
+        variants_.clear();
     }
+    show_checks();
     Q_EMIT chosen_changed(tile);
+}
+
+void TilePalette::show_checks() {
+    for (std::size_t i = 0; i < buttons_.size() && i < numbers_.size(); ++i) {
+        const bool variant =
+            std::find(variants_.begin(), variants_.end(), numbers_[i]) != variants_.end();
+        buttons_[i]->setChecked((chosen_.has_value() && *chosen_ == numbers_[i]) || variant);
+    }
+}
+
+void TilePalette::toggle_variant(std::int32_t tile) {
+    if (variants_.empty() && chosen_.has_value() && *chosen_ >= 0 && *chosen_ != tile) {
+        variants_.push_back(*chosen_);
+    }
+    if (const auto at = std::find(variants_.begin(), variants_.end(), tile);
+        at != variants_.end()) {
+        variants_.erase(at);
+    } else {
+        variants_.push_back(tile);
+    }
+    Q_EMIT variants_changed(variants_);
+    // Painting goes on with one of them chosen.
+    if (!variants_.empty() &&
+        (!chosen_ || std::find(variants_.begin(), variants_.end(), *chosen_) == variants_.end())) {
+        choose(variants_.front());
+    } else {
+        show_checks();
+    }
 }
 
 } // namespace editor

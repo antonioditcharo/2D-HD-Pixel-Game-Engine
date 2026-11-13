@@ -199,6 +199,14 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
             [this](std::optional<std::int32_t> tile) { view_->set_painting(selection_, tile); });
     connect(palette_, &TilePalette::tool_changed, this,
             [this](int tool) { view_->set_paint_tool(static_cast<SceneView::PaintTool>(tool)); });
+    connect(palette_, &TilePalette::variants_changed, this,
+            [this](const std::vector<std::int32_t>& tiles) {
+                if (document_ != nullptr) {
+                    document_->set_tile_variants(tiles);
+                }
+            });
+    connect(palette_, &TilePalette::density_changed, this,
+            [this](int density) { view_->set_scatter_density(density); });
     connect(view_, &SceneView::stop_painting, this, [this] { palette_->choose(std::nullopt); });
 
     build_actions();

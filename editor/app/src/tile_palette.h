@@ -30,15 +30,23 @@ public:
     /// Chooses a tile (-1 erases), or stops painting with nullopt.
     void choose(std::optional<std::int32_t> tile);
 
-    /// The tool chosen: 0 pencil, 1 rectangle, 2 fill.
+    /// The tool chosen: 0 pencil, 1 rectangle, 2 fill, 3 raise, 4 lower, 5 scatter.
     [[nodiscard]] int tool() const noexcept { return tool_; }
+    /// The tiles Ctrl+clicked together, painted at random for each cell; empty for one.
+    [[nodiscard]] const std::vector<std::int32_t>& variants() const noexcept { return variants_; }
+    /// Ctrl+click: adds a tile to (or takes it from) the variants painted at random.
+    void toggle_variant(std::int32_t tile);
 
 Q_SIGNALS:
     void chosen_changed(std::optional<std::int32_t> tile);
     void tool_changed(int tool);
+    void variants_changed(const std::vector<std::int32_t>& tiles);
+    void density_changed(int density);
 
 private:
+    void show_checks();
     std::optional<std::int32_t> chosen_;
+    std::vector<std::int32_t> variants_;
     int tool_ = 0;
     QWidget* tools_ = nullptr;
     QLabel* hint_ = nullptr;

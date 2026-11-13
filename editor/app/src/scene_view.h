@@ -48,7 +48,11 @@ public:
     /// the button went down and where it came up, or the whole area joined to the cell.
     /// Raise and Lower build Diorama terrain: each cell the stroke passes rises (or sinks)
     /// by half a tile; the right button does the opposite.
-    enum class PaintTool : std::uint8_t { Pencil, Rectangle, Fill, Raise, Lower };
+    /// Scatter paints some of the cells around the cursor, at random, as many in a hundred
+    /// as the density: rocks and flowers sprinkled rather than laid in rows.
+    enum class PaintTool : std::uint8_t { Pencil, Rectangle, Fill, Raise, Lower, Scatter };
+    /// The Scatter tool's density: cells painted in a hundred, 1 to 100.
+    void set_scatter_density(int density) noexcept { density_ = std::clamp(density, 1, 100); }
     void set_paint_tool(PaintTool tool) { paint_tool_ = tool; }
     [[nodiscard]] PaintTool paint_tool() const noexcept { return paint_tool_; }
     /// Snapping: what is dragged lands on whole tiles (the entity grabbed; others
@@ -139,6 +143,8 @@ private:
     Document* document_ = nullptr;
     /// The cells a Raise or Lower stroke has changed already: each once a stroke.
     std::vector<std::pair<std::int64_t, std::int64_t>> raised_;
+    int density_ = 25;
+    std::uint32_t scatter_seed_ = 1; ///< Each scatter stroke's random choices.
     std::unique_ptr<Preview> preview_;
     QImage image_;
     engine::Guid selection_;

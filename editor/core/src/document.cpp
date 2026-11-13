@@ -326,6 +326,14 @@ bool Document::open_scene(std::string_view path, std::string& error) {
     return true;
 }
 
+void Document::set_tile_variants(std::vector<std::int32_t> tiles) {
+    impl_->variants = std::move(tiles);
+}
+
+const std::vector<std::int32_t>& Document::tile_variants() const noexcept {
+    return impl_->variants;
+}
+
 std::string Document::make_autotiles(std::string_view path, std::string& error) {
     const Impl& d = *impl_;
     const fs::path file(path);
@@ -1052,6 +1060,21 @@ bool Document::raise_tile(Guid tilemap, double x, double y, double by) {
 
 namespace {
 
+/// The tile to paint into cell (c, r): `tile`, or, when it is one of `variants`, one of
+/// them picked by a hash of the cell and the round, so the same stroke is the same.
+std::int32_t variant_for(std::int32_t tile, const std::vector<std::int32_t>& variants,
+                         std::uint32_t c, std::uint32_t r, std::uint32_t round) {
+    if (tile < 0 || variants.size() < 2 ||
+        std::find(variants.begin(), variants.end(), tile) == variants.end()) {
+        return tile;
+    }
+    std::uint32_t hash = (c * 73856093U) ^ (r * 19349663U) ^ (round * 83492791U);
+    hash ^= hash >> 13U;
+    hash *= 0x5bd1e995U;
+    hash ^= hash >> 15U;
+    return variants[hash % variants.size()];
+}
+
 /// On an auto-tile map, the terrain a tile is part of; -1 for none.
 std::int32_t terrain_of(std::int32_t tile) {
     return tile < 0 ? -1 : tile / static_cast<std::int32_t>(assets::autotile_shapes);
@@ -1135,9 +1158,13 @@ bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
     }
     const auto cx = static_cast<std::uint32_t>(column);
     const auto cy = static_cast<std::uint32_t>(row);
+    const bool varied = !map->autotile && tile >= 0 && d.variants.size() > 1 &&
+                        std::find(d.variants.begin(), d.variants.end(), tile) != d.variants.end();
     if (cx < parsed->width && cy < parsed->height &&
         (parsed->at(cx, cy) == tile ||
-         (map->autotile && terrain_of(parsed->at(cx, cy)) == terrain_of(tile)))) {
+         (map->autotile && terrain_of(parsed->at(cx, cy)) == terrain_of(tile)) ||
+         (varied && std::find(d.variants.begin(), d.variants.end(), parsed->at(cx, cy)) !=
+                        d.variants.end()))) {
         return true; // already so
     }
     if (tile < 0 && (cx >= parsed->width || cy >= parsed->height)) {
@@ -1153,7 +1180,8 @@ bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
             grid.cells[(std::size_t{r} * grid.width) + c] = parsed->at(c, r);
         }
     }
-    grid.cells[(std::size_t{cy} * grid.width) + cx] = tile;
+    grid.cells[(std::size_t{cy} * grid.width) + cx] =
+        map->autotile ? tile : variant_for(tile, d.variants, cx, cy, ++d.variant_round);
     if (map->autotile) {
         autotile_cells(grid, cx, cy, cx, cy);
     }
@@ -1234,11 +1262,14 @@ bool Document::paint_tile_rect(Guid tilemap, double x0, double y0, double x1, do
     const auto r1 = static_cast<std::uint32_t>(bottom);
     scene2d::TileGrid grid = grown(*parsed, c1 + 1, r1 + 1);
     bool changed = grid.width != parsed->width || grid.height != parsed->height;
+    const std::uint32_t round = ++d.variant_round;
     for (std::uint32_t r = r0; r <= r1; ++r) {
         for (std::uint32_t c = c0; c <= c1; ++c) {
             std::int32_t& cell = grid.cells[(std::size_t{r} * grid.width) + c];
-            changed = changed || cell != tile;
-            cell = tile;
+            const std::int32_t next =
+                map->autotile ? tile : variant_for(tile, d.variants, c, r, round);
+            changed = changed || cell != next;
+            cell = next;
         }
     }
     if (!changed) {
@@ -1283,14 +1314,24 @@ bool Document::fill_tiles(Guid tilemap, double x, double y, std::int32_t tile) {
     scene2d::TileGrid grid = grown(*parsed, parsed->width, parsed->height);
     // Every cell joined to the first by its sides through cells of the same tile.
     std::vector<std::array<std::uint32_t, 2>> open{{cx, cy}};
-    grid.cells[(std::size_t{cy} * grid.width) + cx] = tile;
+    const std::uint32_t round = ++d.variant_round;
+    const auto pick = [&](std::uint32_t c, std::uint32_t r) {
+        return map->autotile ? tile : variant_for(tile, d.variants, c, r, round);
+    };
+    // Cells already painted this fill, so variants (which differ from the tile) are not
+    // filled again.
+    std::vector<bool> done(grid.cells.size(), false);
+    done[(std::size_t{cy} * grid.width) + cx] = true;
+    grid.cells[(std::size_t{cy} * grid.width) + cx] = pick(cx, cy);
     while (!open.empty()) {
         const std::array<std::uint32_t, 2> cell = open.back();
         open.pop_back();
         const auto visit = [&](std::uint32_t c, std::uint32_t r) {
-            std::int32_t& next = grid.cells[(std::size_t{r} * grid.width) + c];
-            if (next != tile && alike(next, old)) {
-                next = tile;
+            const std::size_t at = (std::size_t{r} * grid.width) + c;
+            std::int32_t& next = grid.cells[at];
+            if (!done[at] && next != tile && alike(next, old)) {
+                done[at] = true;
+                next = pick(c, r);
                 open.push_back({c, r});
             }
         };

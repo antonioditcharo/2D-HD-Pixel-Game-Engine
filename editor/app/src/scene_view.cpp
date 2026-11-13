@@ -113,6 +113,37 @@ void SceneView::paint_at(QPoint widget_point) {
         return;
     }
     const std::optional<QPointF> at = map_point(widget_point);
+    if (paint_tool_ == PaintTool::Scatter) {
+        if (!at) {
+            return;
+        }
+        // The 3 x 3 cells around the cursor, each considered once a stroke.
+        bool painted = false;
+        const auto cx = static_cast<std::int64_t>(std::floor(at->x()));
+        const auto cy = static_cast<std::int64_t>(std::floor(at->y()));
+        for (std::int64_t dy = -1; dy <= 1; ++dy) {
+            for (std::int64_t dx = -1; dx <= 1; ++dx) {
+                const std::pair<std::int64_t, std::int64_t> cell{cx + dx, cy + dy};
+                if (std::find(raised_.begin(), raised_.end(), cell) != raised_.end()) {
+                    continue;
+                }
+                raised_.push_back(cell);
+                scatter_seed_ ^= scatter_seed_ << 13U;
+                scatter_seed_ ^= scatter_seed_ >> 17U;
+                scatter_seed_ ^= scatter_seed_ << 5U;
+                if (static_cast<int>(scatter_seed_ % 100U) < density_ &&
+                    document_->paint_tile(paint_map_, static_cast<double>(cell.first) + 0.5,
+                                          static_cast<double>(cell.second) + 0.5, stroke_tile_)) {
+                    painted = true;
+                }
+            }
+        }
+        if (painted) {
+            Q_EMIT moved();
+            refresh();
+        }
+        return;
+    }
     if (paint_tool_ == PaintTool::Raise || paint_tool_ == PaintTool::Lower) {
         if (!at) {
             return;
@@ -422,7 +453,7 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
                 refresh();
             }
         } else if (paint_tool_ == PaintTool::Pencil || paint_tool_ == PaintTool::Raise ||
-                   paint_tool_ == PaintTool::Lower) {
+                   paint_tool_ == PaintTool::Lower || paint_tool_ == PaintTool::Scatter) {
             paint_at(drag_from_);
         }
         return;
