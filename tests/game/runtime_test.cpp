@@ -1970,3 +1970,80 @@ TEST_CASE("The inventory: logic gives, takes and checks things, and saves keep t
     CHECK(load_issues.empty());
     CHECK(other->inventory().kinds() == 0);
 }
+
+TEST_CASE("Quests: started, staged, finished, listed in the journal, and saved") {
+    game::QuestObject book;
+    book.start(" cat ", "The lost cat");
+    book.start("cat", "Another title"); // started already: unchanged
+    book.set_objective("cat", "Find the cat in the woods");
+    book.set_stage("cat", 2);
+    book.set_stage("cat", -3);
+    CHECK(book.stage_of("cat") == 0);
+    book.set_stage("cat", 2);
+    book.start("well", "");
+    book.complete("well");
+    book.fail("well"); // finished already: unchanged
+    book.start("bridge", "Mend the bridge");
+    book.fail("bridge");
+    book.set_objective("nothing", "never started"); // nothing happens
+    CHECK(book.active("cat"));
+    CHECK(book.done("well"));
+    CHECK(book.failed("bridge"));
+    CHECK_FALSE(book.started("nothing"));
+    CHECK(book.stage_of("cat") == 2);
+    CHECK(book.active_count() == 1);
+    CHECK(
+        book.journal() ==
+        "Journal\nThe lost cat: Find the cat in the woods\nwell (done)\nMend the bridge (failed)");
+    CHECK(game::QuestObject{}.journal() == "The journal is empty.");
+
+    // In a game: on starting, Rules start a quest and move it on, then check it; the
+    // journal shows in a message box.
+    const Project project;
+    {
+        logic::LogicAsset rules;
+        rules.name = "story";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "",
+            "game_start",
+            {},
+            {ir::do_action(2, "quests", "start",
+                           {Project::text("cat"), Project::text("The lost cat")}),
+             ir::do_action(3, "quests", "set_stage", {Project::text("cat"), Project::whole(1)}),
+             ir::do_action(4, "quests", "set_objective",
+                           {Project::text("cat"), Project::text("Look by the well")}),
+             ir::do_action(5, "quests", "show_journal", {})},
+            {}});
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{6},
+                        "",
+                        "game_start",
+                        {ir::call("quests", "active", {Project::text("cat")})},
+                        {ir::log(7, ir::call("quests", "stage_of", {Project::text("cat")}))},
+                        {}});
+        write_json(project.folder.path / "assets/logic/story.drules",
+                   serialize::logic_to_json(rules));
+    }
+    const auto runtime = project.open(no_graphics(nullptr));
+    runtime->step();
+    CHECK(runtime->quests().active("cat"));
+    CHECK(runtime->quests().stage_of("cat") == 1);
+    CHECK(std::count(runtime->log().begin(), runtime->log().end(), "1") == 1);
+    CHECK(runtime->dialogue().is_open());
+
+    // Saved and loaded back; a quest without a title is left out with a note.
+    serialize::Json saved = runtime->save();
+    CHECK(saved["quests"]["cat"]["title"] == "The lost cat");
+    CHECK(saved["quests"]["cat"]["state"] == "active");
+    const auto other = project.open(no_graphics(nullptr));
+    std::vector<serialize::Issue> issues;
+    REQUIRE(other->load(saved, issues));
+    CHECK(issues.empty());
+    CHECK(other->quests().active("cat"));
+    CHECK(other->quests().quests().at("cat").objective == "Look by the well");
+    saved["quests"]["broken"] = serialize::Json{{"stage", 3}};
+    REQUIRE(other->load(saved, issues));
+    CHECK(issues.size() == 1);
+    CHECK_FALSE(other->quests().started("broken"));
+}

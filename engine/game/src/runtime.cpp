@@ -484,6 +484,7 @@ void register_types(reflect::Registry& registry) {
     register_lighting_types(registry);
     register_inventory_types(registry);
     register_camera_types(registry);
+    register_quest_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -510,6 +511,7 @@ struct Runtime::Impl {
     LightingObject lighting;
     CameraObject camera;
     InventoryObject inventory;
+    QuestObject quests;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
     input::InputState idle; ///< No controls held: what movement sees while a message is open.
@@ -675,6 +677,11 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     if (!r.vm->bind("lighting", reflect::ObjectRef::of(r.lighting))) {
         issues.push_back(
             serialize::Issue{"", "The lighting object could not be made available to logic."});
+    }
+    r.quests.set_dialogue(&r.dialogue);
+    if (!r.vm->bind("quests", reflect::ObjectRef::of(r.quests))) {
+        issues.push_back(
+            serialize::Issue{"", "The quests object could not be made available to logic."});
     }
     if (!r.vm->bind("inventory", reflect::ObjectRef::of(r.inventory))) {
         issues.push_back(
@@ -1156,6 +1163,18 @@ serialize::Json Runtime::save() const {
         carried[item] = count;
     }
     json["inventory"] = std::move(carried);
+    serialize::Json quests = serialize::Json::object();
+    for (const auto& [name, quest] : r.quests.quests()) {
+        const char* state = quest.state == QuestState::Done     ? "done"
+                            : quest.state == QuestState::Failed ? "failed"
+                                                                : "active";
+        quests[name] = serialize::Json{{"title", quest.title},
+                                       {"objective", quest.objective},
+                                       {"stage", quest.stage},
+                                       {"state", state},
+                                       {"order", quest.order}};
+    }
+    json["quests"] = std::move(quests);
     return json;
 }
 
@@ -1272,6 +1291,31 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
                     "How many of it the player carries must be a whole number above 0. It "
                     "was left out."});
             }
+        }
+    }
+    // The quests, if the save has it (saves made before they were saved do not).
+    r.quests.clear();
+    if (const auto quests = json.find("quests"); quests != json.end() && quests->is_object()) {
+        for (const auto& [name, saved] : quests->items()) {
+            if (!saved.is_object() || !saved.contains("title") || !saved["title"].is_string()) {
+                issues.push_back(
+                    serialize::Issue{"/quests/" + name, "A quest needs a title. It was left out."});
+                continue;
+            }
+            Quest quest;
+            quest.title = saved["title"].get<std::string>();
+            quest.objective = saved.value("objective", std::string());
+            quest.stage = saved.contains("stage") && saved["stage"].is_number_integer()
+                              ? std::max<std::int64_t>(saved["stage"].get<std::int64_t>(), 0)
+                              : 0;
+            const std::string state = saved.value("state", std::string("active"));
+            quest.state = state == "done"     ? QuestState::Done
+                          : state == "failed" ? QuestState::Failed
+                                              : QuestState::Active;
+            quest.order = saved.contains("order") && saved["order"].is_number_unsigned()
+                              ? saved["order"].get<std::uint64_t>()
+                              : 0;
+            r.quests.restore(name, std::move(quest));
         }
     }
     // The lighting, if the save has it (saves made before it was saved do not).
@@ -1437,6 +1481,10 @@ const LightingObject& Runtime::lighting() const noexcept {
 
 const InventoryObject& Runtime::inventory() const noexcept {
     return impl_->inventory;
+}
+
+const QuestObject& Runtime::quests() const noexcept {
+    return impl_->quests;
 }
 
 const DialogueObject& Runtime::dialogue() const noexcept {

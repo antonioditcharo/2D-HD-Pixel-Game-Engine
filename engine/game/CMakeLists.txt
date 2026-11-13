@@ -9,6 +9,7 @@ add_library(engine_game STATIC
     src/dialogue.cpp
     src/inventory.cpp
     src/logic_world.cpp
+    src/quests.cpp
     src/runtime.cpp
     src/save.cpp
     src/sound.cpp

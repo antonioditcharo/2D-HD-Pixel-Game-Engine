@@ -356,6 +356,26 @@ sends an entity's own event, such as an animation's "finished", `game::emit()` s
 under each name that reaches the entity (`names_of()`): its GUID, then its name if no
 other entity shares it. A Rule runs once, whichever name it uses (tested).
 
+### Quests and the journal
+
+The **quests** object (`QuestObject`, [`quests.h`](../../engine/game/include/engine/game/quests.h))
+holds the story's tasks (`plan/02` G5), each by a name logic uses (*cat*) with a title the
+player reads (*The lost cat*):
+
+| Block | What it does |
+|---|---|
+| *Start the quest {name}: {title}* | Starts it at stage 0 (the title is the name if left empty). Starting it again changes nothing |
+| *Set the objective of {name} to {objective}* | What to do now, as the journal shows it: *Look by the well* |
+| *Move the quest {name} to stage {stage}* | Where it has got to, 0 or more, for Rules to check |
+| *Complete the quest {name}*, *Fail the quest {name}* | Finishes a quest under way; a finished one stays as it is |
+| *Show the journal* | A message box: *Journal*, then each quest under way with its objective, then the finished ones marked *(done)* or *(failed)*, each in the order it started; *The journal is empty.* without any |
+| Conditions | *The quest {name} has started*, *is under way*, *is complete*, *has failed* |
+| Values | *The stage of {name}*, *The number of quests under way* |
+
+Names have spaces around them dropped, as the inventory's do. Saved games keep every quest
+(its title, objective, stage, state and order); loading replaces them, and a saved quest
+without a title is left out with a note. At most 1,000 quests are kept.
+
 ## 6. Objects made of several parts
 
 - `Vm::set_object_resolver()` lets the VM ask for an object's parts by name whenever a

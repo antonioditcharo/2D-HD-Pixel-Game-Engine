@@ -15,6 +15,7 @@
 #include "engine/game/dialogue.h"
 #include "engine/game/inventory.h"
 #include "engine/game/lighting.h"
+#include "engine/game/quests.h"
 #include "engine/game/save.h"
 #include "engine/game/sound.h"
 #include "engine/input/input.h"
@@ -213,6 +214,7 @@ public:
     [[nodiscard]] const LightingObject& lighting() const noexcept;
     /// What the player carries, as logic gives and takes it.
     [[nodiscard]] const InventoryObject& inventory() const noexcept;
+    [[nodiscard]] const QuestObject& quests() const noexcept;
     [[nodiscard]] DialogueObject& dialogue() noexcept;
     /// The audio engine; null with AudioMode::Off or when no sound output was found.
     [[nodiscard]] audio::AudioEngine* audio() noexcept;
