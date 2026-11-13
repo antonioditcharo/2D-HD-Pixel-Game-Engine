@@ -2,7 +2,7 @@
 // game runs, and what the editor's Play button will start.
 //
 //   sparxel-player [project folder] [--headless] [--frames N] [--no-audio]
-//                  [--screenshot file.png]
+//                  [--screenshot file.png] [--debug]
 //
 // With no folder, it plays the game exported beside it (a "game" folder next to the
 // executable, or the executable's own folder), else the folder it is started in. Lines that logic
@@ -35,19 +35,21 @@ struct Arguments {
     fs::path project;
     bool headless = false;
     bool audio = true;
+    bool debug = false;                  ///< Testing from the editor: the debug menu and timings.
     std::optional<std::uint64_t> frames; ///< Stop after this many frames.
     fs::path screenshot;                 ///< Where to save the last frame, if anywhere.
 };
 
 void usage() {
     std::fputs("Usage: sparxel-player [project folder] [--headless] [--frames N] [--no-audio]\n"
-               "                      [--screenshot file.png]\n"
+               "                      [--screenshot file.png] [--debug]\n"
                "  --headless   draw without a window (needs no display), at 60 frames a second\n"
                "               of game time, as fast as the computer can\n"
                "  --frames N   stop after N frames\n"
                "  --no-audio   play without sound\n"
                "  --screenshot file.png\n"
-               "               save the last frame drawn as a PNG\n",
+               "               save the last frame drawn as a PNG\n"
+               "  --debug      testing: F1 opens the debug menu, F3 shows how long frames take\n",
                stderr);
 }
 
@@ -74,7 +76,9 @@ std::optional<Arguments> parse(int argc, char** argv) {
     bool have_project = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
-        if (arg == "--headless") {
+        if (arg == "--debug") {
+            args.debug = true;
+        } else if (arg == "--headless") {
             args.headless = true;
         } else if (arg == "--no-audio") {
             args.audio = false;
@@ -116,6 +120,7 @@ int run(int argc, char** argv) {
     }
     game::RuntimeOptions options;
     options.headless = args->headless;
+    options.debug = args->debug;
     options.audio = args->audio
                         ? (args->headless ? game::AudioMode::Headless : game::AudioMode::Device)
                         : game::AudioMode::Off;

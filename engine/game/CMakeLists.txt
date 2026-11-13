@@ -9,6 +9,7 @@ add_library(engine_game STATIC
     src/camera.cpp
     src/clock.cpp
     src/conversation.cpp
+    src/debug_menu.cpp
     src/dialogue.cpp
     src/inventory.cpp
     src/localization.cpp

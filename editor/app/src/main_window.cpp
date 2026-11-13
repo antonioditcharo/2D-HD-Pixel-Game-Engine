@@ -1414,7 +1414,9 @@ bool MainWindow::play() {
     if (document_ == nullptr || (document_->dirty() && !save())) {
         return false;
     }
-    if (!QProcess::startDetached(path_text(player_), {path_text(document_->folder())})) {
+    // --debug: F1 opens the debug menu, F3 shows timings, while testing (not in exports).
+    if (!QProcess::startDetached(path_text(player_),
+                                 {path_text(document_->folder()), QStringLiteral("--debug")})) {
         report(tr("The player %1 could not be started.").arg(path_text(player_)));
         return false;
     }

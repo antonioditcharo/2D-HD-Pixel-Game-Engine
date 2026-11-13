@@ -35,6 +35,22 @@ sparxel-player samples/hello --headless --frames 120 --no-audio --screenshot fra
 - Exit codes: 0 after playing, 1 if the game cannot start (the reasons are printed), 2 for
   unknown options.
 
+### Testing from the editor
+
+**Play** in the editor starts the player with `--debug` (exported games never have it):
+
+- **F1** opens the **debug menu**, over the paused game, with a magenta border so it is
+  plainly not part of it (`DebugMenu`, `plan/02` N4): **Give items** (every row of
+  `data/items`, what is carried, and gold; Right or Interact gives one, or 100 gold, Left
+  takes one), **Story flags** (each flag set so far, on or off: Interact switches it),
+  **Quests** (each with how it stands: Interact completes it), **Go to…** (everything
+  named, by name: Interact puts the player just below it and closes the menu), **Heal the
+  party**, and **Close**. Up and Down choose; Cancel goes back. F1 again closes it.
+- **F3** shows how long frames take, in plain language (`plan/02` N5): frames a second,
+  milliseconds of logic and of drawing, how much of a 60-a-second frame that is (*plenty
+  of room*, *close to the limit*, or, in red, *too slow, it will stutter*), and how many
+  entities there are.
+
 ## 2. The sample: Hello Sparxel
 
 A 20 × 12 tile village in a stone wall, with a path, a hero to walk with the arrow keys or

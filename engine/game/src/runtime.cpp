@@ -1,6 +1,7 @@
 #include "engine/game/runtime.h"
 
 #include "engine/foundation/text.h"
+#include "engine/game/debug_menu.h"
 #include "engine/game/localization.h"
 #include "engine/game/logic_world.h"
 #include "engine/game/shop.h"
@@ -12,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iterator>
@@ -572,6 +574,26 @@ render::Color hex_color(std::string_view hex, render::Color fallback) {
     return render::Color{parts[0], parts[1], parts[2], 255};
 }
 
+/// Adds how long the scope it lives in took, in milliseconds, to `average` (smoothed).
+class Timing {
+public:
+    explicit Timing(double& average) noexcept
+        : average_(average), started_(std::chrono::steady_clock::now()) {}
+    Timing(const Timing&) = delete;
+    Timing& operator=(const Timing&) = delete;
+    Timing(Timing&&) = delete;
+    Timing& operator=(Timing&&) = delete;
+    ~Timing() {
+        const std::chrono::duration<double, std::milli> took =
+            std::chrono::steady_clock::now() - started_;
+        average_ = average_ == 0.0 ? took.count() : (0.9 * average_) + (0.1 * took.count());
+    }
+
+private:
+    double& average_;
+    std::chrono::steady_clock::time_point started_;
+};
+
 /// The actions the player may rebind on the Options page.
 constexpr std::array<std::string_view, 7> rebindable{
     "move_up", "move_down", "move_left", "move_right", "interact", "cancel", "menu"};
@@ -722,6 +744,14 @@ struct Runtime::Impl {
     BattleObject battle;
     std::optional<BattleScreen> battle_screen;
     std::optional<ShopScreen> shop_screen;
+    // Testing from the editor.
+    bool debug = false;
+    DebugMenu debug_menu;
+    bool show_performance = false;
+    double step_ms = 0.0; ///< How long steps and frames take, smoothed.
+    double draw_ms = 0.0;
+    double frame_gap_ms = 0.0; ///< Between frames drawn: 1000 / frames a second.
+    std::chrono::steady_clock::time_point last_frame;
     /// The battle's picture behind it (empty: the world), and the Enemy on the Map that
     /// started it, if one did.
     std::string battle_picture;
@@ -1050,6 +1080,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         }
     }
 
+    r.debug = options.debug;
     // The player's options, kept beside the saves.
     std::unique_ptr<Runtime> runtime(new Runtime(std::move(impl)));
     runtime->load_options();
@@ -1064,12 +1095,30 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
 
 void Runtime::step() {
     Impl& r = *impl_;
+    const Timing timing(r.step_ms);
     // 1. Input (plan/05 §5).
     r.state.begin_step();
     if (r.replay != nullptr) {
         r.replay->replay(r.steps, r.state);
     } else if (r.window != nullptr) {
         r.keep_running = input::pump_events(r.state) && r.keep_running;
+    }
+
+    // Testing from the editor: F1 opens and closes the debug menu, F3 the timings.
+    if (r.debug) {
+        for (const input::Binding binding : r.state.pressed_bindings()) {
+            if (binding == input::Binding::key(input::Key::F1)) {
+                if (r.debug_menu.is_open()) {
+                    r.debug_menu.close();
+                } else {
+                    r.debug_menu.attach(DebugTargets{&r.inventory, &r.dialogue, &r.quests, &r.party,
+                                                     r.world.get(), &r.tables});
+                    r.debug_menu.open();
+                }
+            } else if (binding == input::Binding::key(input::Key::F3)) {
+                r.show_performance = !r.show_performance;
+            }
+        }
     }
 
     // The typewriter: the message showing is typed out at the project's text speed, its
@@ -1132,10 +1181,10 @@ void Runtime::step() {
     // While a message is open, the player stands still and Interact turns its pages.
     // So does everyone while the scene fades out and in.
     const bool talking = r.dialogue.is_open();
-    const input::InputState& moves =
-        talking || r.battle_screen || r.shop_screen || r.menu.open() || r.fading != Impl::Fade::None
-            ? r.idle
-            : r.state;
+    const input::InputState& moves = talking || r.battle_screen || r.shop_screen || r.menu.open() ||
+                                             r.debug_menu.is_open() || r.fading != Impl::Fade::None
+                                         ? r.idle
+                                         : r.state;
 
     // 2. Movement, with walls, bodies and walk animations; then trigger areas.
     const double dt = r.clock.step_seconds();
@@ -1209,6 +1258,11 @@ void Runtime::step() {
     //    reaches what each mover faces, in mover GUID order.
     for (const std::string& action :
          rebound ? std::vector<std::string>{} : r.state.pressed_actions()) {
+        // The debug menu, while testing, takes every press.
+        if (r.debug_menu.is_open()) {
+            r.debug_menu.press(action);
+            continue;
+        }
         // The title screen or the pause menu takes every press while open.
         if (r.menu.open()) {
             const GameMenu::Result result = r.menu.press(action, r.save_object);
@@ -1504,7 +1558,7 @@ void Runtime::step() {
     // 6. Saving and loading that logic asked for, now that no script is running.
     // Timers count down while the game plays (not while a menu is open); messages sent this
     // step reach Rules.
-    if (!r.menu.open()) {
+    if (!r.menu.open() && !r.debug_menu.is_open()) {
         for (const std::string& ended : r.save_object.tick_timers(dt)) {
             const std::array<reflect::Value, 1> payload{reflect::Value{ended}};
             r.vm->emit("game", "timer_ended", payload);
@@ -1602,6 +1656,14 @@ bool Runtime::frame(double seconds) {
 
 bool Runtime::draw() {
     Impl& r = *impl_;
+    const Timing timing(r.draw_ms);
+    const auto now = std::chrono::steady_clock::now();
+    if (r.last_frame != std::chrono::steady_clock::time_point{}) {
+        const std::chrono::duration<double, std::milli> gap = now - r.last_frame;
+        r.frame_gap_ms =
+            r.frame_gap_ms == 0.0 ? gap.count() : (0.9 * r.frame_gap_ms) + (0.1 * gap.count());
+    }
+    r.last_frame = now;
     if (r.device == nullptr) {
         return false;
     }
@@ -1826,7 +1888,45 @@ bool Runtime::draw() {
     // The title screen or the pause menu, over everything.
     r.menu.draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(), r.settings.name,
                 r.save_object, r.inventory, r.quests, r.party);
+    r.debug_menu.draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin());
+    // How long frames take, in plain language (F3 while testing).
+    if (r.debug && r.show_performance) {
+        constexpr double budget = 1000.0 / 60.0;
+        const double used = r.step_ms + r.draw_ms;
+        const auto percent = static_cast<int>(std::lround(100.0 * used / budget));
+        const auto fps =
+            r.frame_gap_ms > 0.0 ? static_cast<int>(std::lround(1000.0 / r.frame_gap_ms)) : 0;
+        const auto ms = [](double v) {
+            return std::to_string(static_cast<int>(v)) + "." +
+                   std::to_string(static_cast<int>(std::fmod(v * 10.0, 10.0))) + " ms";
+        };
+        const std::array<std::string, 4> report{
+            std::to_string(fps) + " frames a second",
+            "Logic " + ms(r.step_ms) + ", drawing " + ms(r.draw_ms),
+            std::to_string(percent) + "% of a frame: " +
+                (percent > 100  ? "too slow, it will stutter"
+                 : percent > 70 ? "close to the limit"
+                                : "plenty of room"),
+            std::to_string(r.world->entity_count()) + " entities"};
+        const ui::PixelFont& font = ui::PixelFont::builtin();
+        const auto line = static_cast<float>(font.line_height());
+        r.sprites->begin_over(*r.target);
+        r.sprites->draw(*r.white, render::Rect{0.0F, 0.0F, 1.0F, 1.0F},
+                        render::Rect{2.0F, 2.0F, 180.0F, (line * 4.0F) + 4.0F},
+                        render::Color{0, 0, 0, 170});
+        for (std::size_t k = 0; k < report.size(); ++k) {
+            ui::draw_text(*r.sprites, *r.font, font, report.at(k), 4.0F,
+                          4.0F + (line * static_cast<float>(k)),
+                          percent > 100 && k == 2 ? render::Color{255, 110, 110, 255}
+                                                  : render::Color{180, 255, 180, 255});
+        }
+        static_cast<void>(r.sprites->end());
+    }
     return true;
+}
+
+const DebugMenu& Runtime::debug_menu() const noexcept {
+    return impl_->debug_menu;
 }
 
 const ProjectSettings& Runtime::settings() const noexcept {

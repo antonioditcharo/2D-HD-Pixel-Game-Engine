@@ -3958,3 +3958,72 @@ TEST_CASE("Timers end and tell Rules; messages reach every Rule listening; saves
     }
     CHECK(count("bell") == 2);
 }
+
+TEST_CASE("Testing from the editor: F1's debug menu gives items and goes places; F3 times") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["width"] = 320;
+        settings["height"] = 180;
+        write_json(project.folder.path / game::project_file, settings);
+    }
+    input::Recording replay;
+    std::uint64_t at = 2;
+    const auto press = [&replay, &at](input::Key k) {
+        replay.record(at, key(k), true);
+        replay.record(at + 1, key(k), false);
+        at += 3;
+    };
+    press(input::Key::F1);    // the debug menu
+    press(input::Key::Z);     // Give items
+    press(input::Key::Right); // +100 gold (the only thing, with no data/items)
+    press(input::Key::X);     // back
+    for (int i = 0; i < 3; ++i) {
+        press(input::Key::Down); // to Go to...
+    }
+    press(input::Key::Z);
+    press(input::Key::Z); // the first, alphabetically: the crate, at (50, 0)
+    press(input::Key::F3);
+    game::RuntimeOptions options;
+    options.headless = true;
+    options.replay = &replay;
+    options.debug = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    runtime->step();
+    runtime->step();
+    runtime->step();
+    CHECK(runtime->debug_menu().is_open());
+    const auto shot = [&](const char* name) {
+        REQUIRE(runtime->draw());
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        const assets::Image image{runtime->target()->width(), runtime->target()->height(), pixels};
+        const std::vector<std::uint8_t> png = assets::encode_png(image);
+        std::ofstream(std::filesystem::temp_directory_path() / name, std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+    };
+    shot("sparxel-debug-menu.png");
+    for (std::uint64_t i = 3; i < at + 2; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->inventory().count_of("gold") == 100);
+    CHECK_FALSE(runtime->debug_menu().is_open());
+    CHECK(transform_of(*runtime, "hero").x == 50.0);
+    CHECK(transform_of(*runtime, "hero").y == 1.0);
+    shot("sparxel-timings.png"); // with the timings shown
+
+    // Without --debug, F1 does nothing.
+    input::Recording plain;
+    plain.record(2, key(input::Key::F1), true);
+    plain.record(3, key(input::Key::F1), false);
+    const auto game = project.open(no_graphics(&plain));
+    for (int i = 0; i < 5; ++i) {
+        game->step();
+    }
+    CHECK_FALSE(game->debug_menu().is_open());
+}

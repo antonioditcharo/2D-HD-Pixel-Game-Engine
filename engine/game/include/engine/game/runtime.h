@@ -14,6 +14,7 @@
 #include "engine/game/camera.h"
 #include "engine/game/clock.h"
 #include "engine/game/conversation.h"
+#include "engine/game/debug_menu.h"
 #include "engine/game/dialogue.h"
 #include "engine/game/inventory.h"
 #include "engine/game/lighting.h"
@@ -163,6 +164,9 @@ struct RuntimeOptions {
     /// The window's title; empty for the game's name.
     std::string window_title;
     AudioMode audio = AudioMode::Device;
+    /// Testing from the editor: F1 opens the debug menu (debug_menu.h), F3 shows how long
+    /// each frame takes. Exported games never have it.
+    bool debug = false;
 };
 
 class Runtime {
@@ -241,6 +245,7 @@ public:
     [[nodiscard]] const PartyObject& party() const noexcept;
     /// The title screen or pause menu, open or not.
     [[nodiscard]] const GameMenu& menu() const noexcept;
+    [[nodiscard]] const DebugMenu& debug_menu() const noexcept;
     /// The battle being fought, if any.
     [[nodiscard]] const BattleScreen* battle_screen() const noexcept;
     [[nodiscard]] DialogueObject& dialogue() noexcept;
