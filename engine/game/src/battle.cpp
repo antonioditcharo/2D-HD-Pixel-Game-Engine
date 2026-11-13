@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include <string>
 #include <utility>
 
 namespace engine::game {
@@ -47,6 +49,62 @@ std::vector<std::string> list(const std::string& text) {
 
 } // namespace
 
+std::int64_t top_level(const Table* levels) {
+    if (levels != nullptr && !levels->rows.empty()) {
+        return std::min<std::int64_t>(static_cast<std::int64_t>(levels->rows.size()), 999);
+    }
+    return 99;
+}
+
+std::int64_t xp_for_level(std::int64_t level, const Table* levels) {
+    level = std::clamp<std::int64_t>(level, 1, top_level(levels));
+    if (level == 1) {
+        return 0;
+    }
+    if (levels != nullptr && !levels->rows.empty()) {
+        const std::string name = std::to_string(level);
+        const std::string& row = levels->row(name) != nullptr
+                                     ? name
+                                     : levels->rows[static_cast<std::size_t>(level - 1)].id;
+        return std::max<std::int64_t>(0, whole(levels, row, "xp", 5 * level * (level - 1)));
+    }
+    return 5 * level * (level - 1);
+}
+
+std::int64_t level_for_xp(std::int64_t xp, const Table* levels) {
+    std::int64_t level = 1;
+    const std::int64_t top = top_level(levels);
+    while (level < top && xp >= xp_for_level(level + 1, levels)) {
+        ++level;
+    }
+    return level;
+}
+
+std::vector<std::string> skills_at(const Table* party, const std::string& id, std::int64_t level) {
+    std::vector<std::string> out;
+    for (const std::string& entry : list(text(party, id, "skills", ""))) {
+        const std::size_t at = entry.find('@');
+        if (at == std::string::npos) {
+            out.push_back(entry);
+            continue;
+        }
+        std::int64_t from = 1;
+        try {
+            from = std::stoll(entry.substr(at + 1));
+        } catch (const std::exception&) {
+            from = 1;
+        }
+        std::string skill = entry.substr(0, at);
+        while (!skill.empty() && skill.back() == ' ') {
+            skill.pop_back();
+        }
+        if (level >= from && !skill.empty()) {
+            out.push_back(std::move(skill));
+        }
+    }
+    return out;
+}
+
 std::optional<Battle>
 Battle::start(const BattleData& data, const std::vector<std::string>& party,
               const std::map<std::string, std::pair<std::int64_t, std::int64_t>, std::less<>>& now,
@@ -74,18 +132,29 @@ Battle::start(const BattleData& data, const std::vector<std::string>& party,
         f.enemy = enemy;
         f.name = text(table, id, "name", id);
         f.image = text(table, id, "image", "");
-        f.max_hp = std::max<std::int64_t>(1, whole(table, id, "max_hp", 10));
-        f.max_mp = std::max<std::int64_t>(0, whole(table, id, "max_mp", 0));
+        if (const auto level = data.member_levels.find(id);
+            !enemy && level != data.member_levels.end()) {
+            f.level = std::clamp<std::int64_t>(level->second, 1, top_level(data.levels));
+        }
+        // A party member grows by each "<stat>_growth" for every level past the first.
+        const auto stat = [&](const char* column, std::int64_t fallback) {
+            const std::int64_t base = whole(table, id, column, fallback);
+            return enemy ? base
+                         : base + ((f.level - 1) *
+                                   whole(table, id, std::string(column) + "_growth", 0));
+        };
+        f.max_hp = std::max<std::int64_t>(1, stat("max_hp", 10));
+        f.max_mp = std::max<std::int64_t>(0, stat("max_mp", 0));
         f.hp = f.max_hp;
         f.mp = f.max_mp;
         if (const auto known = now.find(id); !enemy && known != now.end()) {
             f.hp = std::clamp<std::int64_t>(known->second.first, 0, f.max_hp);
             f.mp = std::clamp<std::int64_t>(known->second.second, 0, f.max_mp);
         }
-        f.attack = std::max<std::int64_t>(0, whole(table, id, "attack", 5));
-        f.defense = std::max<std::int64_t>(0, whole(table, id, "defense", 0));
-        f.speed = whole(table, id, "speed", 5);
-        f.skills = list(text(table, id, "skills", ""));
+        f.attack = std::max<std::int64_t>(0, stat("attack", 5));
+        f.defense = std::max<std::int64_t>(0, stat("defense", 0));
+        f.speed = stat("speed", 5);
+        f.skills = enemy ? list(text(table, id, "skills", "")) : skills_at(table, id, f.level);
         f.xp = enemy ? std::max<std::int64_t>(0, whole(table, id, "xp", 0)) : 0;
         f.gold = enemy ? std::max<std::int64_t>(0, whole(table, id, "gold", 0)) : 0;
         b.fighters_.push_back(std::move(f));

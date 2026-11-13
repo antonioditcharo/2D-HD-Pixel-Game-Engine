@@ -50,6 +50,42 @@ std::int64_t PartyObject::hp_of(const std::string& id) const {
     return found == condition_.end() ? -1 : found->second.first;
 }
 
+void PartyObject::give_xp(const std::string& id, std::int64_t xp) {
+    const std::string key = trimmed(id);
+    if (key.empty() || xp <= 0) {
+        return;
+    }
+    const std::int64_t before = level_of(key);
+    std::int64_t& mine = member_xp_[key];
+    mine = std::min<std::int64_t>(mine + xp, 999'999'999);
+    if (const std::int64_t after = level_of(key); after > before) {
+        level_ups_.push_back(LevelUp{key, before, after});
+    }
+}
+
+std::int64_t PartyObject::xp_of(const std::string& id) const {
+    const auto found = member_xp_.find(trimmed(id));
+    return found == member_xp_.end() ? 0 : found->second;
+}
+
+std::int64_t PartyObject::level_of(const std::string& id) const {
+    return level_for_xp(xp_of(id), tables_ != nullptr ? tables_->find("data/levels") : nullptr);
+}
+
+std::int64_t PartyObject::xp_to_next(const std::string& id) const {
+    const Table* levels = tables_ != nullptr ? tables_->find("data/levels") : nullptr;
+    const std::int64_t level = level_of(id);
+    return level >= top_level(levels) ? 0 : xp_for_level(level + 1, levels) - xp_of(id);
+}
+
+std::map<std::string, std::int64_t, std::less<>> PartyObject::levels() const {
+    std::map<std::string, std::int64_t, std::less<>> out;
+    for (const auto& [id, xp] : member_xp_) {
+        out[id] = level_of(id);
+    }
+    return out;
+}
+
 void BattleObject::start(const std::string& enemies) {
     request_ = enemies;
 }
@@ -80,6 +116,26 @@ void register_battle_types(reflect::Registry& registry) {
     party.getter<&PartyObject::xp>("xp")
         .text("The party's experience")
         .tooltip("All the experience won in battles.");
+    party.action<&PartyObject::give_xp>("give_xp", {"name", "xp"})
+        .text("Give {name} {xp} experience")
+        .tooltip("Experience for one member, as a battle gives it; enough reaches a new "
+                 "level, with its stats and skills.")
+        .param("xp")
+        .range(1.0, 999999999.0)
+        .default_value(reflect::Value{std::int64_t{10}});
+    party.getter<&PartyObject::level_of>("level_of", {"name"})
+        .text("The level of {name}")
+        .tooltip("From their experience: data/levels, or 10, 30, 60, 100... for levels 2, "
+                 "3, 4, 5...");
+    party.getter<&PartyObject::xp_of>("xp_of", {"name"})
+        .text("The experience of {name}")
+        .tooltip("All the experience they have.");
+    party.getter<&PartyObject::xp_to_next>("xp_to_next", {"name"})
+        .text("The experience {name} needs for the next level")
+        .tooltip("0 at the highest level.");
+    party.event<std::string>("level_up", {"name"})
+        .text("When {name} reaches a new level")
+        .tooltip("After a battle won, or experience given.");
     auto battle =
         registry.add_type<BattleObject>("battle").display_name("Battle").category("Story").tooltip(
             "Turn-based battles, with numbers from the data tables.");

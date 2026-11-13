@@ -311,8 +311,10 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
         case Page::Party:
             for (const std::string& member : party.members()) {
                 const std::int64_t hp = party.hp_of(member);
-                lines.push_back(member +
-                                (hp < 0 ? std::string("  HP full") : "  HP " + std::to_string(hp)));
+                const std::int64_t next = party.xp_to_next(member);
+                lines.push_back(member + "  Lv " + std::to_string(party.level_of(member)) +
+                                (hp < 0 ? std::string("  HP full") : "  HP " + std::to_string(hp)) +
+                                (next > 0 ? "  next " + std::to_string(next) : std::string()));
             }
             if (lines.empty()) {
                 lines.emplace_back("No one has joined the party.");

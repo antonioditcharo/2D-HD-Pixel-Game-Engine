@@ -871,6 +871,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         }
     }
     r.audio_object = AudioObject(r.audio_engine.get(), &r.assets, r.world.get());
+    r.party.set_tables(&r.tables); // levels come from data/levels
     if (!r.vm->bind("audio", reflect::ObjectRef::of(r.audio_object))) {
         issues.push_back(
             serialize::Issue{"", "The audio object could not be made available to logic."});
@@ -1314,8 +1315,10 @@ void Runtime::step() {
                 item += c;
             }
         }
-        const BattleData data{r.tables.find("data/party"), r.tables.find("data/enemies"),
-                              r.tables.find("data/skills"), r.tables.find("data/items")};
+        BattleData data{r.tables.find("data/party"), r.tables.find("data/enemies"),
+                        r.tables.find("data/skills"), r.tables.find("data/items")};
+        data.levels = r.tables.find("data/levels");
+        data.member_levels = r.party.levels();
         std::vector<std::string> members = r.party.members();
         if (members.empty() && data.party != nullptr && !data.party->rows.empty()) {
             members.push_back(data.party->rows.front().id); // the first of data/party
@@ -1362,6 +1365,12 @@ void Runtime::step() {
         const BattleOutcome outcome = fought.outcome();
         if (outcome == BattleOutcome::Won) {
             r.party.add_xp(fought.xp());
+            // Each member still standing gets all of it, as in classic RPGs.
+            for (const Fighter& f : fought.fighters()) {
+                if (!f.enemy && f.alive()) {
+                    r.party.give_xp(f.id, fought.xp());
+                }
+            }
             if (fought.gold() > 0) {
                 r.inventory.give("gold", fought.gold());
             }
@@ -1371,6 +1380,28 @@ void Runtime::step() {
         r.vm->emit("battle", outcome == BattleOutcome::Won    ? "won"
                              : outcome == BattleOutcome::Lost ? "lost"
                                                               : "fled");
+    }
+
+    // Levels reached, after a battle or from logic: said in the message box, with the
+    // skills learned, and told to Rules.
+    for (const PartyObject::LevelUp& up : r.party.take_level_ups()) {
+        const Table* party = r.tables.find("data/party");
+        const Table* skills = r.tables.find("data/skills");
+        const std::optional<std::string> named =
+            party != nullptr ? party->text(up.id, "name") : std::nullopt;
+        const std::string name = named && !named->empty() ? *named : up.id;
+        r.dialogue.say(name + " is now level " + std::to_string(up.to) + "!");
+        const std::vector<std::string> had = skills_at(party, up.id, up.from);
+        for (const std::string& skill : skills_at(party, up.id, up.to)) {
+            if (std::find(had.begin(), had.end(), skill) == had.end()) {
+                const std::optional<std::string> called =
+                    skills != nullptr ? skills->text(skill, "name") : std::nullopt;
+                r.dialogue.say(name + " learns " + (called && !called->empty() ? *called : skill) +
+                               "!");
+            }
+        }
+        const std::array<reflect::Value, 1> payload{reflect::Value{up.id}};
+        r.vm->emit("party", "level_up", payload);
     }
 
     // Conversations: one logic asked for starts; the one playing goes on once no message
@@ -1778,8 +1809,10 @@ serialize::Json Runtime::save() const {
     for (const auto& [member, hp_mp] : r.party.condition()) {
         condition[member] = serialize::Json::array({hp_mp.first, hp_mp.second});
     }
-    json["party"] = serialize::Json{
-        {"members", r.party.members()}, {"condition", std::move(condition)}, {"xp", r.party.xp()}};
+    json["party"] = serialize::Json{{"members", r.party.members()},
+                                    {"condition", std::move(condition)},
+                                    {"xp", r.party.xp()},
+                                    {"member_xp", r.party.member_xp()}};
     return json;
 }
 
@@ -1918,6 +1951,13 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
                     hp_mp[1].is_number_integer()) {
                     r.party.condition()[member] = {hp_mp[0].get<std::int64_t>(),
                                                    hp_mp[1].get<std::int64_t>()};
+                }
+            }
+        }
+        if (party->contains("member_xp") && (*party)["member_xp"].is_object()) {
+            for (const auto& [member, xp] : (*party)["member_xp"].items()) {
+                if (xp.is_number_integer() && xp.get<std::int64_t>() > 0) {
+                    r.party.member_xp()[member] = xp.get<std::int64_t>();
                 }
             }
         }

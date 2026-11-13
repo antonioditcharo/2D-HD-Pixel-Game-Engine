@@ -31,6 +31,7 @@ struct Fighter {
     std::int64_t defense = 0;
     std::int64_t speed = 1;
     std::vector<std::string> skills; ///< Rows of the skills table it can use.
+    std::int64_t level = 1;          ///< A party member's; enemies stay at 1.
     std::int64_t xp = 0;             ///< An enemy's, given when it is beaten.
     std::int64_t gold = 0;
     bool defending = false;
@@ -62,7 +63,23 @@ struct BattleData {
     const Table* enemies = nullptr; ///< name, max_hp, attack, defense, speed, xp, gold, skills
     const Table* skills = nullptr;  ///< name, mp_cost, power, heals, all
     const Table* items = nullptr;   ///< name, heal
+    const Table* levels = nullptr;  ///< xp: the experience each level needs (optional)
+    /// Party members' levels, by row; those missing are at level 1.
+    std::map<std::string, std::int64_t, std::less<>> member_levels;
 };
+
+/// The highest level: data/levels' rows, else 99.
+[[nodiscard]] std::int64_t top_level(const Table* levels);
+/// All the experience needed to reach `level` (0 for level 1): data/levels' `xp` on the row
+/// named by the level ("3"), else on the level's row in order; without the table,
+/// 5 x level x (level - 1): 10 for level 2, 30 for 3, 60 for 4.
+[[nodiscard]] std::int64_t xp_for_level(std::int64_t level, const Table* levels);
+/// The level `xp` experience reaches.
+[[nodiscard]] std::int64_t level_for_xp(std::int64_t xp, const Table* levels);
+/// The skills a party member of data/party (`party`) knows at `level`: its `skills` column,
+/// where "fire@3" is learned at level 3.
+[[nodiscard]] std::vector<std::string> skills_at(const Table* party, const std::string& id,
+                                                 std::int64_t level);
 
 class Battle {
 public:

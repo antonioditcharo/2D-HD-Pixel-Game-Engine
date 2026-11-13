@@ -2620,9 +2620,19 @@ TEST_CASE("A battle from logic: fought with the keys on the battle screen, won, 
     const BattleTables tables;
     {
         std::filesystem::create_directories(project.folder.path / "assets/data");
+        // The hero grows 2 attack a level and learns Fire at level 2, which the bat's 4
+        // experience reaches.
+        game::Table party = tables.party;
+        party.columns.push_back({"attack_growth", game::ColumnKind::Whole});
+        party.rows[0].cells["attack_growth"] = "2";
+        party.rows[0].cells["skills"] = "fire@2";
+        game::Table levels;
+        levels.columns = {{"xp", game::ColumnKind::Whole}};
+        levels.rows = {{"1", {{"xp", "0"}}}, {"2", {{"xp", "4"}}}, {"3", {{"xp", "50"}}}};
         for (const auto& [name, table] :
-             {std::pair{"party", &tables.party}, std::pair{"enemies", &tables.enemies},
-              std::pair{"skills", &tables.skills}, std::pair{"items", &tables.items}}) {
+             {std::pair{"party", &std::as_const(party)}, std::pair{"enemies", &tables.enemies},
+              std::pair{"skills", &tables.skills}, std::pair{"items", &tables.items},
+              std::pair{"levels", &std::as_const(levels)}}) {
             std::ofstream(project.folder.path / "assets/data" / (std::string(name) + ".dtable"),
                           std::ios::binary)
                 << game::table_to_text(*table);
@@ -2639,6 +2649,8 @@ TEST_CASE("A battle from logic: fought with the keys on the battle screen, won, 
                         {}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{4}, "battle", "won", {}, {ir::log(5, Project::text("won"))}, {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{6}, "party", "level_up", {}, {ir::log(7, ir::event_value("name"))}, {}});
         write_json(project.folder.path / "assets/logic/fight.drules",
                    serialize::logic_to_json(rules));
     }
@@ -2667,6 +2679,14 @@ TEST_CASE("A battle from logic: fought with the keys on the battle screen, won, 
     CHECK(runtime->party().xp() == 4);
     CHECK(runtime->inventory().count_of("gold") == 2);
     CHECK(runtime->party().in_party("hero"));
+    // The hero reached level 2: said, with the skill learned, and told to Rules.
+    CHECK(runtime->party().level_of("hero") == 2);
+    CHECK(runtime->party().xp_to_next("hero") == 46);
+    REQUIRE(runtime->dialogue().current() != nullptr);
+    CHECK(*runtime->dialogue().current() == "Hero is now level 2!");
+    CHECK(std::count(runtime->dialogue().said().begin(), runtime->dialogue().said().end(),
+                     "Hero learns Fire!") == 1);
+    CHECK(std::count(runtime->log().begin(), runtime->log().end(), "hero") == 1);
     // The party's HP is kept, and saved with the game.
     serialize::Json saved = runtime->save();
     CHECK(saved["party"]["members"] == serialize::Json::array({"hero"}));
@@ -2675,6 +2695,7 @@ TEST_CASE("A battle from logic: fought with the keys on the battle screen, won, 
     std::vector<serialize::Issue> issues;
     REQUIRE(other->load(saved, issues));
     CHECK(other->party().xp() == 4);
+    CHECK(other->party().level_of("hero") == 2);
     CHECK(other->party().hp_of("hero") == runtime->party().hp_of("hero"));
 }
 
@@ -3321,4 +3342,56 @@ TEST_CASE("A shop from logic: opened, bought from with the keys, drawn, and left
     CHECK(runtime->inventory().count_of("gold") == 10);
     CHECK_FALSE(runtime->inventory().shopping());
     CHECK(std::count(runtime->log().begin(), runtime->log().end(), "left the shop") == 1);
+}
+
+TEST_CASE("Levels: the experience curve, growth by level, and skills learned at a level") {
+    // Without data/levels: 10, 30, 60, 100 for levels 2 to 5.
+    CHECK(game::xp_for_level(1, nullptr) == 0);
+    CHECK(game::xp_for_level(2, nullptr) == 10);
+    CHECK(game::xp_for_level(4, nullptr) == 60);
+    CHECK(game::level_for_xp(29, nullptr) == 2);
+    CHECK(game::level_for_xp(30, nullptr) == 3);
+    CHECK(game::top_level(nullptr) == 99);
+    CHECK(game::level_for_xp(999'999'999, nullptr) == 99);
+    // With it: its rows, by name, with the last as the top.
+    game::Table levels;
+    levels.columns = {{"xp", game::ColumnKind::Formula, "row * row * 2"}};
+    levels.rows = {{"1", {}}, {"2", {}}, {"3", {}}};
+    CHECK(game::top_level(&levels) == 3);
+    CHECK(game::xp_for_level(3, &levels) == 18);
+    CHECK(game::level_for_xp(17, &levels) == 2);
+    CHECK(game::level_for_xp(5000, &levels) == 3);
+
+    BattleTables tables;
+    tables.party.columns.push_back({"max_hp_growth", game::ColumnKind::Whole});
+    tables.party.rows[1].cells["max_hp_growth"] = "5";
+    tables.party.rows[1].cells["skills"] = "heal, fire@3, ice @ 5";
+    CHECK(game::skills_at(&tables.party, "mage", 1) == std::vector<std::string>{"heal"});
+    CHECK(game::skills_at(&tables.party, "mage", 5) ==
+          std::vector<std::string>{"heal", "fire", "ice"});
+    game::BattleData data = tables.data();
+    data.member_levels["mage"] = 3;
+    std::string error;
+    const std::optional<game::Battle> b =
+        game::Battle::start(data, {"mage"}, {}, {"slime"}, 1, error);
+    REQUIRE(b.has_value());
+    if (b) {
+        const game::Fighter& mage = b->fighters().front();
+        CHECK(mage.level == 3);
+        CHECK(mage.max_hp == 35); // 25 + 2 x 5
+        CHECK(mage.skills == std::vector<std::string>{"heal", "fire"});
+    }
+
+    // Experience by member, and the levels reached, to announce.
+    game::PartyObject party;
+    party.give_xp("hero", 9);
+    CHECK(party.level_of("hero") == 1);
+    CHECK(party.take_level_ups().empty());
+    party.give_xp("hero", 25);
+    CHECK(party.level_of("hero") == 3);
+    const std::vector<game::PartyObject::LevelUp> ups = party.take_level_ups();
+    REQUIRE(ups.size() == 1);
+    CHECK(ups[0].from == 1);
+    CHECK(ups[0].to == 3);
+    CHECK(party.xp_to_next("hero") == 26);
 }

@@ -11,6 +11,7 @@
 #include "engine/foundation/reflect.h"
 #include "engine/game/battle.h"
 #include "engine/game/inventory.h"
+#include "engine/game/tables.h"
 #include "engine/render/render.h"
 #include "engine/ui/text.h"
 
@@ -19,6 +20,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace engine::game {
@@ -50,9 +52,40 @@ public:
     }
     void add_xp(std::int64_t xp) noexcept { xp_ += std::max<std::int64_t>(xp, 0); }
     void set_xp(std::int64_t xp) noexcept { xp_ = std::max<std::int64_t>(xp, 0); }
+
+    // ----- Levels -----
+    /// Where data/levels and data/party are read from (the runtime's tables).
+    void set_tables(const TablesObject* tables) noexcept { tables_ = tables; }
+    /// Gives a member experience; reaching a level is remembered for take_level_ups().
+    void give_xp(const std::string& id, std::int64_t xp);
+    /// A member's experience, and their level from it.
+    [[nodiscard]] std::int64_t xp_of(const std::string& id) const;
+    [[nodiscard]] std::int64_t level_of(const std::string& id) const;
+    /// Experience a member still needs for their next level; 0 at the top.
+    [[nodiscard]] std::int64_t xp_to_next(const std::string& id) const;
+    /// Every member's level, for battles.
+    [[nodiscard]] std::map<std::string, std::int64_t, std::less<>> levels() const;
+    /// Experience by member, for saves.
+    [[nodiscard]] std::map<std::string, std::int64_t, std::less<>>& member_xp() noexcept {
+        return member_xp_;
+    }
+    [[nodiscard]] const std::map<std::string, std::int64_t, std::less<>>&
+    member_xp() const noexcept {
+        return member_xp_;
+    }
+    struct LevelUp {
+        std::string id;
+        std::int64_t from = 1;
+        std::int64_t to = 1;
+    };
+    /// Levels reached since the last call, to announce.
+    [[nodiscard]] std::vector<LevelUp> take_level_ups() { return std::exchange(level_ups_, {}); }
+
     void clear() noexcept {
         members_.clear();
         condition_.clear();
+        member_xp_.clear();
+        level_ups_.clear();
         xp_ = 0;
     }
 
@@ -60,6 +93,9 @@ private:
     std::vector<std::string> members_;
     std::map<std::string, std::pair<std::int64_t, std::int64_t>, std::less<>> condition_;
     std::int64_t xp_ = 0;
+    std::map<std::string, std::int64_t, std::less<>> member_xp_;
+    std::vector<LevelUp> level_ups_;
+    const TablesObject* tables_ = nullptr;
 };
 
 class BattleObject {

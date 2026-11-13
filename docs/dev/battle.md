@@ -22,10 +22,11 @@ optional; what is missing takes the value in brackets.
 
 | Table | A row per | Columns |
 |---|---|---|
-| `data/party` | Party member | `name` (the row's), `max_hp` (10), `max_mp` (0), `attack` (5), `defense` (0), `speed` (5), `skills` (rows of `data/skills`, separated by commas) |
+| `data/party` | Party member | `name` (the row's), `max_hp` (10), `max_mp` (0), `attack` (5), `defense` (0), `speed` (5), `skills` (rows of `data/skills`, separated by commas; `fire@3` is learned at level 3), and for each of the five numbers a `<number>_growth` column (0): how much it rises each level (`attack_growth`) |
 | `data/enemies` | Kind of enemy | the same, plus `xp` and `gold` given when it is beaten, and `image`: a picture of it, by its path in `assets/`, drawn above its name |
 | `data/skills` | Skill | `name`, `mp_cost` (0), `power` (10), `heals` (no: it hurts an enemy; yes: it heals someone of the party), `all` (no: one target; yes: every enemy, or every ally) |
 | `data/items` | Item usable in battle | `name`, `heal`: HP it gives back. The party uses what the inventory holds |
+| `data/levels` | Level (named `1`, `2`, … or in order) | `xp`: all the experience needed to reach it (a formula such as `row * row * 10` works). Its last row is the highest level. Without the table: 10 for level 2, 30 for 3, 60 for 4, 100 for 5 (5 × level × (level − 1)), up to 99 |
 
 Logic then uses:
 
@@ -36,6 +37,9 @@ Logic then uses:
 | *Start a battle against {enemies}* | Enemies by their rows, separated by commas: *slime, slime, bat* (two of a kind are told apart: *Slime A*, *Slime B*) |
 | *{name} is in the party*, *A battle is on* | Conditions |
 | *The number in the party*, *The party's experience* | Values |
+| *Give {name} {xp} experience* | Experience for one member, as a battle gives it |
+| *The level of {name}*, *The experience of {name}*, *The experience {name} needs for the next level* | Values |
+| *When {name} reaches a new level* | An event of the party object, with the member's row as {name} |
 | *When the party wins*, *loses*, *gets away* | Events of the battle object |
 
 **Random encounters.** An **Encounter Area** (`encounter_area`) on an entity covers
@@ -72,15 +76,22 @@ the battle starts, so a recorded game replays the same.
 
 **When it ends**, after its last line is read: the party's HP and MP are kept for the next
 battle (and saved with games), items used are taken from the inventory, a win gives the
-enemies' experience to the party and their gold to the inventory as *gold*, and Rules on
-*won*, *lost* or *fled* run. Losing leaves the party down; Rules decide what happens (a
+enemies' experience to the party (each member still standing gets all of it) and their gold
+to the inventory as *gold*, and Rules on *won*, *lost* or *fled* run.
+
+**Levels.** Each member's level comes from their experience. Reaching one is said in the
+message box (*Hero is now level 2!*), with each skill it teaches (*Hero learns Fire!*), and
+Rules on *When {name} reaches a new level* run. In battle, a member's numbers are the
+table's plus their growth for every level past the first; HP and MP lost stay lost (a new
+level does not heal). The pause menu's Party page shows each member's level and the
+experience to the next. Saved games keep each member's experience. Losing leaves the party down; Rules decide what happens (a
 game over, or waking at an inn).
 
 ## 4. Next increments
 
 1. **Visible enemies** that start a battle on touch (a Rule can already: *When … walks in*,
    then *Start a battle*), and battle backgrounds.
-2. **Levels and growth**: experience raising stats through formula columns, equipment, and
-   status effects (poison, sleep).
+2. **Equipment and status effects**: weapons and armour adding to the numbers, sold in
+   shops ([shop.md](shop.md)); poison, sleep.
 3. **Smarter enemies**: skills, and Brains choosing them.
 4. **A battle-screen designer** in the UI workspace, and animations for attacks.
