@@ -70,7 +70,7 @@ std::optional<engine::assets::Image> Preview::render(Document& document, double 
     }
 
     // As the game draws it (engine/game/src/runtime.cpp): the style, its light, the look.
-    render::Look look = settings.look;
+    render::Look look = look_override_.value_or(settings.look);
     if (settings.style != game::RenderStyle::Diorama) {
         look.tilt_shift = false; // a lens effect for the 3D style only
     }

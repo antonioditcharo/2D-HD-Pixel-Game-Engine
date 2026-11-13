@@ -8,6 +8,7 @@
 // See docs/dev/editor.md.
 
 #include "engine/assets/assets.h"
+#include "engine/render/render.h"
 
 #include <memory>
 #include <optional>
@@ -32,6 +33,10 @@ public:
     /// project's width and height. Nothing, with `error`, if drawing failed.
     [[nodiscard]] std::optional<engine::assets::Image> render(Document& document, double x,
                                                               double y, std::string& error);
+    /// Draws with `look` in place of the project's (a preset being hovered), until reset.
+    void set_look_override(std::optional<engine::render::Look> look) {
+        look_override_ = std::move(look);
+    }
 
     /// Forgets the pictures that `changes` (from the document's AssetDatabase::refresh())
     /// modified or removed, so the next render() draws them as they are now: a sprite
@@ -39,6 +44,7 @@ public:
     void assets_changed(const engine::assets::AssetChanges& changes);
 
 private:
+    std::optional<engine::render::Look> look_override_;
     struct Impl;
     explicit Preview(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> impl_;

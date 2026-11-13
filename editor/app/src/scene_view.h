@@ -89,6 +89,8 @@ public:
     void refresh();
     /// Draws again the pictures that `changes` modified (hot reload), then the scene.
     void assets_changed(const engine::assets::AssetChanges& changes);
+    /// Shows `look` in place of the project's while a preset is hovered; nothing to stop.
+    void preview_look(std::optional<engine::render::Look> look);
 
     /// Where the camera looks, in tiles.
     [[nodiscard]] double camera_x() const noexcept { return camera_x_; }

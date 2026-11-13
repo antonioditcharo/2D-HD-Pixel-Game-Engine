@@ -151,6 +151,13 @@ void SceneView::assets_changed(const engine::assets::AssetChanges& changes) {
     refresh();
 }
 
+void SceneView::preview_look(std::optional<engine::render::Look> look) {
+    if (preview_ != nullptr) {
+        preview_->set_look_override(std::move(look));
+    }
+    refresh();
+}
+
 void SceneView::refresh() {
     if (document_ == nullptr || preview_ == nullptr) {
         image_ = QImage();

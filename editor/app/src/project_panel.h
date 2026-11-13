@@ -7,7 +7,10 @@
 //
 // See docs/dev/editor.md.
 
+#include "engine/render/render.h"
+
 #include <QWidget>
+#include <optional>
 
 #include "editor/core/document.h"
 
@@ -31,6 +34,11 @@ Q_SIGNALS:
     void edited();
     /// A change was refused, with why.
     void refused(const QString& message);
+    /// A Look preset is hovered (shown in the scene without changing anything), or no longer.
+    void previewing(std::optional<engine::render::Look> look);
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void build();

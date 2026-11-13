@@ -3,12 +3,18 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QLineEdit>
+#include <QPushButton>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <functional>
 #include <string>
+
+#include "editor/core/looks.h"
 
 namespace editor {
 
@@ -54,6 +60,21 @@ void ProjectPanel::apply(const Change& change) {
         return;
     }
     Q_EMIT edited();
+}
+
+bool ProjectPanel::eventFilter(QObject* watched, QEvent* event) {
+    // Hovering a preset shows it; leaving shows the project's own again.
+    if (const QVariant preset = watched->property("preset"); preset.isValid()) {
+        if (event->type() == QEvent::Enter) {
+            const auto i = static_cast<std::size_t>(preset.toInt());
+            if (i < look_presets().size()) {
+                Q_EMIT previewing(look_presets()[i].look);
+            }
+        } else if (event->type() == QEvent::Leave) {
+            Q_EMIT previewing(std::nullopt);
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void ProjectPanel::build() {
@@ -265,6 +286,33 @@ void ProjectPanel::build() {
         [](Settings& s, double v) { s.block_shadow = v; });
 
     QFormLayout* look = group(tr("Look"));
+    // Presets first, as a gallery: hovering one shows it in the scene, clicking takes it.
+    auto* gallery = new QWidget(look->parentWidget());
+    auto* tiles = new QGridLayout(gallery);
+    tiles->setContentsMargins(0, 0, 0, 0);
+    tiles->setSpacing(2);
+    const std::span<const LookPreset> presets = look_presets();
+    for (std::size_t i = 0; i < presets.size(); ++i) {
+        const LookPreset& preset = presets[i];
+        auto* button = new QPushButton(
+            QString::fromUtf8(preset.name.data(), static_cast<qsizetype>(preset.name.size())),
+            gallery);
+        button->setObjectName(QStringLiteral("look_preset:%1").arg(i));
+        button->setToolTip(QString::fromUtf8(preset.description.data(),
+                                             static_cast<qsizetype>(preset.description.size())));
+        button->setProperty("preset", static_cast<int>(i));
+        button->installEventFilter(this);
+        connect(button, &QPushButton::clicked, this, [this, i] {
+            apply([i](Settings& s) { s.look = look_presets()[i].look; });
+            if (document_ != nullptr) {
+                document_->end_merge();
+            }
+            Q_EMIT previewing(std::nullopt);
+            QTimer::singleShot(0, this, [this] { refresh(); });
+        });
+        tiles->addWidget(button, static_cast<int>(i / 3), static_cast<int>(i % 3));
+    }
+    look->addRow(gallery);
     tick(
         look, tr("Tilt-shift (Diorama)"), "tilt_shift",
         [](const Settings& s) { return s.look.tilt_shift; },

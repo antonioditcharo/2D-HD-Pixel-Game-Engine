@@ -234,6 +234,7 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     connect(logic_, &LogicPanel::refused, this, &MainWindow::report);
     connect(project_, &ProjectPanel::edited, this, [this] { changed(false); });
     connect(project_, &ProjectPanel::refused, this, &MainWindow::report);
+    connect(project_, &ProjectPanel::previewing, view_, &SceneView::preview_look);
     connect(view_, &SceneView::placed, this, [this](engine::Guid guid) {
         changed(true);
         select(guid);

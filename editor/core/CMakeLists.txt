@@ -6,6 +6,7 @@ add_library(editor_core STATIC
     src/document.cpp
     src/logic_edit.cpp
     src/logic_text.cpp
+    src/looks.cpp
     src/new_project.cpp
     src/preview.cpp
     src/sfx.cpp

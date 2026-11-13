@@ -2054,3 +2054,39 @@ TEST_CASE("Check the project lists what Project Doctor finds, and goes to it") {
     CHECK(e.window.selection() == elder);
     CHECK(e.window.statusBar()->currentMessage().startsWith(QStringLiteral("Doctor: 1 problem")));
 }
+
+TEST_CASE("Look presets: hovering shows one in the scene, clicking takes it as one undo step") {
+    Editor e;
+    const QImage before = e.window.scene_view()->image();
+    const float own = e.window.document()->settings().look.saturation;
+    editor::ProjectPanel* panel = e.window.project_panel();
+    auto* noir = panel->findChild<QPushButton*>(QStringLiteral("look_preset:6"));
+    REQUIRE(noir != nullptr);
+    CHECK(noir->text() == QStringLiteral("Noir"));
+    // Hovering: the scene shows it, the project is unchanged.
+    QEvent enter(QEvent::Enter);
+    QApplication::sendEvent(noir, &enter);
+    const QImage hovered = e.window.scene_view()->image();
+    CHECK(hovered != before);
+    CHECK(e.window.document()->settings().look.saturation == own);
+    // Noir is grey: red, green and blue alike everywhere.
+    bool grey = true;
+    for (int y = 0; y < hovered.height(); y += 7) {
+        for (int x = 0; x < hovered.width(); x += 7) {
+            const QColor c = hovered.pixelColor(x, y);
+            grey =
+                grey && std::abs(c.red() - c.green()) <= 2 && std::abs(c.green() - c.blue()) <= 2;
+        }
+    }
+    CHECK(grey);
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(noir, &leave);
+    CHECK(e.window.scene_view()->image() == before);
+    // Clicking: taken, one undo step.
+    noir->click();
+    QApplication::processEvents();
+    CHECK(e.window.document()->settings().look.saturation == 0.0F);
+    CHECK(e.window.document()->can_undo());
+    e.window.undo();
+    CHECK(e.window.document()->settings().look.saturation == own);
+}
