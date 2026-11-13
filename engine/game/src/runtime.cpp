@@ -486,6 +486,7 @@ void register_types(reflect::Registry& registry) {
     register_camera_types(registry);
     register_quest_types(registry);
     register_particle_types(registry);
+    register_table_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -513,6 +514,7 @@ struct Runtime::Impl {
     CameraObject camera;
     InventoryObject inventory;
     QuestObject quests;
+    TablesObject tables;
     ConversationPlayer conversation;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
@@ -679,6 +681,11 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     if (!r.vm->bind("lighting", reflect::ObjectRef::of(r.lighting))) {
         issues.push_back(
             serialize::Issue{"", "The lighting object could not be made available to logic."});
+    }
+    r.tables = TablesObject(&r.assets);
+    if (!r.vm->bind("tables", reflect::ObjectRef::of(r.tables))) {
+        issues.push_back(
+            serialize::Issue{"", "The tables object could not be made available to logic."});
     }
     r.quests.set_dialogue(&r.dialogue);
     if (!r.vm->bind("quests", reflect::ObjectRef::of(r.quests))) {

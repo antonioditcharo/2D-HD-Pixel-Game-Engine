@@ -2323,3 +2323,127 @@ TEST_CASE("Logic starts a conversation, and the story's flags are saved with the
                     "talk/none.dtalk: there is no such conversation in assets/.") !=
           runtime->problems().end());
 }
+
+namespace {
+
+/// Enemies: a name, attack and defence, whether it flies, and a formula for the
+/// experience it gives.
+game::Table enemies() {
+    game::Table t;
+    t.columns.push_back({"name", game::ColumnKind::Text});
+    t.columns.push_back({"attack", game::ColumnKind::Whole, "", 0.0, 999.0});
+    t.columns.push_back({"defense", game::ColumnKind::Whole});
+    t.columns.push_back({"flies", game::ColumnKind::YesNo});
+    t.columns.push_back({"xp", game::ColumnKind::Formula, "(attack + defense) * 2 + row"});
+    t.rows.push_back(
+        {"slime", {{"name", "Slime"}, {"attack", "4"}, {"defense", "2"}, {"flies", "no"}}});
+    t.rows.push_back(
+        {"bat",
+         {{"name", "Bat, \"the\" quick"}, {"attack", "6"}, {"defense", "1"}, {"flies", "yes"}}});
+    return t;
+}
+
+} // namespace
+
+TEST_CASE("Tables: typed cells, formulas, CSV both ways, and checks") {
+    const game::Table t = enemies();
+    CHECK(t.number("slime", "attack") == 4.0);
+    CHECK(t.number("bat", "flies") == 1.0);
+    CHECK(t.number("slime", "xp") == 13.0); // (4 + 2) * 2 + 1
+    CHECK(t.text("bat", "xp") == std::optional<std::string>("16"));
+    CHECK(t.text("slime", "name") == std::optional<std::string>("Slime"));
+    CHECK_FALSE(t.number("slime", "name").has_value());
+    CHECK_FALSE(t.number("ghost", "attack").has_value());
+    CHECK(game::check_table(t).empty());
+
+    // Formulas: precedence, brackets, powers, functions; mistakes said plainly.
+    const game::TableRow& slime = t.rows[0];
+    std::string error;
+    CHECK(game::evaluate("2 + 3 * 4", t, slime, error) == 14.0);
+    CHECK(game::evaluate("(2 + 3) * 4", t, slime, error) == 20.0);
+    CHECK(game::evaluate("2 ^ 3 ^ 2", t, slime, error) == 512.0);
+    CHECK(game::evaluate("-attack + max(defense, 10) / 2", t, slime, error) == 1.0);
+    CHECK(game::evaluate("floor(7 / 2) + round(2.5)", t, slime, error) == 6.0);
+    CHECK_FALSE(game::evaluate("attack / 0", t, slime, error).has_value());
+    CHECK(error == "The formula divides by 0.");
+    CHECK_FALSE(game::evaluate("speed * 2", t, slime, error).has_value());
+    CHECK(error == "The formula reads \"speed\", which is not a column.");
+    CHECK_FALSE(game::evaluate("sqrt(4)", t, slime, error).has_value());
+    CHECK_FALSE(game::evaluate("2 +", t, slime, error).has_value());
+
+    // Two formulas reading each other stop, saying so.
+    game::Table ring = t;
+    ring.columns.push_back({"a", game::ColumnKind::Formula, "b + 1"});
+    ring.columns.push_back({"b", game::ColumnKind::Formula, "a + 1"});
+    CHECK_FALSE(ring.number("slime", "a").has_value());
+    // Bad cells, and doubled names, are found.
+    game::Table bad = t;
+    bad.rows[0].cells["attack"] = "4.5";
+    bad.rows[1].cells["flies"] = "maybe";
+    bad.rows.push_back(bad.rows[0]);
+    const std::vector<std::string> problems = game::check_table(bad);
+    CHECK(std::find(problems.begin(), problems.end(),
+                    "slime, attack: \"4.5\" is not a whole number.") != problems.end());
+    CHECK(std::find(problems.begin(), problems.end(), "bat, flies: \"maybe\" is not yes or no.") !=
+          problems.end());
+    CHECK(std::find(problems.begin(), problems.end(), "Two rows are called \"slime\".") !=
+          problems.end());
+
+    // Saved and read back; CSV out (quotes where needed) and back in.
+    const std::optional<game::Table> back = game::parse_table(game::table_to_text(t), error);
+    REQUIRE(back.has_value());
+    CHECK(back.value_or(game::Table{}) == t);
+    const std::string csv = game::table_to_csv(t);
+    CHECK(csv.starts_with("id,name,attack,defense,flies,xp\nslime,Slime,4,2,no,13\n"));
+    CHECK(csv.find("\"Bat, \"\"the\"\" quick\"") != std::string::npos);
+    game::Table from_sheet;
+    REQUIRE(game::table_from_csv(
+        from_sheet, "id,hp,name\r\npotion,20,Potion\nether,,\"Ether, small\"\n", error));
+    REQUIRE(from_sheet.columns.size() == 2);
+    CHECK(from_sheet.column("hp")->kind == game::ColumnKind::Number);
+    CHECK(from_sheet.column("name")->kind == game::ColumnKind::Text);
+    CHECK(from_sheet.text("ether", "name") == std::optional<std::string>("Ether, small"));
+    REQUIRE(game::table_from_csv(from_sheet, "id,hp\npotion,25\n", error));
+    CHECK(from_sheet.rows.size() == 2);
+    CHECK(from_sheet.number("potion", "hp") == 25.0);
+    CHECK_FALSE(game::table_from_csv(from_sheet, "id,\"open\n", error));
+    CHECK_FALSE(game::table_from_csv(from_sheet, "", error));
+}
+
+TEST_CASE("Logic reads the project's tables") {
+    const Project project;
+    {
+        std::filesystem::create_directories(project.folder.path / "assets/data");
+        std::ofstream(project.folder.path / "assets/data/enemies.dtable", std::ios::binary)
+            << game::table_to_text(enemies());
+        logic::LogicAsset rules;
+        rules.name = "read";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "",
+            "game_start",
+            {ir::call("tables", "has_row", {Project::text("data/enemies"), Project::text("bat")})},
+            {ir::log(2, ir::call("tables", "number_of",
+                                 {Project::text("data/enemies"), Project::text("bat"),
+                                  Project::text("xp")})),
+             ir::log(3, ir::call("tables", "text_of",
+                                 {Project::text("data/enemies.dtable"), Project::text("slime"),
+                                  Project::text("name")})),
+             ir::log(4, ir::call("tables", "row_count", {Project::text("data/enemies")})),
+             ir::log(5, ir::call(
+                            "tables", "number_of",
+                            {Project::text("data/none"), Project::text("x"), Project::text("y")}))},
+            {}});
+        write_json(project.folder.path / "assets/logic/read.drules",
+                   serialize::logic_to_json(rules));
+    }
+    const auto runtime = project.open(no_graphics(nullptr));
+    runtime->step();
+    const auto logged = [&](std::string_view line) {
+        return std::count(runtime->log().begin(), runtime->log().end(), line);
+    };
+    CHECK(logged("16") == 1);
+    CHECK(logged("Slime") == 1);
+    CHECK(logged("2") == 1);
+    CHECK(logged("0") == 1);
+}

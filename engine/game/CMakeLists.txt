@@ -15,6 +15,7 @@ add_library(engine_game STATIC
     src/runtime.cpp
     src/save.cpp
     src/sound.cpp
+    src/tables.cpp
     src/walker.cpp
 )
 add_library(engine::game ALIAS engine_game)

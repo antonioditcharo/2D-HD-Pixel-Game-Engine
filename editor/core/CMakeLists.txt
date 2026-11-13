@@ -11,6 +11,7 @@ add_library(editor_core STATIC
     src/sfx.cpp
     src/sprite.cpp
     src/story.cpp
+    src/table_edit.cpp
 )
 add_library(editor::core ALIAS editor_core)
 target_include_directories(editor_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

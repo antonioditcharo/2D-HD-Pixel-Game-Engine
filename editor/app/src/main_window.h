@@ -38,6 +38,7 @@ class StartPage;
 class SfxGenerator;
 class DoctorPanel;
 class StoryWindow;
+class TableWindow;
 class TilePalette;
 
 class MainWindow : public QMainWindow {
@@ -124,6 +125,11 @@ public:
     StoryWindow* open_story(const QString& asset_path);
     /// Makes a conversation as assets/talk/<name>.dtalk, with one node, and opens it.
     StoryWindow* new_story(const QString& name);
+    /// Opens a data table of the project (its path in assets/, a .dtable), or brings its
+    /// window forward. Null, showing why, if it cannot.
+    TableWindow* open_table(const QString& asset_path);
+    /// Makes a table as assets/data/<name>.dtable and opens it.
+    TableWindow* new_table(const QString& name);
     /// Opens the sound effect generator, saving into the project's assets/sfx.
     SfxGenerator* show_sfx_generator();
     /// Reads the assets folder again, and draws again the pictures that changed (hot
@@ -190,6 +196,8 @@ private:
     std::map<std::string, SpriteStudio*> studios_;
     /// The open Story windows, by the conversation each edits.
     std::map<std::string, StoryWindow*> stories_;
+    /// The open table windows, by the table each edits.
+    std::map<std::string, TableWindow*> tables_;
     QTimer* autosave_timer_ = nullptr;
     QStackedWidget* stack_ = nullptr; ///< The start page, or the scene.
     SearchBox* search_ = nullptr;

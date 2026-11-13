@@ -138,6 +138,7 @@ Details and the questions that remain open are in
 | [Game](dev/game.md) | The runtime that plays a project: behaviours, logic reaching the world, the fixed-step clock, saved games |
 | [Physics](dev/physics.md) | Rigid bodies on Box2D: falling, pushing, bouncing, contacts, Physics Bodies in games |
 | [Audio](dev/audio.md) | Sound effects and music: buses, fades, decoding, sound in no-code logic |
+| [Data tables](dev/tables.md) | Items, enemies, skills and levels as tables: typed columns, formulas, CSV, the grid editor, logic reading cells |
 | [Story: conversations](dev/story.md) | Conversations as graphs: the Story editor, speakers and name plates, choices, conditions, effects and flags, played by the game |
 | [Sprite Studio](dev/sprite-studio.md) | Drawing and animating pixel-art sprites: tools, layers, frames, tags, onion skin, the `.dsprite` file and its sprite sheet, hot reload |
 | [The editor](dev/editor.md) | `sparxel-editor`: the scene view, entity list, assets, the inspector generated from reflection, undo, saving, Play and Export |

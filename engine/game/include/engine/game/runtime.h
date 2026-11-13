@@ -20,6 +20,7 @@
 #include "engine/game/quests.h"
 #include "engine/game/save.h"
 #include "engine/game/sound.h"
+#include "engine/game/tables.h"
 #include "engine/input/input.h"
 #include "engine/logic/vm.h"
 #include "engine/render/render.h"

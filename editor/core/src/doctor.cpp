@@ -2,6 +2,7 @@
 
 #include "engine/game/behaviours.h"
 #include "engine/game/conversation.h"
+#include "engine/game/tables.h"
 #include "engine/scene2d/scene2d.h"
 #include "engine/serialize/json.h"
 
@@ -166,6 +167,25 @@ std::vector<Finding> examine(const Document& document) {
         for (const std::string& problem : problems) {
             Finding f;
             f.severity = talk ? Finding::Severity::Warning : Finding::Severity::Problem;
+            f.message = record.path + ": " + problem;
+            f.asset = record.path;
+            found.push_back(std::move(f));
+        }
+    }
+
+    // Tables: cells that do not fit their columns, formulas that do not work out.
+    for (const engine::assets::AssetRecord& record : assets.assets()) {
+        if (!record.path.ends_with(".dtable")) {
+            continue;
+        }
+        std::string error;
+        const std::optional<engine::game::Table> table =
+            engine::game::parse_table(read_text(document.folder() / "assets" / record.path), error);
+        const std::vector<std::string> problems =
+            table ? engine::game::check_table(*table) : std::vector<std::string>{error};
+        for (const std::string& problem : problems) {
+            Finding f;
+            f.severity = table ? Finding::Severity::Warning : Finding::Severity::Problem;
             f.message = record.path + ": " + problem;
             f.asset = record.path;
             found.push_back(std::move(f));

@@ -49,6 +49,7 @@
 #include "sprite_studio.h"
 #include "start_page.h"
 #include "story_window.h"
+#include "table_window.h"
 #include "tile_palette.h"
 
 namespace editor {
@@ -119,10 +120,11 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     asset_tree_->setObjectName(QStringLiteral("assets"));
     asset_tree_->setAccessibleName(tr("Assets"));
     asset_tree_->setModel(asset_model_);
-    asset_model_->setNameFilters(
-        {QStringLiteral("*.png"), QStringLiteral("*.wav"), QStringLiteral("*.ogg"),
-         QStringLiteral("*.mp3"), QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
-         QStringLiteral("*.drules"), QStringLiteral("*.dsprite"), QStringLiteral("*.dtalk")});
+    asset_model_->setNameFilters({QStringLiteral("*.png"), QStringLiteral("*.wav"),
+                                  QStringLiteral("*.ogg"), QStringLiteral("*.mp3"),
+                                  QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
+                                  QStringLiteral("*.drules"), QStringLiteral("*.dsprite"),
+                                  QStringLiteral("*.dtalk"), QStringLiteral("*.dtable")});
     asset_model_->setNameFilterDisables(false);
     // Pictures are dragged from here into the scene.
     asset_tree_->setDragEnabled(true);
@@ -291,6 +293,8 @@ std::vector<SearchItem> MainWindow::search_items() {
             items.push_back({path,
                              path.endsWith(QStringLiteral(".png")) ? tr("Picture") : tr("Sprite"),
                              [this, path] { open_sprite(path); }});
+        } else if (path.endsWith(QStringLiteral(".dtable"))) {
+            items.push_back({path, tr("Table"), [this, path] { open_table(path); }});
         } else if (path.endsWith(QStringLiteral(".dtalk"))) {
             items.push_back({path, tr("Conversation"), [this, path] { open_story(path); }});
         } else if (path.endsWith(QStringLiteral(".drules"))) {
@@ -332,6 +336,60 @@ void MainWindow::show_search() {
     search_->raise();
     search_->activateWindow();
     search_->field()->setFocus();
+}
+
+TableWindow* MainWindow::open_table(const QString& asset_path) {
+    if (document_ == nullptr) {
+        return nullptr;
+    }
+    const fs::path file = (document_->folder() / "assets" / path_of(asset_path)).lexically_normal();
+    const std::string key = file.generic_string();
+    if (const auto found = tables_.find(key); found != tables_.end()) {
+        found->second->show();
+        found->second->raise();
+        found->second->activateWindow();
+        return found->second;
+    }
+    auto* window = new TableWindow(this);
+    window->setWindowFlag(Qt::Window);
+    window->set_quiet(quiet_);
+    std::string error;
+    if (!window->open(file, error)) {
+        delete window;
+        report(tr("%1 could not be opened: %2").arg(asset_path, text_of(error)));
+        return nullptr;
+    }
+    connect(window, &TableWindow::saved, this, [this] { reload_assets(); });
+    tables_[key] = window;
+    window->show();
+    return window;
+}
+
+TableWindow* MainWindow::new_table(const QString& name) {
+    if (document_ == nullptr) {
+        return nullptr;
+    }
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || trimmed.contains(QLatin1Char('/')) ||
+        trimmed.contains(QLatin1Char('\\')) || trimmed.startsWith(QLatin1Char('.'))) {
+        report(tr("A table needs a name without slashes, such as \"items\"."));
+        return nullptr;
+    }
+    const QString relative = QStringLiteral("data/%1.dtable").arg(trimmed);
+    const fs::path file = document_->folder() / "assets" / path_of(relative);
+    std::error_code ignored;
+    if (fs::exists(file, ignored)) {
+        report(tr("There is a table called %1 already.").arg(trimmed));
+        return nullptr;
+    }
+    fs::create_directories(file.parent_path(), ignored);
+    std::string error;
+    if (!TableEditor::save(TableEditor::blank(), file, error)) {
+        report(tr("The table could not be made: %1").arg(text_of(error)));
+        return nullptr;
+    }
+    reload_assets();
+    return open_table(relative);
 }
 
 StoryWindow* MainWindow::open_story(const QString& asset_path) {
@@ -603,6 +661,15 @@ void MainWindow::build_actions() {
         }
     });
     talk_action->setObjectName(QStringLiteral("new_conversation"));
+    QAction* table_action = file->addAction(tr("New &table…"), this, [this] {
+        bool named = false;
+        const QString name = QInputDialog::getText(this, tr("New table"), tr("The table's name:"),
+                                                   QLineEdit::Normal, tr("items"), &named);
+        if (named) {
+            new_table(name);
+        }
+    });
+    table_action->setObjectName(QStringLiteral("new_table"));
     QAction* sound_action =
         file->addAction(tr("New sound &effect…"), this, [this] { show_sfx_generator(); });
     sound_action->setObjectName(QStringLiteral("new_sound"));
@@ -630,6 +697,8 @@ void MainWindow::build_actions() {
             open_scene(relative);
         } else if (file_path.endsWith(QStringLiteral(".dtalk"))) {
             open_story(relative);
+        } else if (file_path.endsWith(QStringLiteral(".dtable"))) {
+            open_table(relative);
         } else if (file_path.endsWith(QStringLiteral(".png")) ||
                    file_path.endsWith(QStringLiteral(".dsprite"))) {
             // Pictures and sprites are drawn in Sprite Studio.
@@ -913,6 +982,13 @@ bool MainWindow::close_sprites() {
         }
         it->second->deleteLater();
         it = stories_.erase(it);
+    }
+    for (auto it = tables_.begin(); it != tables_.end();) {
+        if (!it->second->close()) {
+            return false;
+        }
+        it->second->deleteLater();
+        it = tables_.erase(it);
     }
     return true;
 }
