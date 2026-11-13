@@ -85,6 +85,8 @@ public:
     [[nodiscard]] std::optional<QPoint> on_screen(double x, double y) const;
     /// Draws the scene again (after an edit).
     void refresh();
+    /// Draws again the pictures that `changes` modified (hot reload), then the scene.
+    void assets_changed(const engine::assets::AssetChanges& changes);
 
     /// Where the camera looks, in tiles.
     [[nodiscard]] double camera_x() const noexcept { return camera_x_; }

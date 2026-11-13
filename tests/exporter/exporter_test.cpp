@@ -87,6 +87,8 @@ TEST_CASE("Exporting the sample writes the player, its licences and the game, no
     fs::create_directories(s.project / "assets" / ".git");
     std::ofstream(s.project / "assets" / ".git" / "HEAD") << "ref";
     std::ofstream(s.project / "todo.txt") << "outside assets/";
+    // A Sprite Studio source, which the game never reads: its sheet goes, it does not.
+    std::ofstream(s.project / "assets" / "art" / "hero.dsprite") << "{}";
     std::vector<Issue> issues;
     const std::optional<editor::ExportReport> exported = editor::export_game(s.options, issues);
     INFO(messages(issues));
@@ -132,6 +134,7 @@ TEST_CASE("Exporting the sample writes the player, its licences and the game, no
     CHECK_FALSE(fs::exists(s.options.output / "game/assets/.notes"));
     CHECK_FALSE(fs::exists(s.options.output / "game/assets/.git"));
     CHECK_FALSE(fs::exists(s.options.output / "game/todo.txt"));
+    CHECK_FALSE(fs::exists(s.options.output / "game/assets/art/hero.dsprite"));
     // The exported project opens, as the player will open it.
     engine::game::RuntimeOptions check;
     check.graphics = false;

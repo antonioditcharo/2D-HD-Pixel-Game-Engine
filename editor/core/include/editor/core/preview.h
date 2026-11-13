@@ -33,6 +33,11 @@ public:
     [[nodiscard]] std::optional<engine::assets::Image> render(Document& document, double x,
                                                               double y, std::string& error);
 
+    /// Forgets the pictures that `changes` (from the document's AssetDatabase::refresh())
+    /// modified or removed, so the next render() draws them as they are now: a sprite
+    /// saved in Sprite Studio, or a picture changed in another program.
+    void assets_changed(const engine::assets::AssetChanges& changes);
+
 private:
     struct Impl;
     explicit Preview(std::unique_ptr<Impl> impl);

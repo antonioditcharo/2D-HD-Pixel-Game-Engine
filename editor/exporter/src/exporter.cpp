@@ -216,6 +216,11 @@ std::optional<ExportReport> export_game(const ExportOptions& options, std::vecto
                 }
                 continue;
             }
+            // Sprite Studio's sources (.dsprite, with their .meta) stay with the project:
+            // the game draws the sprite sheet saved beside each.
+            if (name.ends_with(".dsprite") || name.ends_with(".dsprite.meta")) {
+                continue;
+            }
             if (it->is_regular_file(error)) {
                 sources.push_back(it->path());
             }

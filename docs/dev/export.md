@@ -52,7 +52,7 @@ std::optional<editor::ExportReport> report = editor::export_game(options, issues
 | `*.dll` | The libraries beside the player, such as `SDL3.dll` on Windows |
 | `LICENSE.txt`, `THIRD_PARTY_NOTICES.md` | The licence notices |
 | `game/project.sparxel.json` | The project's settings |
-| `game/assets/` | Every asset with its `.meta` file, which holds the GUID everything refers to. Hidden files and folders (names starting with a dot, such as `.git`) are left out, and so is everything outside `assets/` |
+| `game/assets/` | Every asset with its `.meta` file, which holds the GUID everything refers to. Hidden files and folders (names starting with a dot, such as `.git`) are left out, and so is everything outside `assets/`. Sprite Studio's `.dsprite` sources stay behind too: the game draws the sprite sheet saved beside each ([sprite-studio.md](sprite-studio.md)) |
 
 - **The executable's name** is the game's name without the characters Windows does not
   allow (`< > : " / \ | ? *` and control characters), and without trailing dots and
@@ -67,7 +67,7 @@ std::optional<editor::ExportReport> report = editor::export_game(options, issues
 | Test | Checks |
 |---|---|
 | Names | Forbidden characters, trailing dots and spaces, control characters, UTF-8 kept, every reserved name (in any case), and look-alikes that are allowed (`COM0`, `Console`) |
-| The sample | Exactly the expected files, and no others on disk; the player and an asset byte for byte; hidden files, a hidden folder and a file outside `assets/` left out; the exported project opens with no issues |
+| The sample | Exactly the expected files, and no others on disk; the player and an asset byte for byte; hidden files, a hidden folder, a `.dsprite` and a file outside `assets/` left out; the exported project opens with no issues |
 | Beyond ASCII | A game called *Café Quest* exports to `Café Quest` plus the player's extension |
 | Refusals | A non-empty output folder, left untouched; output inside the project; no player; a player without its licence files; a game that cannot start; an unknown setting; no output folder. Each writes nothing |
 | `export_and_play` | CTest exports a copy of the sample with `sparxel-export`, moves the project away, and runs the exported game with no folder from another directory: it must print the welcome and report no problems. On Windows this also proves the DLLs went with it |

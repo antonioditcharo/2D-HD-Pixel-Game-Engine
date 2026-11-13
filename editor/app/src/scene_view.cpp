@@ -125,6 +125,13 @@ void SceneView::set_camera(double x, double y) {
     refresh();
 }
 
+void SceneView::assets_changed(const engine::assets::AssetChanges& changes) {
+    if (preview_ != nullptr) {
+        preview_->assets_changed(changes);
+    }
+    refresh();
+}
+
 void SceneView::refresh() {
     if (document_ == nullptr || preview_ == nullptr) {
         image_ = QImage();

@@ -44,6 +44,12 @@ std::unique_ptr<Preview> Preview::create(std::string& error) {
     return std::unique_ptr<Preview>(new Preview(std::move(impl)));
 }
 
+void Preview::assets_changed(const engine::assets::AssetChanges& changes) {
+    if (impl_->textures != nullptr) {
+        impl_->textures->apply(changes);
+    }
+}
+
 std::optional<engine::assets::Image> Preview::render(Document& document, double x, double y,
                                                      std::string& error) {
     Impl& p = *impl_;

@@ -8,7 +8,9 @@
 
 #include <QMainWindow>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <string>
 
 #include "editor/core/document.h"
 #include "editor/core/new_project.h"
@@ -26,6 +28,7 @@ class ProjectPanel;
 
 class Inspector;
 class SceneView;
+class SpriteStudio;
 class TilePalette;
 
 class MainWindow : public QMainWindow {
@@ -63,6 +66,19 @@ public:
     /// Quiet: problems go to the status bar only, never to a dialog that waits for
     /// someone (for checks that run with no one there).
     void set_quiet(bool quiet) noexcept { quiet_ = quiet; }
+    /// Opens a picture or sprite of the project (its path in assets/: a .png or a .dsprite)
+    /// in Sprite Studio, or brings its window forward if it is open. A PNG with a .dsprite
+    /// of the same name opens that; one without is cut into frames of `frame_width` x
+    /// `frame_height` (0 for the whole picture; -1 asks, offering the frame size the scene's
+    /// sprites use with it), and saving makes its .dsprite. Null, showing why, if it cannot.
+    SpriteStudio* open_sprite(const QString& asset_path, int frame_width = -1,
+                              int frame_height = -1);
+    /// Makes an empty sprite of `width` x `height` pixels as assets/art/<name>.dsprite (with
+    /// its sheet, art/<name>.png) and opens it in Sprite Studio.
+    SpriteStudio* new_sprite(const QString& name, int width, int height);
+    /// Reads the assets folder again, and draws again the pictures that changed (hot
+    /// reload): after Sprite Studio saves, and when the editor comes back to the front.
+    void reload_assets();
     /// Selects an entity everywhere: the list, the scene and the inspector.
     void select(engine::Guid entity);
     /// Selects several entities together: all in the list and outlined in the scene, the
@@ -97,6 +113,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
     /// Shows the document's scene everywhere, after another was opened.
@@ -115,7 +132,12 @@ private:
     void update_title_and_actions();
     void report(const QString& message);
 
+    /// Closes the sprite windows, asking to save their changes. False if one stays open.
+    bool close_sprites();
+
     std::filesystem::path player_;
+    /// The open Sprite Studio windows, by the .dsprite each edits.
+    std::map<std::string, SpriteStudio*> studios_;
     std::unique_ptr<Document> document_;
     engine::Guid selection_;
     SceneView* view_ = nullptr;

@@ -5,18 +5,23 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileSystemModel>
+#include <QFormLayout>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QKeySequence>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProcess>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QTreeView>
@@ -35,6 +40,7 @@
 #include "logic_panel.h"
 #include "project_panel.h"
 #include "scene_view.h"
+#include "sprite_studio.h"
 #include "tile_palette.h"
 
 namespace editor {
@@ -103,7 +109,7 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     asset_model_->setNameFilters({QStringLiteral("*.png"), QStringLiteral("*.wav"),
                                   QStringLiteral("*.ogg"), QStringLiteral("*.mp3"),
                                   QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
-                                  QStringLiteral("*.drules")});
+                                  QStringLiteral("*.drules"), QStringLiteral("*.dsprite")});
     asset_model_->setNameFilterDisables(false);
     // Pictures are dragged from here into the scene.
     asset_tree_->setDragEnabled(true);
@@ -263,6 +269,35 @@ void MainWindow::build_actions() {
         }
     });
     scene->setObjectName(QStringLiteral("new_scene"));
+    QAction* sprite_action = file->addAction(tr("New s&prite…"), this, [this] {
+        if (document_ == nullptr) {
+            return;
+        }
+        QDialog dialog(this);
+        dialog.setWindowTitle(tr("New sprite"));
+        auto* form = new QFormLayout(&dialog);
+        auto* name = new QLineEdit(tr("sprite"), &dialog);
+        auto* width = new QSpinBox(&dialog);
+        auto* height = new QSpinBox(&dialog);
+        for (QSpinBox* box : {width, height}) {
+            box->setRange(1, sprite::max_side);
+            box->setValue(static_cast<int>(document_->settings().ppu)); // one tile
+            box->setSuffix(tr(" pixels"));
+        }
+        form->addRow(tr("Name"), name);
+        form->addRow(tr("Width"), width);
+        form->addRow(tr("Height"), height);
+        auto* buttons =
+            new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        form->addRow(buttons);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        if (dialog.exec() == QDialog::Accepted) {
+            new_sprite(name->text(), width->value(), height->value());
+        }
+    });
+    sprite_action->setObjectName(QStringLiteral("new_sprite"));
+    sprite_action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+N")));
     QAction* start =
         file->addAction(tr("Start the game in this scene"), this, [this] { start_here(); });
     start->setObjectName(QStringLiteral("start_here"));
@@ -273,15 +308,19 @@ void MainWindow::build_actions() {
             return;
         }
         const QString file_path = asset_model_->filePath(index);
-        if (!file_path.endsWith(QStringLiteral(".dscene"))) {
-            return;
-        }
         // Its path in assets/, through the real paths of both: the same folder can be
         // spelled two ways (a short and a long name on Windows, a link).
         std::error_code ignored;
         const fs::path assets = fs::weakly_canonical(document_->folder() / "assets", ignored);
         const fs::path chosen = fs::weakly_canonical(path_of(file_path), ignored);
-        open_scene(text_of(chosen.lexically_proximate(assets).generic_string()));
+        const QString relative = text_of(chosen.lexically_proximate(assets).generic_string());
+        if (file_path.endsWith(QStringLiteral(".dscene"))) {
+            open_scene(relative);
+        } else if (file_path.endsWith(QStringLiteral(".png")) ||
+                   file_path.endsWith(QStringLiteral(".dsprite"))) {
+            // Pictures and sprites are drawn in Sprite Studio.
+            open_sprite(relative);
+        }
     });
     QAction* open = file->addAction(tr("&Open project…"), this, [this] {
         const QString folder = QFileDialog::getExistingDirectory(this, tr("Open a project"));
@@ -406,7 +445,160 @@ void MainWindow::show_scene() {
     update_title_and_actions();
 }
 
+SpriteStudio* MainWindow::open_sprite(const QString& asset_path, int frame_width,
+                                      int frame_height) {
+    if (document_ == nullptr) {
+        return nullptr;
+    }
+    const QByteArray utf8 = asset_path.toUtf8();
+    const std::string relative(utf8.constData(), static_cast<std::size_t>(utf8.size()));
+    const fs::path file = (document_->folder() / "assets" / path_of(asset_path)).lexically_normal();
+    fs::path source = file;
+    source.replace_extension(".dsprite");
+    const std::string key = source.generic_string();
+    if (const auto found = studios_.find(key); found != studios_.end()) {
+        found->second->show();
+        found->second->raise();
+        found->second->activateWindow();
+        return found->second;
+    }
+    auto* studio = new SpriteStudio(this);
+    studio->setWindowFlag(Qt::Window);
+    studio->set_quiet(quiet_);
+    std::string error;
+    bool opened = false;
+    std::error_code ignored;
+    if (fs::exists(source, ignored)) {
+        opened = studio->open(source, error);
+    } else if (file.extension() == ".png") {
+        if (frame_width < 0 || frame_height < 0) {
+            // The frame size the scene's sprites use with this picture, if any.
+            frame_width = 0;
+            frame_height = 0;
+            const engine::assets::AssetRecord* record = document_->assets().find(relative);
+            for (const engine::world::Entity e : document_->entities()) {
+                const auto* used = document_->world().get<engine::scene2d::Sprite>(e);
+                if (record != nullptr && used != nullptr &&
+                    used->image == record->guid.to_string() && used->frame_width > 0 &&
+                    used->frame_height > 0) {
+                    frame_width = static_cast<int>(used->frame_width);
+                    frame_height = static_cast<int>(used->frame_height);
+                    break;
+                }
+            }
+            if (!quiet_ && !QApplication::platformName().startsWith(QStringLiteral("offscreen"))) {
+                QDialog dialog(this);
+                dialog.setWindowTitle(tr("Open %1 in Sprite Studio").arg(asset_path));
+                auto* form = new QFormLayout(&dialog);
+                form->addRow(new QLabel(tr("Cut the picture into frames of this size (0: the "
+                                           "whole picture is one frame)."),
+                                        &dialog));
+                auto* across = new QSpinBox(&dialog);
+                auto* down = new QSpinBox(&dialog);
+                for (QSpinBox* box : {across, down}) {
+                    box->setRange(0, sprite::max_side);
+                    box->setSuffix(tr(" pixels"));
+                }
+                across->setValue(frame_width);
+                down->setValue(frame_height);
+                form->addRow(tr("Frame width"), across);
+                form->addRow(tr("Frame height"), down);
+                auto* buttons =
+                    new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+                form->addRow(buttons);
+                connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+                connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+                if (dialog.exec() != QDialog::Accepted) {
+                    delete studio;
+                    return nullptr;
+                }
+                frame_width = across->value();
+                frame_height = down->value();
+            }
+        }
+        opened = studio->import(file, frame_width, frame_height, error);
+    } else {
+        error = "Only pictures (PNG) and sprites (.dsprite) open in Sprite Studio.";
+    }
+    if (!opened) {
+        delete studio;
+        report(tr("%1 could not be opened in Sprite Studio: %2").arg(asset_path, text_of(error)));
+        return nullptr;
+    }
+    connect(studio, &SpriteStudio::saved, this, [this] { reload_assets(); });
+    studios_[key] = studio;
+    studio->show();
+    return studio;
+}
+
+SpriteStudio* MainWindow::new_sprite(const QString& name, int width, int height) {
+    if (document_ == nullptr) {
+        return nullptr;
+    }
+    const QString trimmed = name.trimmed();
+    const bool valid = !trimmed.isEmpty() && !trimmed.contains(QLatin1Char('/')) &&
+                       !trimmed.contains(QLatin1Char('\\')) &&
+                       !trimmed.startsWith(QLatin1Char('.'));
+    if (!valid) {
+        report(tr("A sprite needs a name without slashes, such as \"slime\"."));
+        return nullptr;
+    }
+    const QString relative = QStringLiteral("art/%1.dsprite").arg(trimmed);
+    const fs::path file = document_->folder() / "assets" / path_of(relative);
+    fs::path sheet = file;
+    sheet.replace_extension(".png");
+    std::error_code ignored;
+    if (fs::exists(file, ignored) || fs::exists(sheet, ignored)) {
+        report(tr("There is a sprite or picture called %1 already.").arg(trimmed));
+        return nullptr;
+    }
+    fs::create_directories(file.parent_path(), ignored);
+    std::string error;
+    if (!sprite::save(sprite::Sprite::blank(width, height), file, error)) {
+        report(tr("The sprite could not be made: %1").arg(text_of(error)));
+        return nullptr;
+    }
+    reload_assets();
+    return open_sprite(relative);
+}
+
+void MainWindow::reload_assets() {
+    if (document_ == nullptr) {
+        return;
+    }
+    const engine::assets::AssetChanges changes = document_->assets().refresh();
+    if (changes.empty()) {
+        return;
+    }
+    view_->assets_changed(changes);
+    // The inspector's lists of pictures, and the tiles of a tileset that changed.
+    inspector_->show_entities(document_.get(), selected_);
+    palette_->show_tilemap(document_.get(), selection_);
+}
+
+bool MainWindow::close_sprites() {
+    for (auto it = studios_.begin(); it != studios_.end();) {
+        if (!it->second->close()) {
+            return false;
+        }
+        it->second->deleteLater();
+        it = studios_.erase(it);
+    }
+    return true;
+}
+
+void MainWindow::changeEvent(QEvent* event) {
+    QMainWindow::changeEvent(event);
+    // Back from drawing in another program: its pictures show as they are now.
+    if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
+        reload_assets();
+    }
+}
+
 bool MainWindow::open_project(const fs::path& folder) {
+    if (!close_sprites()) {
+        return false;
+    }
     std::vector<engine::serialize::Issue> issues;
     std::unique_ptr<Document> opened = Document::open(folder, issues);
     if (opened == nullptr) {
@@ -655,6 +847,10 @@ void MainWindow::reset_layout() {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
+    if (!close_sprites()) {
+        event->ignore();
+        return;
+    }
     if (document_ != nullptr && document_->dirty() &&
         !QApplication::platformName().startsWith(QStringLiteral("offscreen"))) {
         const auto answer = QMessageBox::question(
