@@ -277,6 +277,10 @@ enum class Axis : std::uint8_t { X, Y };
 [[nodiscard]] double sweep(const world::World& world, const Box& box, Axis axis, double distance,
                            std::uint32_t ppu);
 
+/// True if `box` overlaps a tile of a solid Tilemap in `world` (more than an edge): where
+/// a character cannot stand. `ppu` sizes tilemaps whose tile_size is 0.
+[[nodiscard]] bool solid_at(const world::World& world, const Box& box, std::uint32_t ppu);
+
 /// The area the tilemaps of `world` cover, in units: the smallest box around every
 /// tilemap's grid (visible or not, solid or not). Nothing if no tilemap has tiles. `ppu`
 /// sizes tilemaps whose tile_size is 0.

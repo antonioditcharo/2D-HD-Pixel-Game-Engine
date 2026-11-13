@@ -761,7 +761,12 @@ void Runtime::step() {
 
     // 2. Movement, with walls, bodies and walk animations; then trigger areas.
     const double dt = r.clock.step_seconds();
+    const std::vector<world::Entity> arrived =
+        steer_walkers(*r.world, dt, r.settings.ppu, talking || r.fading != Impl::Fade::None);
     move_characters(*r.world, moves, dt, r.settings.ppu);
+    for (const world::Entity entity : arrived) {
+        emit(*r.vm, *r.world, entity, "arrived");
+    }
     // Physics: dynamic bodies move, and bodies that start touching tell Rules.
     for (const auto& [first, second] : r.physics->step(*r.world, moves, dt, r.settings.ppu)) {
         for (const auto& [touched, other] : {std::pair{first, second}, std::pair{second, first}}) {

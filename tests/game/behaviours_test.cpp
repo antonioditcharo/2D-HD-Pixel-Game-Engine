@@ -6,6 +6,8 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <initializer_list>
 #include <limits>
 #include <memory>
@@ -318,4 +320,178 @@ TEST_CASE("Jumping: walking left and right, landing on solid tiles and bodies, a
     run(60, {input::Key::Space, input::Key::Left});
     CHECK(f.at(f.hero).y == 4.0);
     CHECK(f.at(f.hero).x == doctest::Approx(4.0));
+}
+
+namespace {
+
+/// A room 10 tiles by 7 inside a wall a tile thick, with a wall down the middle (column 5)
+/// from the top to row 4, so the way between the halves goes round its bottom.
+world::Entity build_room(Fixture& f) {
+    const world::Entity walls = f.place("walls", 0.0, 0.0);
+    scene2d::Tilemap* tiles = f.w->add<scene2d::Tilemap>(walls);
+    REQUIRE(tiles != nullptr);
+    tiles->solid = true;
+    tiles->tiles = "0,0,0,0,0,0,0,0,0,0,0,0\n"
+                   "0,,,,,0,,,,,,0\n"
+                   "0,,,,,0,,,,,,0\n"
+                   "0,,,,,0,,,,,,0\n"
+                   "0,,,,,0,,,,,,0\n"
+                   "0,,,,,,,,,,,0\n"
+                   "0,,,,,,,,,,,0\n"
+                   "0,0,0,0,0,0,0,0,0,0,0,0";
+    return walls;
+}
+
+/// Steps the walkers and the movers together, `steps` of 1/60 s, no keys held. Returns
+/// who arrived, in order.
+std::vector<world::Entity> run(Fixture& f, int steps, bool paused = false) {
+    std::vector<world::Entity> arrived;
+    for (int i = 0; i < steps; ++i) {
+        f.state.begin_step();
+        for (const world::Entity e : game::steer_walkers(*f.w, 1.0 / 60.0, 16, paused)) {
+            arrived.push_back(e);
+        }
+        game::move_characters(*f.w, f.state, 1.0 / 60.0, 16);
+    }
+    return arrived;
+}
+
+} // namespace
+
+TEST_CASE("Paths go round walls, tile by tile, never across a corner") {
+    Fixture f;
+    build_room(f);
+    const game::TopDownMover mover;
+    // From the left half to the right half: round the bottom of the middle wall.
+    const auto way = game::find_path(*f.w, mover, f.hero, 2.5, 2.75, 8.5, 2.75, 16);
+    REQUIRE(way.has_value());
+    const std::vector<std::array<double, 2>> points =
+        way.value_or(std::vector<std::array<double, 2>>{});
+    REQUIRE(points.size() >= 2);
+    CHECK(points.back() == std::array<double, 2>{8.5, 2.75});
+    bool below_the_wall = false;
+    for (const auto& [px, py] : points) {
+        below_the_wall = below_the_wall || py > 5.0;
+        // No point is inside a wall.
+        CHECK_FALSE(scene2d::solid_at(*f.w, game::hitbox(mover, px, py), 16));
+    }
+    CHECK(below_the_wall);
+    // Already there: no walking. Into a wall, or past the search: no way.
+    CHECK(game::find_path(*f.w, mover, f.hero, 2.5, 2.75, 2.5, 2.75, 16)
+              .value_or(std::vector<std::array<double, 2>>{{0.0, 0.0}})
+              .empty());
+    CHECK_FALSE(game::find_path(*f.w, mover, f.hero, 2.5, 2.75, 5.5, 2.75, 16).has_value());
+    CHECK_FALSE(game::find_path(*f.w, mover, f.hero, 2.5, 2.75, 500.5, 2.75, 16).has_value());
+    // A Solid Body in the gap closes it; the body to ignore (who is followed) does not.
+    const world::Entity crate = f.place("crate", 5.5, 6.75);
+    f.w->add<game::Body>(crate)->height = 2.0;
+    const world::Entity crate2 = f.place("crate2", 5.5, 5.75);
+    f.w->add<game::Body>(crate2);
+    CHECK_FALSE(game::find_path(*f.w, mover, f.hero, 2.5, 2.75, 8.5, 2.75, 16).has_value());
+    f.w->get<game::Body>(crate2)->enabled = false;
+    CHECK_FALSE(game::find_path(*f.w, mover, f.hero, 2.5, 2.75, 8.5, 2.75, 16).has_value());
+    CHECK(game::find_path(*f.w, mover, f.hero, 2.5, 2.75, 8.5, 2.75, 16, crate).has_value());
+}
+
+TEST_CASE("A Walker sent somewhere walks there round walls and says it arrived") {
+    Fixture f;
+    build_room(f);
+    f.at(f.hero) = scene2d::Transform2D{2.5, 2.75};
+    const world::Entity guard = f.place("guard", 2.5, 4.75);
+    REQUIRE(f.w->add<game::TopDownMover>(guard) != nullptr);
+    game::Walker* walker = f.w->add<game::Walker>(guard);
+    REQUIRE(walker != nullptr);
+    walker->walk_to(8.5, 2.75);
+    // The keys move the hero, never the walker.
+    const std::vector<world::Entity> arrived = run(f, 5 * 60);
+    REQUIRE(arrived.size() == 1);
+    CHECK(arrived.front() == guard);
+    CHECK(f.at(guard).x == doctest::Approx(8.5).epsilon(0.001));
+    CHECK(f.at(guard).y == doctest::Approx(2.75).epsilon(0.001));
+    CHECK(f.w->get<game::Walker>(guard)->mode == game::WalkMode::Stand);
+    // The hero, not the walker, is the player, whoever comes first.
+    CHECK(game::player_position(*f.w) == std::array<double, 2>{2.5, 2.75});
+    // A goal inside a wall: it stays where it is.
+    f.w->get<game::Walker>(guard)->walk_to(5.5, 2.75);
+    CHECK(run(f, 30).empty());
+    CHECK(f.at(guard).x == doctest::Approx(8.5).epsilon(0.001));
+}
+
+TEST_CASE("Walkers patrol their route, follow, wander near home, and stand while paused") {
+    Fixture f;
+    build_room(f);
+    const world::Entity guard = f.place("guard", 1.5, 1.75);
+    f.w->add<game::TopDownMover>(guard);
+    game::Walker* walker = f.w->add<game::Walker>(guard);
+    REQUIRE(walker != nullptr);
+    walker->mode = game::WalkMode::Patrol;
+    walker->route = "3.5, 1.75; 3.5,4.75 ; not a point; 1.5,4.75";
+    walker->rest = 0.25;
+    // Round the route: each point in turn, resting at each.
+    std::vector<std::array<double, 2>> visited;
+    for (int i = 0; i < 8 * 60; ++i) {
+        run(f, 1);
+        const std::array<double, 2> here{f.at(guard).x, f.at(guard).y};
+        for (const std::array<double, 2> point :
+             {std::array<double, 2>{3.5, 1.75}, std::array<double, 2>{3.5, 4.75},
+              std::array<double, 2>{1.5, 4.75}}) {
+            if (std::abs(here[0] - point[0]) < 0.03 && std::abs(here[1] - point[1]) < 0.03 &&
+                (visited.empty() || visited.back() != point)) {
+                visited.push_back(point);
+            }
+        }
+    }
+    REQUIRE(visited.size() >= 4);
+    CHECK(visited[0] == std::array<double, 2>{3.5, 1.75});
+    CHECK(visited[1] == std::array<double, 2>{3.5, 4.75});
+    CHECK(visited[2] == std::array<double, 2>{1.5, 4.75});
+    CHECK(visited[3] == std::array<double, 2>{3.5, 1.75});
+
+    // Following: it comes round the wall to the hero, and stops near.
+    f.at(f.hero) = scene2d::Transform2D{9.5, 1.75};
+    f.w->get<game::Walker>(guard)->follow("hero");
+    run(f, 6 * 60);
+    const double near = std::hypot(f.at(guard).x - 9.5, f.at(guard).y - 1.75);
+    CHECK(near <= 1.5 + 0.1);
+    CHECK(near > 0.5);
+
+    // Paused (a message open): nobody walks.
+    f.at(f.hero) = scene2d::Transform2D{9.5, 6.75};
+    const scene2d::Transform2D before = f.at(guard);
+    run(f, 60, true);
+    CHECK(f.at(guard).x == before.x);
+    CHECK(f.at(guard).y == before.y);
+
+    // Wandering stays near home, and replays the same every run.
+    f.w->get<game::Walker>(guard)->wander();
+    f.w->get<game::Walker>(guard)->wander_radius = 2.0;
+    run(f, 1);
+    const double home_x = f.w->get<game::Walker>(guard)->home_x;
+    const double home_y = f.w->get<game::Walker>(guard)->home_y;
+    double farthest = 0.0;
+    std::vector<double> track;
+    for (int i = 0; i < 10 * 60; ++i) {
+        run(f, 1);
+        farthest = std::max(farthest, std::hypot(f.at(guard).x - home_x, f.at(guard).y - home_y));
+        track.push_back(f.at(guard).x);
+    }
+    CHECK(farthest > 0.5);
+    CHECK(farthest <= 2.0 * std::sqrt(2.0) + 0.1);
+}
+
+TEST_CASE("Walkers do not set off trigger areas or interact") {
+    const Fixture f;
+    const world::Entity guard = f.place("guard", 0.0, 0.0);
+    f.w->add<game::TopDownMover>(guard);
+    f.w->add<game::Walker>(guard)->mode = game::WalkMode::Stand;
+    f.at(f.hero) = scene2d::Transform2D{10.0, 10.0};
+    const world::Entity door = f.place("door", 0.0, 0.0);
+    f.w->add<game::Trigger>(door);
+    CHECK(game::update_triggers(*f.w).empty());
+    const world::Entity sign = f.place("sign", 0.0, 0.5);
+    f.w->add<game::Interactable>(sign);
+    CHECK_FALSE(game::find_interaction(*f.w, guard).is_valid());
+    // Turned off, it is a mover like any other.
+    f.w->get<game::Walker>(guard)->enabled = false;
+    CHECK(game::update_triggers(*f.w).size() == 1);
 }

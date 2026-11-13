@@ -20,6 +20,86 @@ void register_behaviours(reflect::Registry& registry) {
         .entry(Facing::Left, "left")
         .entry(Facing::Right, "right")
         .entry(Facing::Up, "up");
+    registry.add_choice_list<WalkMode>("walk_mode")
+        .display_name("Walking")
+        .entry(WalkMode::Stand, "stand")
+        .entry(WalkMode::Wander, "wander")
+        .entry(WalkMode::Patrol, "patrol")
+        .entry(WalkMode::Follow, "follow")
+        .entry(WalkMode::GoTo, "go_to");
+    auto walker = registry.add_type<Walker>("walker")
+                      .display_name("Walker")
+                      .category("Movement")
+                      .tooltip("Its Top-down Mover walks by itself: wandering, on patrol, "
+                               "following someone, or where logic sends it, finding its way "
+                               "around walls. Never the player.");
+    walker.property<&Walker::mode>("mode").display_name("Walking").tooltip(
+        "Stand, wander near where it started, patrol a route, follow someone, or go to a "
+        "point.");
+    walker.property<&Walker::enabled>("enabled").tooltip("Turn off to make it stand still.");
+    walker.property<&Walker::wander_radius>("wander_radius")
+        .range(0.0, 32.0)
+        .step(0.5)
+        .unit(reflect::Unit::Tiles)
+        .display_name("Wander within")
+        .tooltip("Wandering: how far from where it started it goes.");
+    walker.property<&Walker::rest>("rest")
+        .range(0.0, 60.0)
+        .step(0.25)
+        .unit(reflect::Unit::Seconds)
+        .display_name("Rest")
+        .tooltip("Wandering and patrolling: how long it stands between walks.");
+    walker.property<&Walker::route>("route").display_name("Route").tooltip(
+        "Patrolling: the points it walks to in turn, in tiles: 2,3; 8,3; 8,6");
+    walker.property<&Walker::target>("target").display_name("Follow").tooltip(
+        "Following: the name of who it follows, such as hero.");
+    walker.property<&Walker::distance>("distance")
+        .range(0.0, 16.0)
+        .step(0.25)
+        .unit(reflect::Unit::Tiles)
+        .display_name("Keep within")
+        .tooltip("Following: how close it comes.");
+    walker.property<&Walker::goal_x>("goal_x")
+        .unit(reflect::Unit::Tiles)
+        .display_name("Go to across")
+        .tooltip("Going to a point: where, across.");
+    walker.property<&Walker::goal_y>("goal_y")
+        .unit(reflect::Unit::Tiles)
+        .display_name("Go to down")
+        .tooltip("Going to a point: where, down.");
+    walker.property<&Walker::homed>("homed")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("Whether where it started is known.");
+    walker.property<&Walker::home_x>("home_x")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("Where it started, across.");
+    walker.property<&Walker::home_y>("home_y")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("Where it started, down.");
+    walker.property<&Walker::waiting>("waiting")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("How long it still rests.");
+    walker.property<&Walker::seed>("seed")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("Its random choices.");
+    walker.property<&Walker::leg>("leg")
+        .flags(reflect::property_flag::hidden)
+        .tooltip("The point of its route it walks to next.");
+    walker.action<&Walker::walk_to>("walk_to", {"x", "y"})
+        .text("Walk to {x}, {y}")
+        .tooltip("Walks there by itself, around walls, then stands and says it arrived.");
+    walker.action<&Walker::follow>("follow", {"name"})
+        .text("Follow {name}")
+        .tooltip("Keeps near someone, such as hero.");
+    walker.action<&Walker::wander>("wander").text("Wander").tooltip(
+        "Walks to places near where it is now, resting between walks.");
+    walker.action<&Walker::patrol>("patrol").text("Patrol").tooltip(
+        "Walks its route again from the first point.");
+    walker.action<&Walker::stand>("stand").text("Stand still").tooltip("Stops walking.");
+    walker.event<>("arrived")
+        .text("When it arrives")
+        .tooltip("Happens when it reaches where Walk to sent it.");
+
     auto mover = registry.add_type<TopDownMover>("top_down_mover")
                      .display_name("Top-down Mover")
                      .category("Movement")
@@ -259,7 +339,8 @@ std::optional<std::array<double, 2>> player_position(const world::World& world) 
     std::optional<std::array<double, 2>> found;
     world.each(*mover_type, [&](world::Entity entity, reflect::ObjectRef) {
         const scene2d::Transform2D* transform = world.get<scene2d::Transform2D>(entity);
-        if (!found && transform != nullptr) {
+        const Walker* walker = world.get<Walker>(entity);
+        if (!found && transform != nullptr && (walker == nullptr || !walker->enabled)) {
             found = std::array<double, 2>{transform->x, transform->y};
         }
     });
@@ -268,6 +349,7 @@ std::optional<std::array<double, 2>> player_position(const world::World& world) 
 
 bool register_behaviour_components(world::World& world) {
     const bool mover = world.register_component<TopDownMover>();
+    const bool walker = world.register_component<Walker>();
     const bool walk = world.register_component<WalkAnimation>();
     const bool body = world.register_component<Body>();
     const bool trigger = world.register_component<Trigger>();
@@ -275,7 +357,8 @@ bool register_behaviour_components(world::World& world) {
     const bool simulated = world.register_component<PhysicsBody>();
     const bool sound = world.register_component<SoundSource>();
     const bool jumping = world.register_component<Jumping>();
-    return mover && walk && body && trigger && interactable && simulated && sound && jumping;
+    return mover && walker && walk && body && trigger && interactable && simulated && sound &&
+           jumping;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -383,7 +466,6 @@ void move_characters(world::World& world, const input::InputState& input, double
     const double dx =
         (input.held("move_right") ? 1.0 : 0.0) - (input.held("move_left") ? 1.0 : 0.0);
     const double dy = (input.held("move_down") ? 1.0 : 0.0) - (input.held("move_up") ? 1.0 : 0.0);
-    const double length = std::sqrt((dx * dx) + (dy * dy));
 
     world.each(*mover_type, [&](world::Entity entity, reflect::ObjectRef ref) {
         TopDownMover* mover = ref.as<TopDownMover>();
@@ -413,37 +495,51 @@ void move_characters(world::World& world, const input::InputState& input, double
             (axis == scene2d::Axis::X ? transform->x : transform->y) += allowed;
             return allowed;
         };
+        // A Walker walks where it decided (steer_walkers()), not with the keys.
+        double mx = dx;
+        double my = dy;
+        double scale = 1.0;
+        const Walker* walker = world.get<Walker>(entity);
+        const bool steered = walker != nullptr && walker->enabled;
+        if (steered) {
+            mx = walker->step_dx;
+            my = walker->step_dy;
+            scale = std::clamp(walker->step_scale, 0.0, 1.0);
+        }
+        const double mlength = std::sqrt((mx * mx) + (my * my));
         if (Jumping* jumping = world.get<Jumping>(entity); jumping != nullptr) {
             // Seen from the side: left and right with the move actions, up and down by
             // falling and jumping.
-            mover->moving = mover->enabled && dx != 0.0;
+            mover->moving = mover->enabled && mx != 0.0;
             if (mover->moving) {
-                mover->facing = facing_for(mover->facing, dx, 0.0);
+                mover->facing = facing_for(mover->facing, mx, 0.0);
             }
             if (by_physics) {
                 jumping->on_ground = false;
             } else {
                 if (mover->moving) {
-                    sweep_by(scene2d::Axis::X, dx * mover->speed * seconds);
+                    sweep_by(scene2d::Axis::X,
+                             (mx > 0.0 ? 1.0 : -1.0) * mover->speed * seconds * scale);
                 }
                 fall(*jumping,
-                     mover->enabled && (input.pressed("jump") || input.pressed("move_up")), seconds,
-                     [&](double wanted) { return sweep_by(scene2d::Axis::Y, wanted); });
+                     mover->enabled && !steered &&
+                         (input.pressed("jump") || input.pressed("move_up")),
+                     seconds, [&](double wanted) { return sweep_by(scene2d::Axis::Y, wanted); });
             }
             if (walk != nullptr && sprite != nullptr) {
                 update_walk(*mover, *walk, *sprite, seconds);
             }
             return;
         }
-        mover->moving = mover->enabled && length > 0.0;
+        mover->moving = mover->enabled && mlength > 0.0;
         if (mover->moving) {
-            mover->facing = facing_for(mover->facing, dx, dy);
+            mover->facing = facing_for(mover->facing, mx, my);
         }
         if (mover->moving && !by_physics) {
-            const double step = mover->speed * seconds / length;
+            const double step = mover->speed * seconds * scale / mlength;
             // One axis at a time, so a diagonal into a wall slides along it.
             for (const scene2d::Axis axis : {scene2d::Axis::X, scene2d::Axis::Y}) {
-                sweep_by(axis, (axis == scene2d::Axis::X ? dx : dy) * step);
+                sweep_by(axis, (axis == scene2d::Axis::X ? mx : my) * step);
             }
         }
         if (walk != nullptr && sprite != nullptr) {
@@ -471,7 +567,8 @@ std::vector<Placed> movers(const world::World& world) {
         world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
             const TopDownMover* mover = ref.as<TopDownMover>();
             const scene2d::Transform2D* at = world.get<scene2d::Transform2D>(entity);
-            if (mover != nullptr && at != nullptr) {
+            const Walker* walker = world.get<Walker>(entity);
+            if (mover != nullptr && at != nullptr && (walker == nullptr || !walker->enabled)) {
                 found.push_back(Placed{entity, world.guid(entity), hitbox(*mover, at->x, at->y)});
             }
         });
@@ -543,7 +640,9 @@ world::Entity find_interaction(const world::World& world, world::Entity mover_en
     const TopDownMover* mover = world.get<TopDownMover>(mover_entity);
     const scene2d::Transform2D* at = world.get<scene2d::Transform2D>(mover_entity);
     const reflect::TypeInfo* type = world.registry().find_type<Interactable>();
-    if (mover == nullptr || at == nullptr || type == nullptr) {
+    const Walker* walker = world.get<Walker>(mover_entity);
+    if (mover == nullptr || at == nullptr || type == nullptr ||
+        (walker != nullptr && walker->enabled)) {
         return {};
     }
     scene2d::Box probe = hitbox(*mover, at->x, at->y);

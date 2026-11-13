@@ -468,6 +468,47 @@ double sweep(const world::World& world, const Box& box, Axis axis, double distan
     return allowed;
 }
 
+bool solid_at(const world::World& world, const Box& box, std::uint32_t ppu) {
+    const reflect::TypeInfo* type = world.registry().find_type<Tilemap>();
+    if (type == nullptr) {
+        return false;
+    }
+    bool hit = false;
+    world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        const Tilemap* tilemap = ref.as<Tilemap>();
+        const Transform2D* transform = world.get<Transform2D>(entity);
+        if (hit || tilemap == nullptr || transform == nullptr || !tilemap->solid) {
+            return;
+        }
+        std::string error;
+        const TileGrid* grid = tilemap->grid(error);
+        if (grid == nullptr || grid->width == 0) {
+            return;
+        }
+        const std::uint32_t units = std::max<std::uint32_t>(ppu, 1);
+        const std::uint32_t pixels = tilemap->tile_size == 0 ? units : tilemap->tile_size;
+        const double tile = static_cast<double>(pixels) / static_cast<double>(units);
+        const Span across = covered(box.left - transform->x, box.right - transform->x, tile);
+        const Span down = covered(box.top - transform->y, box.bottom - transform->y, tile);
+        if (!std::isfinite(across.first) || !std::isfinite(across.end) ||
+            !std::isfinite(down.first) || !std::isfinite(down.end)) {
+            return;
+        }
+        const auto first_x = static_cast<std::int64_t>(std::max(across.first, 0.0));
+        const auto end_x =
+            static_cast<std::int64_t>(std::min(across.end, static_cast<double>(grid->width)));
+        const auto first_y = static_cast<std::int64_t>(std::max(down.first, 0.0));
+        const auto end_y =
+            static_cast<std::int64_t>(std::min(down.end, static_cast<double>(grid->height)));
+        for (std::int64_t y = first_y; y < end_y && !hit; ++y) {
+            for (std::int64_t x = first_x; x < end_x && !hit; ++x) {
+                hit = grid->at(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y)) >= 0;
+            }
+        }
+    });
+    return hit;
+}
+
 // ---------------------------------------------------------------------------------------
 // Animation
 // ---------------------------------------------------------------------------------------

@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -40,6 +41,75 @@ struct TopDownMover {
     Facing facing = Facing::Down;
     bool moving = false; ///< A move action was held in the last step (read-only).
 };
+
+/// What a Walker does.
+enum class WalkMode : std::uint8_t {
+    Stand,  ///< Stays where it is.
+    Wander, ///< Walks to places near where it started, resting between walks.
+    Patrol, ///< Walks a route of points in turn, resting at each, round and round.
+    Follow, ///< Keeps near another entity, finding its way around walls.
+    GoTo,   ///< Walks to one point, then stands and says it arrived.
+};
+
+/// "Walker": the entity's Top-down Mover walks by itself, not with the player's keys: a
+/// villager who wanders, a guard on patrol, a friend who follows, someone sent somewhere
+/// by logic. It finds its way around solid tiles and Solid Bodies (grid A*, find_path()).
+/// A Walker is never the player: the camera does not follow it, it does not interact, and
+/// it does not set off Trigger Areas (so it cannot walk through a door). Everyone stands
+/// still while a message is open.
+struct Walker {
+    WalkMode mode = WalkMode::Wander;
+    bool enabled = true;
+    double wander_radius = 3.0; ///< Wander: how far from where it started, in tiles.
+    double rest = 1.5;          ///< Wander and Patrol: seconds standing between walks.
+    std::string route;          ///< Patrol: points in tiles, "x,y; x,y; ...".
+    std::string target;         ///< Follow: the name of the entity to follow.
+    double distance = 1.5;      ///< Follow: how close it comes, in tiles.
+    double goal_x = 0.0;        ///< Go to: where, in tiles.
+    double goal_y = 0.0;
+    // Hidden, saved with the scene and games.
+    bool homed = false; ///< Whether `home_x`, `home_y` (where it started) are set.
+    double home_x = 0.0;
+    double home_y = 0.0;
+    double waiting = 0.0;   ///< Seconds still to rest.
+    std::uint32_t seed = 0; ///< Wander's random choices; 0 takes one from the GUID.
+    std::uint32_t leg = 0;  ///< Patrol: the point it walks to next.
+    // Not saved: worked out again after loading.
+    std::vector<std::array<double, 2>> path; ///< Points still to reach, nearest first.
+    double step_dx = 0.0; ///< Where it walks in this step, for move_characters().
+    double step_dy = 0.0;
+    double step_scale = 1.0; ///< Of a full step: less on reaching a point.
+    double repath = 0.0;     ///< Follow: seconds until the way is found again.
+    double stuck = 0.0;      ///< Seconds it has not moved while it should.
+    double last_x = 0.0;
+    double last_y = 0.0;
+
+    /// Walks to (x, y) in tiles, then stands and says it arrived.
+    void walk_to(double x, double y);
+    /// Follows the entity named `name`.
+    void follow(const std::string& name);
+    /// Wanders near where it is now.
+    void wander();
+    /// Walks its route again, from its first point.
+    void patrol();
+    /// Stands still.
+    void stand();
+};
+
+/// The way for `mover` (on entity `self`) from (x, y) to (to_x, to_y), in tiles, around
+/// solid tiles and enabled Solid Bodies (but `self`'s and `ignore`'s): the points to walk
+/// through, nearest first, ending at the goal. Walks tile by tile in eight directions,
+/// never cutting a wall's corner, the shortest way (A*). Empty if already there; nothing
+/// if the goal cannot be reached (or is more than 64 tiles away, beyond what is searched).
+[[nodiscard]] std::optional<std::vector<std::array<double, 2>>>
+find_path(const world::World& world, const TopDownMover& mover, world::Entity self, double x,
+          double y, double to_x, double to_y, std::uint32_t ppu, world::Entity ignore = {});
+
+/// Decides where every enabled Walker walks in the next step of `seconds` (Stand while
+/// `paused`, as when a message is open). Returns the Walkers that arrived where they were
+/// sent, for their "arrived" event. Run it before move_characters().
+std::vector<world::Entity> steer_walkers(world::World& world, double seconds, std::uint32_t ppu,
+                                         bool paused);
 
 /// "Jumping": the game seen from the side. With a Top-down Mover on the same entity, the
 /// move actions walk it left and right only; it falls, lands on solid tiles and Solid

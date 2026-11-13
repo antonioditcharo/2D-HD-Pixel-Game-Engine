@@ -236,6 +236,43 @@ While walking, the row's frames cycle in fixed steps; on stopping, the standing 
 the row shows and the cycle starts again next time. Do not combine it with an Animation
 on the same entity: the Animation runs later in the step and would win.
 
+### Walker (characters who walk by themselves)
+
+A **Walker** (`walker`) on an entity with a Top-down Mover makes it walk by itself rather
+than with the player's keys (`plan/02` H2, H4, H5): a villager going about, a guard on
+patrol, a friend who follows, or someone logic sends somewhere. With a Walk Animation it
+turns and walks as the player does.
+
+| Walking (`mode`) | What it does |
+|---|---|
+| **Stand** | Stays where it is |
+| **Wander** (the default) | Walks to a tile within *Wander within* (`wander_radius`, 3) of where it started, rests for *Rest* (`rest`, 1.5 s), and again. Its choices come from a seed taken from its GUID, so a game replays the same |
+| **Patrol** | Walks its *Route* (`route`: points in tiles, `2,3; 8,3; 8,6`) one point after another, resting at each, round and round. Text that is not a point is passed over |
+| **Follow** | Keeps within *Keep within* (`distance`, 1.5 tiles) of the entity named in *Follow* (`target`), finding the way again twice a second as it moves |
+| **Go to** | Walks to (*Go to across*, *Go to down*), then stands and says **"arrived"** to Rules (*When it arrives*). A point it cannot reach leaves it standing |
+
+Logic changes what it does: *Walk to {x}, {y}*, *Follow {name}*, *Wander* (near where it is
+now), *Patrol* (from the route's first point) and *Stand still*.
+
+**Finding the way** (`find_path()`): the map is a grid of tiles; the character fits in a
+tile if its hitbox, standing in the tile's middle, touches no solid tile
+(`scene2d::solid_at()`) and no enabled Solid Body but its own (and, following, not the one
+it follows). A* searches eight ways round, never cutting across a wall's corner, the
+shortest way first, up to 64 tiles around the start and the goal; the way is kept as the
+points where it turns, then the goal. Each step the Walker heads for its next point,
+slowing so as not to pass it (`steer_walkers()`, run before `move_characters()`, which then
+moves it as it moves the player, sliding along walls). Pushed against something that
+stepped into the way for ¾ s, it gives up that way: going somewhere or following, it finds
+another; wandering or patrolling, it rests and goes on.
+
+**Never the player.** A Walker is left out of everything that means "the player": the
+camera and the ear follow the first Top-down Mover that is not walking by itself
+(`player_position()`), and a Walker neither interacts nor sets off Trigger Areas, so a
+wandering villager never walks through a door into another scene. While a message is open,
+or a scene fades, Walkers stand still with everyone. Turned off (`enabled`), its mover is an
+ordinary one again. Where it started, its rest and its place on the route are saved with
+games; its way is found again after loading.
+
 ### Solid Body, Trigger Area and Interactable
 
 | Behaviour | Properties | What it does |
