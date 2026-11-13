@@ -17,6 +17,7 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProcess>
@@ -235,6 +236,90 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
 
 MainWindow::~MainWindow() = default;
 
+std::vector<SearchItem> MainWindow::search_items() {
+    std::vector<SearchItem> items;
+    // The menus' commands, by the path to them ("Game ▸ Play"), without their & marks.
+    const std::function<void(QMenu*, const QString&)> commands = [&](QMenu* menu,
+                                                                     const QString& path) {
+        for (QAction* action : menu->actions()) {
+            if (action->isSeparator() || !action->isEnabled() || action->objectName() == "search") {
+                continue;
+            }
+            QString name = action->text();
+            name.remove(QLatin1Char('&'));
+            name.remove(QStringLiteral("…"));
+            if (QMenu* sub = action->menu()) {
+                commands(sub, path + name + QStringLiteral(" ▸ "));
+                continue;
+            }
+            const QString shortcut = action->shortcut().toString(QKeySequence::NativeText);
+            items.push_back(SearchItem{
+                path + name, shortcut.isEmpty() ? tr("Command") : tr("Command, %1").arg(shortcut),
+                [action] { action->trigger(); }});
+        }
+    };
+    for (QAction* top : menuBar()->actions()) {
+        if (QMenu* menu = top->menu()) {
+            QString name = top->text();
+            name.remove(QLatin1Char('&'));
+            commands(menu, name + QStringLiteral(" ▸ "));
+        }
+    }
+    if (document_ == nullptr) {
+        return items;
+    }
+    // The project's assets: scenes open, pictures and sprites go to Sprite Studio, logic
+    // files show in the Logic view.
+    for (const engine::assets::AssetRecord& record : document_->assets().assets()) {
+        const QString path = text_of(record.path);
+        if (path.endsWith(QStringLiteral(".dscene"))) {
+            items.push_back({path, tr("Scene"), [this, path] { open_scene(path); }});
+        } else if (path.endsWith(QStringLiteral(".png")) ||
+                   path.endsWith(QStringLiteral(".dsprite"))) {
+            items.push_back({path,
+                             path.endsWith(QStringLiteral(".png")) ? tr("Picture") : tr("Sprite"),
+                             [this, path] { open_sprite(path); }});
+        } else if (path.endsWith(QStringLiteral(".drules"))) {
+            items.push_back({path, tr("Logic"), [this, path] {
+                                 for (QDockWidget* dock : findChildren<QDockWidget*>()) {
+                                     if (dock->widget() == logic_) {
+                                         dock->show();
+                                         dock->raise();
+                                     }
+                                 }
+                                 const QList<QTreeWidgetItem*> found =
+                                     logic_view()->findItems(path, Qt::MatchExactly);
+                                 if (!found.isEmpty()) {
+                                     logic_view()->setCurrentItem(found.front());
+                                 }
+                             }});
+        }
+    }
+    // The scene's entities: choosing one selects it.
+    const engine::world::World& world = document_->world();
+    for (const engine::world::Entity e : document_->entities()) {
+        const std::string_view name = world.name(e);
+        if (!name.empty()) {
+            const engine::Guid guid = world.guid(e);
+            items.push_back(
+                {text_of(std::string(name)), tr("Entity"), [this, guid] { select(guid); }});
+        }
+    }
+    return items;
+}
+
+void MainWindow::show_search() {
+    if (search_ == nullptr) {
+        search_ = new SearchBox(this);
+    }
+    search_->field()->clear();
+    search_->set_items(search_items());
+    search_->show();
+    search_->raise();
+    search_->activateWindow();
+    search_->field()->setFocus();
+}
+
 bool MainWindow::starting() const noexcept {
     return stack_->currentWidget() == start_;
 }
@@ -422,6 +507,10 @@ void MainWindow::build_actions() {
     new_entity_ = edit->addAction(tr("&New entity"), this, [this] { new_entity(); });
     delete_ = edit->addAction(tr("&Delete"), this, [this] { delete_selection(); });
     delete_->setShortcut(QKeySequence::Delete);
+    QAction* find = edit->addAction(tr("Search &everything…"), this, [this] { show_search(); });
+    find->setObjectName(QStringLiteral("search"));
+    find->setShortcut(QKeySequence(QStringLiteral("Ctrl+K")));
+    find->setToolTip(tr("Find any command, scene, picture, logic file or entity by typing"));
     QAction* snap = edit->addAction(tr("&Snap to tiles"));
     snap->setObjectName(QStringLiteral("snap"));
     snap->setCheckable(true);

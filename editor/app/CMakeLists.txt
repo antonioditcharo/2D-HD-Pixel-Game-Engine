@@ -12,6 +12,8 @@ add_library(editor_app STATIC
     src/project_panel.h
     src/scene_view.cpp
     src/scene_view.h
+    src/search.cpp
+    src/search.h
     src/sprite_studio.cpp
     src/sprite_studio.h
     src/start_page.cpp

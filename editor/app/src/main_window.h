@@ -15,6 +15,7 @@
 
 #include "editor/core/document.h"
 #include "editor/core/new_project.h"
+#include "search.h"
 
 class QAction;
 class QTimer;
@@ -102,6 +103,13 @@ public:
     /// Puts back the unsaved work a crash left, as one undo step. The editor offers it when a
     /// project with such work opens.
     bool restore_recovery();
+    /// What Search everything (Ctrl+K) can find now: the enabled commands of the menus, the
+    /// project's scenes, pictures, sprites and logic files, and the scene's entities, each
+    /// with what choosing it does (run, open, select).
+    [[nodiscard]] std::vector<SearchItem> search_items();
+    /// Opens Search everything, empty, its results all there.
+    void show_search();
+    [[nodiscard]] SearchBox* search_box() const noexcept { return search_; }
     /// Reads the assets folder again, and draws again the pictures that changed (hot
     /// reload): after Sprite Studio saves, and when the editor comes back to the front.
     void reload_assets();
@@ -166,6 +174,7 @@ private:
     std::map<std::string, SpriteStudio*> studios_;
     QTimer* autosave_timer_ = nullptr;
     QStackedWidget* stack_ = nullptr; ///< The start page, or the scene.
+    SearchBox* search_ = nullptr;
     StartPage* start_ = nullptr;
     QSettings* settings_ = nullptr;
     QStringList recent_;

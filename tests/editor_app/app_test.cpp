@@ -41,6 +41,7 @@
 #include "main_window.h"
 #include "project_panel.h"
 #include "scene_view.h"
+#include "search.h"
 #include "start_page.h"
 #include "tile_palette.h"
 
@@ -1983,4 +1984,50 @@ TEST_CASE("The start page offers new, open and recent projects, and comes back o
     }
     std::error_code ignored;
     fs::remove(ini, ignored);
+}
+
+TEST_CASE("Search everything scores letters in order, and finds commands, assets and entities") {
+    CHECK(editor::search_score(QStringLiteral("vlg"), QStringLiteral("maps/village.dscene")) > 0);
+    CHECK(editor::search_score(QStringLiteral("xyz"), QStringLiteral("village")) < 0);
+    CHECK(editor::search_score(QStringLiteral("gl"), QStringLiteral("village")) < 0); // in order
+    CHECK(editor::search_score(QString(), QStringLiteral("anything")) == 0);
+    // Starts of the text and of words beat letters inside them.
+    CHECK(editor::search_score(QStringLiteral("play"), QStringLiteral("Game ▸ Play")) >
+          editor::search_score(QStringLiteral("play"), QStringLiteral("Display the player")));
+    CHECK(editor::search_score(QStringLiteral("hero"), QStringLiteral("hero")) >
+          editor::search_score(QStringLiteral("hero"), QStringLiteral("art/hero.png")));
+
+    Editor e;
+    e.window.show_search();
+    editor::SearchBox* box = e.window.search_box();
+    REQUIRE(box != nullptr);
+    CHECK(box->isVisible());
+    CHECK(box->list()->count() > 10);
+    // An entity: choosing it selects it.
+    box->field()->setText(QStringLiteral("elder"));
+    REQUIRE(box->list()->count() >= 1);
+    CHECK(box->list()->item(0)->text().startsWith(QStringLiteral("elder")));
+    REQUIRE(box->run_current());
+    CHECK_FALSE(box->isVisible());
+    CHECK(e.window.selection() == e.guid("elder"));
+    // A scene: choosing it opens it.
+    e.window.show_search();
+    box->field()->setText(QStringLiteral("road dsc"));
+    REQUIRE(box->list()->count() >= 1);
+    CHECK(box->list()->item(0)->text().startsWith(QStringLiteral("maps/road.dscene")));
+    REQUIRE(box->run_current());
+    CHECK(e.window.document()->scene_path() == "maps/road.dscene");
+    // A command, by its menu: New entity.
+    e.window.show_search();
+    box->field()->setText(QStringLiteral("new ent"));
+    REQUIRE(box->list()->count() >= 1);
+    CHECK(box->list()->item(0)->text().startsWith(QStringLiteral("Edit ▸ New entity")));
+    const std::size_t before = e.window.document()->entities().size();
+    REQUIRE(box->run_current());
+    CHECK(e.window.document()->entities().size() == before + 1);
+    // Nothing found: nothing runs.
+    e.window.show_search();
+    box->field()->setText(QStringLiteral("qqqqzz"));
+    CHECK(box->list()->count() == 0);
+    CHECK_FALSE(box->run_current());
 }
