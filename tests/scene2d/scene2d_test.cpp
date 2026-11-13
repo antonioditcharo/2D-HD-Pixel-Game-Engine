@@ -400,6 +400,107 @@ TEST_CASE("Solid tilemaps stop boxes exactly at their edges") {
     CHECK(sweep(scene2d::Box{10.5, 2.5, 11.0, 3.0}, Axis::Y, -5.0) == doctest::Approx(-0.5));
 }
 
+TEST_CASE("A sheet's description is read strictly and written the same") {
+    std::string error;
+    const std::optional<scene2d::SheetInfo> sheet = scene2d::parse_sheet(
+        R"({"format": "sparxel.sheet", "version": 1, "frame_width": 16, "frame_height": 24,
+            "durations_ms": [100, 50, 0, 70000],
+            "tags": [{"name": "walk", "from": 0, "to": 3, "direction": "ping_pong"},
+                     {"name": "out", "from": 2, "to": 9}, {"name": "back", "from": 3, "to": 1}]})",
+        error);
+    REQUIRE(sheet.has_value());
+    const scene2d::SheetInfo info = sheet.value_or(scene2d::SheetInfo{});
+    CHECK(info.frame_width == 16);
+    CHECK(info.durations_ms == std::vector<std::uint32_t>{100, 50, 1, 65535}); // kept in range
+    REQUIRE(info.tags.size() == 1); // tags outside the frames, or backwards, are dropped
+    CHECK(info.find("walk") != nullptr);
+    CHECK(info.find("run") == nullptr);
+    std::string again_error;
+    const std::optional<scene2d::SheetInfo> again =
+        scene2d::parse_sheet(scene2d::sheet_to_text(info), again_error);
+    REQUIRE(again.has_value());
+    CHECK(scene2d::sheet_to_text(again.value_or(scene2d::SheetInfo{})) ==
+          scene2d::sheet_to_text(info));
+    // Forward and back, without repeating the ends.
+    std::vector<std::uint32_t> order;
+    for (const auto& [frame, ms] : info.sequence(info.tags[0])) {
+        order.push_back(frame);
+    }
+    CHECK(order == std::vector<std::uint32_t>{0, 1, 2, 3, 2, 1});
+    CHECK(scene2d::sheet_path("art/hero.png") == "art/hero.sheet");
+    CHECK(scene2d::sheet_path("a.b/hero") == "a.b/hero.sheet");
+    CHECK_FALSE(scene2d::parse_sheet("{\"format\": \"sparxel.scene\"}", error).has_value());
+    CHECK(error == "This is not a sprite sheet's description (\"sparxel.sheet\").");
+    CHECK_FALSE(scene2d::parse_sheet(R"({"format": "sparxel.sheet", "version": 1,
+        "frame_width": 0, "frame_height": 8, "durations_ms": [100]})",
+                                     error)
+                    .has_value());
+}
+
+TEST_CASE("Animations play a tag of the sheet, each frame for its own time") {
+    const TempFolder folder;
+    write_image(folder.path / "hero.png", 4, 1, std::vector<Color>(4, Color{255, 0, 0, 255}));
+    {
+        std::ofstream sheet(folder.path / "hero.sheet", std::ios::binary);
+        sheet << R"({"format": "sparxel.sheet", "version": 1, "frame_width": 1, "frame_height": 1,
+                    "durations_ms": [100, 200, 100, 100],
+                    "tags": [{"name": "walk", "from": 1, "to": 3},
+                             {"name": "back", "from": 0, "to": 2, "direction": "reverse"}]})";
+    }
+    assets::AssetDatabase db(folder.path);
+    db.refresh();
+    scene2d::SheetLibrary sheets(db);
+
+    reflect::Registry registry;
+    scene2d::register_types(registry);
+    world::World w(registry);
+    REQUIRE(scene2d::register_components(w));
+    const world::Entity hero = w.create("hero");
+    scene2d::Sprite* sprite = w.add<scene2d::Sprite>(hero);
+    REQUIRE(sprite != nullptr);
+    const assets::AssetRecord* picture = db.find("hero.png");
+    REQUIRE(picture != nullptr);
+    sprite->image = picture->guid.to_string();
+    scene2d::SpriteAnimation* animation = w.add<scene2d::SpriteAnimation>(hero);
+    REQUIRE(animation != nullptr);
+    animation->play_tag("walk");
+
+    // 50 ms steps: frame 1 for 200 ms, then 2 and 3 for 100 ms each, then round again.
+    std::vector<std::uint32_t> frames;
+    for (int step = 0; step < 10; ++step) {
+        CHECK(scene2d::animate(w, 0.05, &sheets).empty());
+        frames.push_back(w.get<scene2d::Sprite>(hero)->frame);
+    }
+    CHECK(frames == std::vector<std::uint32_t>{1, 1, 1, 2, 2, 3, 3, 1, 1, 1});
+    CHECK(w.get<scene2d::Sprite>(hero)->frame_width == 1); // the sheet's frame size
+
+    // Backwards, once: it says it finished, on the tag's last frame shown.
+    w.get<scene2d::SpriteAnimation>(hero)->loop = false;
+    w.get<scene2d::SpriteAnimation>(hero)->play_tag("back");
+    std::size_t finished_at = 0;
+    frames.clear();
+    for (std::size_t step = 1; step <= 10; ++step) {
+        if (!scene2d::animate(w, 0.05, &sheets).empty()) {
+            CHECK(finished_at == 0);
+            finished_at = step;
+        }
+        frames.push_back(w.get<scene2d::Sprite>(hero)->frame);
+    }
+    CHECK(frames == std::vector<std::uint32_t>{2, 1, 1, 1, 1, 0, 0, 0, 0, 0});
+    CHECK(finished_at == 8); // 400 ms
+
+    // A tag the sheet does not have plays the frames by number, as before.
+    w.get<scene2d::SpriteAnimation>(hero)->loop = true;
+    w.get<scene2d::SpriteAnimation>(hero)->play_tag("run");
+    w.get<scene2d::SpriteAnimation>(hero)->first_frame = 3;
+    static_cast<void>(scene2d::animate(w, 0.05, &sheets));
+    CHECK(w.get<scene2d::Sprite>(hero)->frame == 3);
+    // Without a library, tags are not read at all.
+    w.get<scene2d::SpriteAnimation>(hero)->play_tag("walk");
+    static_cast<void>(scene2d::animate(w, 0.05));
+    CHECK(w.get<scene2d::Sprite>(hero)->frame == 3);
+}
+
 TEST_CASE("Animations step through frames, loop or finish once") {
     reflect::Registry registry;
     scene2d::register_types(registry);

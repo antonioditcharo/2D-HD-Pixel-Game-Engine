@@ -514,6 +514,8 @@ struct Runtime::Impl {
     std::unique_ptr<render::RenderTarget> scene;
     std::unique_ptr<render::PostProcessor> post;
     std::unique_ptr<scene2d::TextureCache> textures;
+    /// The sheets of the pictures: tags with their frames' times.
+    std::unique_ptr<scene2d::SheetLibrary> sheets;
     std::unique_ptr<render::Texture> font;  ///< The built-in font's atlas.
     std::unique_ptr<render::Texture> white; ///< One white pixel, for boxes.
 };
@@ -540,6 +542,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
 
     // Assets.
     r.assets.refresh();
+    r.sheets = std::make_unique<scene2d::SheetLibrary>(r.assets);
     for (const assets::AssetIssue& issue : r.assets.issues()) {
         issues.push_back(serialize::Issue{"assets/" + issue.path, issue.message});
     }
@@ -842,7 +845,7 @@ void Runtime::step() {
     r.vm->update(dt);
 
     // 5. Animation; animations that reached their end tell Rules they finished.
-    for (const world::Entity entity : scene2d::animate(*r.world, dt)) {
+    for (const world::Entity entity : scene2d::animate(*r.world, dt, r.sheets.get())) {
         emit(*r.vm, *r.world, entity, "finished");
     }
     ++r.steps;

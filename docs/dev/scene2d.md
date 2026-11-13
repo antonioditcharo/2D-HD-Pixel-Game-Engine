@@ -37,7 +37,7 @@ nothing extra to write ([reflection.md](reflection.md)).
 |---|---|---|
 | `Transform2D` ("transform_2d") | `x`, `y` in **tiles** (world units), `layer` (advanced) | "Position" |
 | `Sprite` ("sprite") | `image` (an asset GUID), `visible`, `rotation` (degrees), `scale_x` and `scale_y` (*Scale across*, *Scale down*); advanced: `pivot_x`, `pivot_y`, tint red, green, blue, and opacity; `frame_width`, `frame_height` and `frame` for sprite sheets | "Sprite" |
-| `SpriteAnimation` ("sprite_animation") | `first_frame`, `frame_count`, `frames_per_second`, `loop`, `playing`; actions *Play* and *Stop*; event *finished* | "Animation" |
+| `SpriteAnimation` ("sprite_animation") | `tag` (a tag of the sheet, such as *walk*: §3), `first_frame`, `frame_count`, `frames_per_second`, `loop`, `playing`; actions *Play*, *Play the animation {name}* (a tag) and *Stop*; event *finished* | "Animation" |
 | `Tilemap` ("tilemap") | `tileset` (an asset GUID), `tiles`, `visible`, `solid`; advanced: `tile_size` | "Tilemap" |
 
 - **Units:** one world unit is one tile of `ppu` pixels, the project setting (default 16,
@@ -70,6 +70,20 @@ nothing extra to write ([reflection.md](reflection.md)).
   ([game.md](game.md) §3).
 - *Play* starts again from the first frame; *Stop* keeps the frame shown. The time played
   so far is a hidden property, saved with scenes.
+- **Tags.** Sprite Studio saves, beside a sheet `art/hero.png`, its description
+  `art/hero.sheet` (`format` *sparxel.sheet*): the frame size, how long each frame shows,
+  and its tags, named runs of frames that play forward, backward or ping-pong (forward and
+  back, without showing the end frames twice). With `tag` set to one of them (*walk*),
+  `animate()` plays that tag's frames, each for its own time, and sets the Sprite's frame
+  size from the sheet, so nothing about frames needs typing in. Not looping, it stops on
+  the last frame it shows and says it finished, as above. A tag the sheet does not have,
+  or a picture without a `.sheet`, plays the frames by number as before. *Play the
+  animation {name}* switches tag from logic, starting from its beginning.
+  `SheetLibrary` reads each picture's `.sheet` on first use (found by the picture's path:
+  `sheet_path()`), as `TextureCache` reads textures, and `apply()` forgets them after
+  asset changes; the game's runtime keeps one and passes it to `animate()`.
+  `parse_sheet()` keeps frame times within 1 to 65,535 ms and drops tags outside the
+  frames.
 
 ## 4. Tilemaps
 

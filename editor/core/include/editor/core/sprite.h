@@ -15,6 +15,7 @@
 // See docs/dev/sprite-studio.md.
 
 #include "engine/assets/assets.h"
+#include "engine/scene2d/scene2d.h"
 
 #include <array>
 #include <cstddef>
@@ -138,9 +139,12 @@ struct Sprite {
 
 /// Reads a ".dsprite" file. Returns nothing, with `error` in plain language, if it cannot.
 [[nodiscard]] std::optional<Sprite> load(const std::filesystem::path& path, std::string& error);
-/// Writes a ".dsprite" file and the sprite sheet PNG beside it (the same name with
-/// ".png"). Returns false, with `error`, if either cannot be written.
+/// Writes a ".dsprite" file, the sprite sheet PNG beside it (the same name with ".png"),
+/// and the sheet's description the game reads (".sheet": the frame size, each frame's time
+/// and the tags). Returns false, with `error`, if one cannot be written.
 bool save(const Sprite& sprite, const std::filesystem::path& path, std::string& error);
+/// What the game reads of a sprite: its frame size, frame times and tags.
+[[nodiscard]] engine::scene2d::SheetInfo sheet_info(const Sprite& sprite);
 /// The ".dsprite" text of a sprite, as save() writes it.
 [[nodiscard]] std::string to_text(const Sprite& sprite);
 /// Reads ".dsprite" text.

@@ -1,5 +1,7 @@
 #include "engine/scene2d/scene2d.h"
 
+#include "engine/serialize/json.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -8,6 +10,7 @@
 #include <string_view>
 #include <system_error>
 #include <tuple>
+#include <utility>
 
 namespace engine::scene2d {
 
@@ -83,6 +86,10 @@ void register_types(reflect::Registry& registry) {
                          .display_name("Animation")
                          .category("Visuals")
                          .tooltip("Plays frames of a sprite sheet one after another.");
+    animation.property<&SpriteAnimation::tag>("tag").display_name("Tag").tooltip(
+        "A tag of the sprite's sheet to play, as named in Sprite Studio (walk, idle): "
+        "its frames, each for its own time, in its direction. Empty: the frames "
+        "below, by number.");
     animation.property<&SpriteAnimation::first_frame>("first_frame")
         .range(0, 65535)
         .display_name("First frame")
@@ -106,6 +113,9 @@ void register_types(reflect::Registry& registry) {
     animation.action<&SpriteAnimation::play>("play")
         .text("Play the animation from the start")
         .tooltip("Starts the animation again from its first frame.");
+    animation.action<&SpriteAnimation::play_tag>("play_tag", {"name"})
+        .text("Play the animation {name}")
+        .tooltip("Plays a tag of the sprite's sheet from its start, such as walk or idle.");
     animation.action<&SpriteAnimation::stop>("stop")
         .text("Stop the animation")
         .tooltip("Stops on the frame it is showing.");
@@ -462,7 +472,186 @@ double sweep(const world::World& world, const Box& box, Axis axis, double distan
 // Animation
 // ---------------------------------------------------------------------------------------
 
-std::vector<world::Entity> animate(world::World& world, double seconds) {
+const SheetTag* SheetInfo::find(std::string_view name) const noexcept {
+    for (const SheetTag& tag : tags) {
+        if (tag.name == name) {
+            return &tag;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<std::pair<std::uint32_t, std::uint32_t>>
+SheetInfo::sequence(const SheetTag& tag) const {
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
+    const auto shown = [&](std::uint32_t frame) {
+        const std::uint32_t ms = frame < durations_ms.size() ? durations_ms[frame] : 100U;
+        out.emplace_back(frame, std::max<std::uint32_t>(ms, 1U));
+    };
+    if (tag.from > tag.to) {
+        return out;
+    }
+    switch (tag.direction) {
+    case TagDirection::Forward:
+        for (std::uint32_t f = tag.from; f <= tag.to; ++f) {
+            shown(f);
+        }
+        break;
+    case TagDirection::Reverse:
+        for (std::uint32_t f = tag.to + 1; f-- > tag.from;) {
+            shown(f);
+        }
+        break;
+    case TagDirection::PingPong:
+        for (std::uint32_t f = tag.from; f <= tag.to; ++f) {
+            shown(f);
+        }
+        for (std::uint32_t f = tag.to; f > tag.from + 1;) {
+            shown(--f);
+        }
+        break;
+    }
+    return out;
+}
+
+std::string sheet_path(std::string_view image_path) {
+    std::string path(image_path);
+    const std::size_t slash = path.find_last_of('/');
+    const std::size_t dot = path.find_last_of('.');
+    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
+        path.erase(dot);
+    }
+    return path + ".sheet";
+}
+
+std::optional<SheetInfo> parse_sheet(std::string_view text, std::string& error) {
+    std::vector<serialize::Issue> issues;
+    const std::optional<serialize::Json> parsed = serialize::parse(text, issues);
+    if (!parsed || !parsed->is_object() || parsed->value("format", std::string()) != sheet_format) {
+        error = "This is not a sprite sheet's description (\"sparxel.sheet\").";
+        return std::nullopt;
+    }
+    const serialize::Json& json = *parsed;
+    if (!json.contains("version") || !json["version"].is_number_integer() ||
+        json["version"].get<int>() > sheet_version) {
+        error = "This sheet was saved by a newer version of Sparxel.";
+        return std::nullopt;
+    }
+    const auto whole = [](const serialize::Json& at, const char* key, std::int64_t low,
+                          std::int64_t high) -> std::optional<std::uint32_t> {
+        if (!at.contains(key) || !at[key].is_number_integer()) {
+            return std::nullopt;
+        }
+        const auto v = at[key].get<std::int64_t>();
+        if (v < low || v > high) {
+            return std::nullopt;
+        }
+        return static_cast<std::uint32_t>(v);
+    };
+    SheetInfo sheet;
+    const std::optional<std::uint32_t> width = whole(json, "frame_width", 1, 4096);
+    const std::optional<std::uint32_t> height = whole(json, "frame_height", 1, 4096);
+    if (!width || !height) {
+        error = "A sheet's frames are from 1 to 4,096 pixels each way.";
+        return std::nullopt;
+    }
+    sheet.frame_width = *width;
+    sheet.frame_height = *height;
+    if (json.contains("durations_ms") && json["durations_ms"].is_array()) {
+        for (const serialize::Json& ms : json["durations_ms"]) {
+            if (sheet.durations_ms.size() >= 4096) {
+                break;
+            }
+            sheet.durations_ms.push_back(ms.is_number_integer()
+                                             ? static_cast<std::uint32_t>(std::clamp<std::int64_t>(
+                                                   ms.get<std::int64_t>(), 1, 65535))
+                                             : 100U);
+        }
+    }
+    if (sheet.durations_ms.empty()) {
+        error = "A sheet needs at least one frame.";
+        return std::nullopt;
+    }
+    const auto frames = static_cast<std::int64_t>(sheet.durations_ms.size());
+    if (json.contains("tags") && json["tags"].is_array()) {
+        for (const serialize::Json& tag : json["tags"]) {
+            if (!tag.is_object()) {
+                continue;
+            }
+            const std::optional<std::uint32_t> from = whole(tag, "from", 0, frames - 1);
+            const std::optional<std::uint32_t> to = whole(tag, "to", 0, frames - 1);
+            if (!from || !to || *from > *to) {
+                continue;
+            }
+            SheetTag t;
+            t.name = tag.value("name", std::string());
+            t.from = *from;
+            t.to = *to;
+            const std::string direction = tag.value("direction", std::string("forward"));
+            t.direction = direction == "reverse"     ? TagDirection::Reverse
+                          : direction == "ping_pong" ? TagDirection::PingPong
+                                                     : TagDirection::Forward;
+            if (!t.name.empty()) {
+                sheet.tags.push_back(std::move(t));
+            }
+        }
+    }
+    return sheet;
+}
+
+std::string sheet_to_text(const SheetInfo& sheet) {
+    serialize::Json json = serialize::Json::object();
+    json["format"] = sheet_format;
+    json["version"] = sheet_version;
+    json["frame_width"] = sheet.frame_width;
+    json["frame_height"] = sheet.frame_height;
+    json["durations_ms"] = sheet.durations_ms;
+    serialize::Json tags = serialize::Json::array();
+    for (const SheetTag& tag : sheet.tags) {
+        const char* direction = tag.direction == TagDirection::Reverse    ? "reverse"
+                                : tag.direction == TagDirection::PingPong ? "ping_pong"
+                                                                          : "forward";
+        tags.push_back(
+            {{"name", tag.name}, {"from", tag.from}, {"to", tag.to}, {"direction", direction}});
+    }
+    json["tags"] = std::move(tags);
+    return serialize::to_text(json);
+}
+
+SheetLibrary::SheetLibrary(const assets::AssetDatabase& assets) : assets_(assets) {}
+
+const SheetInfo* SheetLibrary::find(std::string_view image) {
+    const auto known = sheets_.find(std::string(image));
+    if (known != sheets_.end()) {
+        return known->second ? &*known->second : nullptr;
+    }
+    std::optional<SheetInfo> sheet;
+    const std::optional<Guid> guid = Guid::parse(image);
+    const assets::AssetRecord* picture = guid ? assets_.find(*guid) : nullptr;
+    const assets::AssetRecord* file =
+        picture != nullptr ? assets_.find(sheet_path(picture->path)) : nullptr;
+    if (file != nullptr) {
+        if (const std::optional<std::vector<std::uint8_t>> bytes = assets_.read(file->guid)) {
+            std::string error;
+            sheet =
+                parse_sheet(std::string_view(reinterpret_cast<const char*>(bytes->data()), // NOLINT
+                                             bytes->size()),
+                            error);
+        }
+    }
+    const auto [at, added] = sheets_.emplace(std::string(image), std::move(sheet));
+    static_cast<void>(added);
+    return at->second ? &*at->second : nullptr;
+}
+
+void SheetLibrary::apply(const assets::AssetChanges& changes) {
+    // A sheet belongs to a picture by path, so any change may touch one: read them again.
+    if (!changes.empty()) {
+        sheets_.clear();
+    }
+}
+
+std::vector<world::Entity> animate(world::World& world, double seconds, SheetLibrary* sheets) {
     std::vector<world::Entity> finished;
     if (!std::isfinite(seconds) || seconds < 0.0) {
         seconds = 0.0;
@@ -488,6 +677,41 @@ std::vector<world::Entity> animate(world::World& world, double seconds) {
         }
         if (animation->playing) {
             animation->elapsed += seconds;
+        }
+        // A tag of the sheet: its frames, each for its own time.
+        const SheetInfo* sheet =
+            sheets != nullptr && !animation->tag.empty() ? sheets->find(sprite->image) : nullptr;
+        const SheetTag* tag = sheet != nullptr ? sheet->find(animation->tag) : nullptr;
+        if (tag != nullptr) {
+            const auto frames = sheet->sequence(*tag);
+            double total = 0.0;
+            for (const auto& [frame, ms] : frames) {
+                total += ms;
+            }
+            double at =
+                std::isfinite(animation->elapsed) ? animation->elapsed * 1000.0 + 1e-6 : 0.0;
+            std::size_t shown = frames.size() - 1;
+            if (animation->loop) {
+                at = std::fmod(std::max(at, 0.0), total);
+            } else if (at >= total) {
+                at = total;
+                if (animation->playing) {
+                    animation->playing = false;
+                    finished.push_back(entity);
+                }
+            }
+            double start = 0.0;
+            for (std::size_t i = 0; i < frames.size(); ++i) {
+                start += frames[i].second;
+                if (at < start) {
+                    shown = i;
+                    break;
+                }
+            }
+            sprite->frame_width = sheet->frame_width;
+            sprite->frame_height = sheet->frame_height;
+            sprite->frame = frames[shown].first;
+            return;
         }
         const double fps = std::isfinite(animation->frames_per_second)
                                ? std::max(animation->frames_per_second, 0.0)

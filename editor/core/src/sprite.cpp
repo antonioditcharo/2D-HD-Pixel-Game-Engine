@@ -653,6 +653,24 @@ std::optional<Sprite> load(const fs::path& path, std::string& error) {
     return from_text(text, error);
 }
 
+engine::scene2d::SheetInfo sheet_info(const Sprite& sprite) {
+    engine::scene2d::SheetInfo sheet;
+    sheet.frame_width = static_cast<std::uint32_t>(sprite.width);
+    sheet.frame_height = static_cast<std::uint32_t>(sprite.height);
+    for (const Frame& frame : sprite.frames) {
+        sheet.durations_ms.push_back(frame.duration_ms);
+    }
+    for (const Tag& tag : sprite.tags) {
+        engine::scene2d::SheetTag t;
+        t.name = tag.name;
+        t.from = static_cast<std::uint32_t>(tag.from);
+        t.to = static_cast<std::uint32_t>(tag.to);
+        t.direction = static_cast<engine::scene2d::TagDirection>(tag.direction);
+        sheet.tags.push_back(std::move(t));
+    }
+    return sheet;
+}
+
 bool save(const Sprite& sprite, const fs::path& path, std::string& error) {
     const auto write = [&](const fs::path& to, const void* data, std::size_t size) {
         const fs::path temporary = fs::path(to).concat(".saving");
@@ -680,6 +698,13 @@ bool save(const Sprite& sprite, const fs::path& path, std::string& error) {
     sheet.replace_extension(".png");
     if (png.empty() || !write(sheet, png.data(), png.size())) {
         error = "The sprite sheet cannot be written.";
+        return false;
+    }
+    fs::path described = path;
+    described.replace_extension(".sheet");
+    const std::string sheet_text = engine::scene2d::sheet_to_text(sheet_info(sprite));
+    if (!write(described, sheet_text.data(), sheet_text.size())) {
+        error = "The sheet's description cannot be written.";
         return false;
     }
     if (!write(path, text.data(), text.size())) {

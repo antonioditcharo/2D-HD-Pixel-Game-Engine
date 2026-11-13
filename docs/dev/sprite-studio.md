@@ -6,7 +6,8 @@
 > of frames along the bottom. Layers, frames with their own times, tags (the animations),
 > onion skin and playback; the pencil with pixel-perfect strokes, the eraser, lines,
 > rectangles, ellipses, fill, selection and move, mirroring, and undo for all of it. It
-> saves a `.dsprite` file and, beside it, the sprite sheet PNG the game draws.
+> saves a `.dsprite` file and, beside it, the sprite sheet PNG the game draws and a `.sheet`
+> with its frame times and tags, which the game plays by name.
 >
 > Code: [`editor/core/include/editor/core/sprite.h`](../../editor/core/include/editor/core/sprite.h)
 > and [`src/sprite.cpp`](../../editor/core/src/sprite.cpp) (the model, without Qt), and
@@ -57,6 +58,7 @@ editor or opening another project.
 | File | What |
 |---|---|
 | `<name>.dsprite` | The sprite as made: its size, layers (name, shown, locked, opacity), frames (each one's time), tags (name, first and last frame, direction), palette, and each layer's pixels in each frame as a PNG in base64. JSON with sorted keys (`format` *sparxel.sprite*, `version` 1), so it diffs well and the same sprite always saves the same text. Empty cels are not written |
+| `<name>.sheet` | What the game reads of the sprite besides its pixels: the frame size, each frame's time and the tags ([scene2d.md](scene2d.md) §3). An Animation whose *Tag* is *walk* plays the *walk* tag, each frame for its own time, in its direction |
 | `<name>.png` | The sprite sheet: every frame flattened (shown layers, bottom first, blended by opacity), left to right then top to bottom, as a Sprite's `frame_width` and `frame_height` read it ([scene2d.md](scene2d.md) §3). Frames go across as far as 4,096 pixels, then wrap; a sprite opened from a sheet keeps that sheet's frames across, so the frame numbers a scene uses stay the same. *Frames across in the sheet…* changes it |
 
 Both are written to a temporary file first and then renamed over the old one, so a failed
@@ -119,14 +121,13 @@ cannot be read."*); tags outside the frames are dropped.
 | Palette | Added once, changed (merged), made from the sprite's colours |
 | Canvas | Resized keeping the pixels at the corner or in the middle; sizes out of range refused |
 | Sheet | Frames left to right then down; frames across; read back as the same frames with empty trailing cells left out; a picture that does not divide is refused, saying so |
-| Files | Saved and read back the same (layers, frames, tags, palette, pixels, and byte-identical text); the sheet beside it; files of another format, of a size out of range, or missing are refused |
+| Files | The `.sheet` beside it holds the frame size, times and tags; saved and read back the same (layers, frames, tags, palette, pixels, and byte-identical text); the sheet beside it; files of another format, of a size out of range, or missing are refused |
 | The window | *New sprite* makes both files and opens a window; names leaving the art folder or taken are refused; drawing with the mouse (left and right buttons), Alt-click picking, Fill and undo; the timeline's rows and columns, choosing a cell, hiding a layer by its tick box; saving; opening again brings the same window |
 | In the scene | The hero's picture opens cut into its scene's frames; painted over and saved, the scene view draws it differently; a sound is refused |
 
 ## 7. Next increments
 
-1. **Tags in the game:** a Sprite Animation chosen by tag name, with each frame's own time
-   and the tag's direction, instead of a first frame, a count and frames per second.
+1. **A list of the sheet's tags** in the inspector, in place of typing the tag's name.
 2. **More pixel-art helpers** (`plan/02` B2): shading ink along palette ramps, dithering
    brushes, tile and wrap mode, an outline generator, and lasso and magic-wand selection.
 3. **Reference layers and layer groups** (B3), palette-swap variants (B4), frame events,

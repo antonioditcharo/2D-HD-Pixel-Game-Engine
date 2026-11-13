@@ -8,6 +8,7 @@ add_library(engine::scene2d ALIAS engine_scene2d)
 target_include_directories(engine_scene2d PUBLIC include)
 target_link_libraries(engine_scene2d
     PUBLIC engine::foundation engine::world engine::render engine::assets
+    PRIVATE engine::serialize
 )
 
 engine_configure_runtime_target(engine_scene2d)

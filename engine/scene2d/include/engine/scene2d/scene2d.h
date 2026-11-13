@@ -21,6 +21,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace engine::scene2d {
@@ -72,6 +73,10 @@ sprite_corners(const Sprite& sprite, double width, double height) noexcept;
 
 /// "Animation": plays a run of a sprite sheet's frames on the entity's Sprite.
 struct SpriteAnimation {
+    /// A tag of the sprite's sheet to play, such as "walk" (its frames, their own times,
+    /// and its direction, from the sheet's ".sheet" file: SheetInfo). Empty, or a tag the
+    /// sheet does not have, plays `first_frame` on at `frames_per_second` instead.
+    std::string tag;
     std::uint32_t first_frame = 0;
     std::uint32_t frame_count = 1;
     double frames_per_second = 8.0;
@@ -86,6 +91,65 @@ struct SpriteAnimation {
     }
     /// Stops on the current frame.
     void stop() { playing = false; }
+    /// Plays a tag of the sheet from its start (an empty name: the frames by number).
+    void play_tag(const std::string& name) {
+        tag = name;
+        play();
+    }
+};
+
+/// Which way a tag's frames play.
+enum class TagDirection : std::uint8_t { Forward, Reverse, PingPong };
+
+/// A named run of a sheet's frames: an animation such as "walk" or "idle".
+struct SheetTag {
+    std::string name;
+    std::uint32_t from = 0; ///< The first frame, counting from 0.
+    std::uint32_t to = 0;   ///< The last frame, included.
+    TagDirection direction = TagDirection::Forward;
+};
+
+/// What a sprite sheet holds, as Sprite Studio saves it beside the PNG ("art/hero.png" has
+/// "art/hero.sheet"): the size of a frame, how long each frame shows, and its tags.
+struct SheetInfo {
+    std::uint32_t frame_width = 0;
+    std::uint32_t frame_height = 0;
+    std::vector<std::uint32_t> durations_ms; ///< One per frame, 1 to 65,535.
+    std::vector<SheetTag> tags;
+
+    [[nodiscard]] const SheetTag* find(std::string_view name) const noexcept;
+    /// The frames a tag shows, in the order it shows them, each with how long it shows
+    /// (milliseconds): forward, backward, or forward and back without repeating the ends.
+    [[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint32_t>>
+    sequence(const SheetTag& tag) const;
+};
+
+/// The ".sheet" format name and version.
+inline constexpr std::string_view sheet_format = "sparxel.sheet";
+inline constexpr int sheet_version = 1;
+
+/// The ".sheet" file of a picture: "art/hero.png" gives "art/hero.sheet".
+[[nodiscard]] std::string sheet_path(std::string_view image_path);
+/// Reads ".sheet" text. Nothing, with `error` in plain language, if it is not one. Tags
+/// outside the frames are dropped.
+[[nodiscard]] std::optional<SheetInfo> parse_sheet(std::string_view text, std::string& error);
+/// The ".sheet" text of a sheet, with sorted keys, so the same sheet is always the same
+/// text.
+[[nodiscard]] std::string sheet_to_text(const SheetInfo& sheet);
+
+/// The sheets of a project's pictures, read on first use, as TextureCache reads textures.
+class SheetLibrary {
+public:
+    explicit SheetLibrary(const assets::AssetDatabase& assets);
+    /// The sheet of an image asset (its GUID as text, as Sprite::image holds it), or null
+    /// if it has none or it cannot be read.
+    const SheetInfo* find(std::string_view image);
+    /// Forgets what `changes` touched, so the next find() reads it again (hot reload).
+    void apply(const assets::AssetChanges& changes);
+
+private:
+    const assets::AssetDatabase& assets_;
+    std::unordered_map<std::string, std::optional<SheetInfo>> sheets_;
 };
 
 /// A tilemap's tiles, parsed. Cells hold tile numbers, or -1 for none.
@@ -182,7 +246,8 @@ bool register_components(world::World& world);
 /// moves animated tilemaps on (they loop, and never finish). Call it once per fixed step.
 /// Returns the entities whose animation reached its end this time (animations that do not
 /// loop), so their "finished" event can be sent.
-std::vector<world::Entity> animate(world::World& world, double seconds);
+std::vector<world::Entity> animate(world::World& world, double seconds,
+                                   SheetLibrary* sheets = nullptr);
 
 /// An axis-aligned box in world units, such as a character's feet. Edges are half-open:
 /// a box whose right edge is exactly on a tile's left edge does not overlap it.

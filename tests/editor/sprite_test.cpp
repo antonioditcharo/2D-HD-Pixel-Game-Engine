@@ -460,6 +460,20 @@ TEST_CASE("A sprite is saved with its sheet, and read back the same") {
     const fs::path file = folder.path / "hero.dsprite";
     REQUIRE(sprite::save(editor.sprite(), file, error));
     CHECK(fs::exists(folder.path / "hero.png"));
+    // The game's description of the sheet: frame size, times and tags.
+    std::ifstream described(folder.path / "hero.sheet", std::ios::binary);
+    const std::string sheet_text((std::istreambuf_iterator<char>(described)),
+                                 std::istreambuf_iterator<char>());
+    const std::optional<engine::scene2d::SheetInfo> info =
+        engine::scene2d::parse_sheet(sheet_text, error);
+    REQUIRE(info.has_value());
+    const engine::scene2d::SheetInfo sheet_info = info.value_or(engine::scene2d::SheetInfo{});
+    CHECK(sheet_info.frame_width == 3);
+    CHECK(sheet_info.frame_height == 2);
+    CHECK(sheet_info.durations_ms == std::vector<std::uint32_t>{100, 40});
+    REQUIRE(sheet_info.tags.size() == 1);
+    CHECK(sheet_info.tags[0].name == "blink");
+    CHECK(sheet_info.tags[0].direction == engine::scene2d::TagDirection::PingPong);
 
     const std::optional<sprite::Sprite> loaded = sprite::load(file, error);
     REQUIRE(loaded.has_value());
