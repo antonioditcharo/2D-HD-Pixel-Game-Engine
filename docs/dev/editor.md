@@ -47,6 +47,17 @@ layout* puts them all back where they were at first.
 The title shows the game, the scene being edited, and a star while there are unsaved
 changes; closing asks whether to save them.
 
+**Never losing work** (`plan/06` §5). Every minute, and whenever the editor stops being the
+window in front, unsaved work (the scene, the logic, the project's settings, and other
+scenes changed here) is kept in the project's recovery file, `.sparxel/recovery.json`,
+written atomically beside `assets/` (hidden from the asset list, and never exported); the
+project's own files are not touched. If the editor closes without saving (a crash, a power
+cut), opening the project again says so and how long ago the work was kept, and offers it
+back: restoring opens the scene it was made in and puts the work back as one undo step,
+*Restore unsaved work*, to save or undo. Saving removes the file, and so does choosing not
+to save when closing. (`Document::write_recovery()`, `restore_recovery()`,
+`discard_recovery()`, `recovery_scene()`; Sprite Studio's sprites are not kept yet.)
+
 **Scenes.** A project opens in the scene its game starts in. **Double-click a scene** in
 the Assets to edit it instead; the open scene is saved first if it changed, and Undo
 starts again in the scene opened. Logic belongs to the whole game: a Rule can be about an

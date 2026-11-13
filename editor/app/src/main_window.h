@@ -16,6 +16,7 @@
 #include "editor/core/new_project.h"
 
 class QAction;
+class QTimer;
 class QSettings;
 class QTreeWidget;
 class QTreeView;
@@ -76,6 +77,12 @@ public:
     /// Makes an empty sprite of `width` x `height` pixels as assets/art/<name>.dsprite (with
     /// its sheet, art/<name>.png) and opens it in Sprite Studio.
     SpriteStudio* new_sprite(const QString& name, int width, int height);
+    /// Keeps the unsaved work in the project's recovery file (Document::write_recovery()).
+    /// Runs every minute, and whenever the editor stops being the window in front.
+    bool autosave();
+    /// Puts back the unsaved work a crash left, as one undo step. The editor offers it when a
+    /// project with such work opens.
+    bool restore_recovery();
     /// Reads the assets folder again, and draws again the pictures that changed (hot
     /// reload): after Sprite Studio saves, and when the editor comes back to the front.
     void reload_assets();
@@ -138,6 +145,7 @@ private:
     std::filesystem::path player_;
     /// The open Sprite Studio windows, by the .dsprite each edits.
     std::map<std::string, SpriteStudio*> studios_;
+    QTimer* autosave_timer_ = nullptr;
     std::unique_ptr<Document> document_;
     engine::Guid selection_;
     SceneView* view_ = nullptr;

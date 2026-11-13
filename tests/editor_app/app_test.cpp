@@ -1907,3 +1907,25 @@ TEST_CASE("The Logic view moves a step by dragging it onto another line") {
     CHECK(tree->currentItem() == any->child(0)); // first in the group, still selected
     CHECK(e.window.document()->undo_label() == "Move a condition");
 }
+
+TEST_CASE("Unsaved work is kept, and restored in a new window after a crash") {
+    Editor e;
+    const Guid hero = e.guid("hero");
+    REQUIRE(e.window.document()->move_entity(hero, 7.0, 2.0));
+    e.window.document()->end_merge();
+    REQUIRE(e.window.autosave());
+    CHECK(fs::exists(e.sample.path / editor::recovery_file));
+    // A second window, as after the editor was closed by a crash: the work comes back.
+    editor::MainWindow again(SPARXEL_PLAYER);
+    REQUIRE(again.open_project(e.sample.path));
+    const auto x = [&again, hero] {
+        const auto& world = again.document()->world();
+        return world.get<scene2d::Transform2D>(world.find(hero))->x;
+    };
+    CHECK(x() != 7.0);
+    REQUIRE(again.restore_recovery());
+    CHECK(x() == 7.0);
+    CHECK(again.windowTitle().endsWith(QStringLiteral(" * — Sparxel Editor")));
+    REQUIRE(again.save());
+    CHECK_FALSE(fs::exists(e.sample.path / editor::recovery_file));
+}

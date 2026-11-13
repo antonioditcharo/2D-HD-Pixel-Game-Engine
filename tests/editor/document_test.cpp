@@ -2953,3 +2953,67 @@ TEST_CASE("Picking in the Diorama style goes through the camera") {
     }();
     CHECK_FALSE(editor::pick_diorama(d->world(), d->assets(), low, aspect, 0.0, 0.99).is_valid());
 }
+
+TEST_CASE("Unsaved work is kept for recovery, restored as one undo step, and gone once saved") {
+    const Sample sample;
+    const fs::path file = sample.path / editor::recovery_file;
+    {
+        const std::unique_ptr<editor::Document> doc = sample.open();
+        std::string error;
+        // Nothing unsaved: nothing kept.
+        REQUIRE(doc->write_recovery(error));
+        CHECK_FALSE(fs::exists(file));
+        const Guid hero = doc->world().guid(doc->world().find_named("hero").at(0));
+        REQUIRE(doc->move_entity(hero, 9.0, 4.0));
+        doc->end_merge();
+        REQUIRE(doc->write_recovery(error));
+        CHECK(fs::exists(file));
+        CHECK(editor::recovery_scene(sample.path) ==
+              std::optional<std::string>("maps/village.dscene"));
+        // The editor closes without saving (a crash): the scene's file is as it was.
+    }
+    {
+        const std::unique_ptr<editor::Document> doc = sample.open();
+        const Guid hero = doc->world().guid(doc->world().find_named("hero").at(0));
+        const auto x = [&] {
+            return doc->world().get<scene2d::Transform2D>(doc->world().find(hero))->x;
+        };
+        CHECK(x() != 9.0);
+        CHECK_FALSE(doc->dirty());
+        std::string error;
+        REQUIRE(doc->restore_recovery(error));
+        CHECK(x() == 9.0);
+        CHECK(doc->dirty());
+        CHECK(doc->undo_label() == "Restore unsaved work");
+        REQUIRE(doc->undo());
+        CHECK(x() != 9.0);
+        REQUIRE(doc->redo());
+        CHECK(fs::exists(file)); // until saved
+        REQUIRE(doc->save(error));
+        CHECK_FALSE(fs::exists(file));
+        CHECK_FALSE(editor::recovery_scene(sample.path).has_value());
+        CHECK_FALSE(doc->restore_recovery(error));
+        CHECK(error == "There is no unsaved work to restore.");
+    }
+    // Work in another scene opens that scene; a damaged file is refused, changing nothing.
+    {
+        const std::unique_ptr<editor::Document> doc = sample.open();
+        std::string error;
+        REQUIRE(doc->open_scene("maps/road.dscene", error));
+        REQUIRE(doc->create_entity("signpost", 1.0, 1.0).is_valid());
+        REQUIRE(doc->write_recovery(error));
+    }
+    {
+        const std::unique_ptr<editor::Document> doc = sample.open();
+        std::string error;
+        REQUIRE(doc->restore_recovery(error));
+        CHECK(doc->scene_path() == "maps/road.dscene");
+        CHECK(doc->world().find_named("signpost").size() == 1);
+        doc->discard_recovery();
+        CHECK_FALSE(fs::exists(file));
+        std::ofstream(file) << "{\"format\": \"sparxel.recovery\"}";
+        CHECK_FALSE(doc->restore_recovery(error));
+        CHECK(error == "The unsaved work could not be read: its file is damaged.");
+        CHECK_FALSE(editor::recovery_scene(sample.path).has_value());
+    }
+}

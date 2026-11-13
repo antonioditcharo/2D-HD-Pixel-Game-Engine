@@ -1250,6 +1250,102 @@ bool Document::undo() {
     return true;
 }
 
+// ---------------------------------------------------------------------------------------
+// Autosave and crash recovery
+// ---------------------------------------------------------------------------------------
+
+namespace {
+
+constexpr std::string_view recovery_format = "sparxel.recovery";
+
+std::optional<serialize::Json> read_recovery(const fs::path& folder, std::string& error) {
+    std::ifstream in(folder / recovery_file, std::ios::binary);
+    if (!in) {
+        error = "There is no unsaved work to restore.";
+        return std::nullopt;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<Issue> issues;
+    std::optional<serialize::Json> json = serialize::parse(text, issues);
+    if (!json || !json->is_object() || json->value("format", std::string()) != recovery_format ||
+        !json->contains("scene_path") || !(*json)["scene_path"].is_string() ||
+        !json->contains("state") || !(*json)["state"].is_object()) {
+        error = "The unsaved work could not be read: its file is damaged.";
+        return std::nullopt;
+    }
+    const serialize::Json& state = (*json)["state"];
+    for (const char* key : {"scene", "logic", "project", "others"}) {
+        if (!state.contains(key)) {
+            error = "The unsaved work could not be read: its file is damaged.";
+            return std::nullopt;
+        }
+    }
+    return json;
+}
+
+} // namespace
+
+std::optional<std::string> recovery_scene(const fs::path& folder) {
+    std::string ignored;
+    const std::optional<serialize::Json> json = read_recovery(folder, ignored);
+    if (!json) {
+        return std::nullopt;
+    }
+    return (*json)["scene_path"].get<std::string>();
+}
+
+bool Document::write_recovery(std::string& error) {
+    const Impl& d = *impl_;
+    if (!dirty()) {
+        discard_recovery();
+        return true;
+    }
+    std::error_code made;
+    fs::create_directories((d.folder / recovery_file).parent_path(), made);
+    const serialize::Json json{{"format", recovery_format},
+                               {"version", 1},
+                               {"scene_path", d.scene_path},
+                               {"state", d.snapshot()}};
+    if (made ||
+        !game::write_file_atomically(d.folder / recovery_file, serialize::to_text(json), error)) {
+        if (error.empty()) {
+            error = made.message();
+        }
+        error.insert(0, "The unsaved work could not be kept: ");
+        return false;
+    }
+    return true;
+}
+
+void Document::discard_recovery() {
+    std::error_code ignored;
+    fs::remove(impl_->folder / recovery_file, ignored);
+}
+
+bool Document::restore_recovery(std::string& error) {
+    Impl& d = *impl_;
+    const std::optional<serialize::Json> json = read_recovery(d.folder, error);
+    if (!json) {
+        return false;
+    }
+    const std::string scene = (*json)["scene_path"].get<std::string>();
+    if (scene != d.scene_path && !open_scene(scene, error)) {
+        error.insert(0, "The unsaved work belongs to " + scene + ": ");
+        return false;
+    }
+    serialize::Json before = d.snapshot();
+    try {
+        d.restore((*json)["state"]);
+    } catch (const std::exception&) {
+        d.restore(before);
+        error = "The unsaved work could not be read: its file is damaged.";
+        return false;
+    }
+    d.merging = false;
+    d.record("Restore unsaved work", std::move(before));
+    return true;
+}
+
 bool Document::redo() {
     Impl& d = *impl_;
     if (d.redo.empty()) {
@@ -1342,6 +1438,7 @@ bool Document::save(std::string& error) {
         saved_file = json;
     }
     d.merging = false;
+    discard_recovery(); // the work is safe in the project's files
     return true;
 }
 

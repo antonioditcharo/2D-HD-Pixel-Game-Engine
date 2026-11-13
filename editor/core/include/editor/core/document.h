@@ -91,6 +91,12 @@ struct LogicEvent {
     std::string text;
 };
 
+/// The recovery file of a project folder, relative to it.
+inline constexpr std::string_view recovery_file = ".sparxel/recovery.json";
+/// The scene whose unsaved work a project's recovery file holds (its path in assets/), if
+/// it has one: the editor closed without saving it, by a crash or otherwise.
+[[nodiscard]] std::optional<std::string> recovery_scene(const std::filesystem::path& folder);
+
 /// The objects a game gives its logic besides its entities, each bound by the runtime to
 /// the registered type of the same name.
 inline constexpr std::array<std::string_view, 6> game_objects{"audio",     "dialogue", "game",
@@ -469,7 +475,24 @@ public:
     /// True if the scene has changes that are not saved.
     [[nodiscard]] bool dirty() const noexcept;
     /// Writes the scene to its file, atomically. Returns false with `error` if it could not.
+    /// Saving removes the recovery file: the work is safe in the project's own files.
     bool save(std::string& error);
+
+    // ----- Autosave and crash recovery (plan/06 §5) -----
+
+    /// Keeps the unsaved work (the scene, its logic, the settings, other scenes changed
+    /// here) in the project's recovery file, `.sparxel/recovery.json`, written atomically,
+    /// so a crash or a power cut loses at most what came after. Without unsaved work, the
+    /// file is removed instead. The project's own files are never touched. False, with
+    /// `error`, if it cannot be written.
+    bool write_recovery(std::string& error);
+    /// Removes the recovery file (after closing without saving, by choice).
+    void discard_recovery();
+    /// Puts back the work in the recovery file, in the scene it was made in (opened first if
+    /// another is open, which needs no unsaved changes), as one undo step, "Restore unsaved
+    /// work": nothing is saved until the creator saves. The file stays until then. False,
+    /// with `error` in plain language, if there is none or it cannot be read.
+    bool restore_recovery(std::string& error);
 
 private:
     struct Impl;

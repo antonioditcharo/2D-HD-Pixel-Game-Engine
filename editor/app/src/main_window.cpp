@@ -9,6 +9,7 @@
 #include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFormLayout>
 #include <QHeaderView>
@@ -23,6 +24,7 @@
 #include <QSettings>
 #include <QSpinBox>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolBar>
 #include <QTreeView>
 #include <QTreeWidget>
@@ -174,6 +176,11 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
 
     build_actions();
     first_layout_ = saveState(layout_version);
+    // Unsaved work is kept for recovery every minute.
+    autosave_timer_ = new QTimer(this);
+    autosave_timer_->setInterval(60 * 1000);
+    connect(autosave_timer_, &QTimer::timeout, this, [this] { autosave(); });
+    autosave_timer_->start();
     connect(advanced, &QCheckBox::toggled, inspector_, &Inspector::set_show_advanced);
     connect(outliner_, &QTreeWidget::itemSelectionChanged, this, [this] {
         // In the list's order, the current item (the one clicked last) first.
@@ -589,10 +596,38 @@ bool MainWindow::close_sprites() {
 
 void MainWindow::changeEvent(QEvent* event) {
     QMainWindow::changeEvent(event);
-    // Back from drawing in another program: its pictures show as they are now.
-    if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
-        reload_assets();
+    if (event->type() == QEvent::ActivationChange) {
+        if (isActiveWindow()) {
+            // Back from drawing in another program: its pictures show as they are now.
+            reload_assets();
+        } else {
+            // Going to another program: the unsaved work is kept first.
+            autosave();
+        }
     }
+}
+
+bool MainWindow::autosave() {
+    if (document_ == nullptr) {
+        return false;
+    }
+    std::string error;
+    if (!document_->write_recovery(error)) {
+        statusBar()->showMessage(text_of(error), 8000);
+        return false;
+    }
+    return true;
+}
+
+bool MainWindow::restore_recovery() {
+    std::string error;
+    if (document_ == nullptr || !document_->restore_recovery(error)) {
+        report(tr("The unsaved work could not be restored: %1").arg(text_of(error)));
+        return false;
+    }
+    show_scene();
+    statusBar()->showMessage(tr("Your unsaved work is back. Save to keep it."), 8000);
+    return true;
 }
 
 bool MainWindow::open_project(const fs::path& folder) {
@@ -620,6 +655,25 @@ bool MainWindow::open_project(const fs::path& folder) {
         report(tr("Opened, with notes:\n%1").arg(issues_text(issues)));
     } else {
         statusBar()->showMessage(tr("Opened %1").arg(text_of(document_->settings().name)), 5000);
+    }
+    // Work a crash left unsaved is offered back.
+    if (const std::optional<std::string> scene = recovery_scene(folder);
+        scene && !quiet_ && !QApplication::platformName().startsWith(QStringLiteral("offscreen"))) {
+        const QFileInfo kept(path_text(folder / recovery_file));
+        const qint64 minutes =
+            std::max<qint64>(0, kept.lastModified().secsTo(QDateTime::currentDateTime()) / 60);
+        const auto answer = QMessageBox::question(
+            this, tr("Sparxel Editor"),
+            tr("Sparxel closed before your changes to %1 were saved. They were kept %2 "
+               "minute(s) earlier.\n\nRestore them?")
+                .arg(text_of(*scene))
+                .arg(minutes),
+            QMessageBox::Yes | QMessageBox::Discard, QMessageBox::Yes);
+        if (answer == QMessageBox::Yes) {
+            restore_recovery();
+        } else {
+            document_->discard_recovery();
+        }
     }
     return true;
 }
@@ -859,6 +913,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         if (answer == QMessageBox::Cancel || (answer == QMessageBox::Save && !save())) {
             event->ignore();
             return;
+        }
+        if (answer == QMessageBox::Discard) {
+            document_->discard_recovery(); // left unsaved by choice: nothing to offer back
         }
     }
     event->accept();
