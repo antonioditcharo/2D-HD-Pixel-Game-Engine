@@ -590,7 +590,9 @@ void LogicPanel::show_fields() {
                 Q_EMIT edited();
             };
             QWidget* box = nullptr;
-            if (inner.kind == reflect::ValueKind::Int) {
+            if (!inner.typed) {
+                box = new QLabel(text_of(inner.from), row); // [answer_text]
+            } else if (inner.kind == reflect::ValueKind::Int) {
                 auto* spin = new QSpinBox(row);
                 spin->setRange(
                     static_cast<int>(std::max(inner.limits.min.value_or(-1.0e6), double{INT_MIN})),
@@ -625,6 +627,54 @@ void LogicPanel::show_fields() {
                 box->setObjectName(QStringLiteral("logic_inside:%1:%2").arg(argument).arg(index));
                 box->setToolTip(text_of(inner.label));
                 line->addWidget(box, 1);
+            }
+            // Where it comes from: written, or a variable, the event or a property.
+            const std::vector<LogicSource> inner_sources =
+                document_->logic_inside_sources(file, block, argument, index);
+            if (inner_sources.size() > 1) {
+                auto* from = new QToolButton(row);
+                from->setObjectName(
+                    QStringLiteral("logic_inside_source:%1:%2").arg(argument).arg(index));
+                from->setText(QStringLiteral("\u2026"));
+                from->setToolTip(tr("Write %1, or take it from a variable, the event or a "
+                                    "property.")
+                                     .arg(text_of(inner.label)));
+                from->setPopupMode(QToolButton::InstantPopup);
+                auto* menu = new QMenu(from);
+                std::map<std::string, QMenu*> objects;
+                for (const LogicSource& source : inner_sources) {
+                    QMenu* into = menu;
+                    if (source.kind == LogicSource::Kind::Property) {
+                        QMenu*& sub = objects[source.object];
+                        if (sub == nullptr) {
+                            sub = menu->addMenu(text_of(source.object));
+                        }
+                        into = sub;
+                    }
+                    QAction* item = into->addAction(text_of(source.text));
+                    item->setObjectName(text_of("inside_source:" + std::to_string(argument) + ":" +
+                                                std::to_string(index) + ":" + source.object + "/" +
+                                                source.member));
+                    connect(item, &QAction::triggered, this,
+                            [this, file, block, argument, index, source] {
+                                // Later, not from inside the menu's own signal: the menu
+                                // goes with the fields.
+                                QTimer::singleShot(
+                                    0, this, [this, file, block, argument, index, source] {
+                                        std::string error;
+                                        if (!document_->set_logic_inside_source(
+                                                file, block, argument, index, source, error)) {
+                                            Q_EMIT refused(text_of(error));
+                                            return;
+                                        }
+                                        rebuild();
+                                        select(file, block);
+                                        Q_EMIT edited();
+                                    });
+                            });
+                }
+                from->setMenu(menu);
+                line->addWidget(from);
             }
         }
         // Where the value comes from, and sums for numbers.

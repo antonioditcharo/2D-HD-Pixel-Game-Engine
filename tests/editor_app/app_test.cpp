@@ -1690,6 +1690,7 @@ TEST_CASE("The Logic view takes values from the event, variables and sums") {
     };
     choose(QStringLiteral("add_file"));
     choose(QStringLiteral("variable:int"));
+    choose(QStringLiteral("variable:text")); // variable_2, naming a thing
     choose(QStringLiteral("rule:dialogue/answered"));
     choose(QStringLiteral("action:/set_variable"));
     REQUIRE(tree->currentItem() != nullptr);
@@ -1710,6 +1711,31 @@ TEST_CASE("The Logic view takes values from the event, variables and sums") {
     auto* whole = panel->findChild<QLabel*>(QStringLiteral("logic_slot:0"));
     REQUIRE(whole != nullptr);
     CHECK(whole->text() == QStringLiteral("the number of \u201ccoin\u201d (inventory)"));
+    // The thing's name from elsewhere: a text variable, by the button beside its field.
+    const auto inside_from = [&](const QString& name) {
+        auto* button = panel->findChild<QToolButton*>(QStringLiteral("logic_inside_source:0:0"));
+        REQUIRE(button != nullptr);
+        auto* entry = button->menu()->findChild<QAction*>(name);
+        REQUIRE(entry != nullptr);
+        entry->trigger();
+        for (int i = 0; i < 3; ++i) { // the deferred rebuild
+            QApplication::processEvents();
+        }
+    };
+    inside_from(QStringLiteral("inside_source:0:0:/variable_2"));
+    REQUIRE(tree->currentItem() != nullptr);
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to the number of variable_2 (inventory)"));
+    CHECK(panel->findChild<QLineEdit*>(QStringLiteral("logic_inside:0:0")) == nullptr);
+    auto* named = panel->findChild<QLabel*>(QStringLiteral("logic_inside:0:0"));
+    REQUIRE(named != nullptr);
+    CHECK(named->text() == QStringLiteral("variable_2"));
+    // And written again, empty, to type.
+    inside_from(QStringLiteral("inside_source:0:0:/"));
+    REQUIRE(tree->currentItem() != nullptr);
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to the number of \u201c\u201d (inventory)"));
+    CHECK(panel->findChild<QLineEdit*>(QStringLiteral("logic_inside:0:0")) != nullptr);
     // From the event: the answer picked.
     from(QStringLiteral("source:0:/answer"));
     REQUIRE(tree->currentItem() != nullptr);

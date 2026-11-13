@@ -2028,6 +2028,90 @@ TEST_CASE("The inventory in logic: give, take, check, and values with nothing to
     CHECK(d->check_logic(file).empty());
 }
 
+TEST_CASE("Logic values from objects with what they need filled in taken from elsewhere") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view file = "logic/shop.drules";
+    REQUIRE(d->create_logic_file(file, error));
+    const auto lines = [&] {
+        std::vector<std::string> shown;
+        const auto found = std::find_if(d->logic().begin(), d->logic().end(),
+                                        [&](const editor::LogicFile& f) { return f.path == file; });
+        REQUIRE(found != d->logic().end());
+        for (const editor::LogicLine& line : editor::describe(found->asset, *d)) {
+            shown.push_back(std::string(static_cast<std::size_t>(line.depth) * 2, ' ') + line.text);
+        }
+        return shown;
+    };
+    using Kind = editor::LogicSource::Kind;
+    // A whole number set to the number of a thing; then a text variable naming the thing.
+    REQUIRE(d->add_logic_variable(file, reflect::ValueKind::Int, error)); // variable_1
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(file, editor::LogicEvent{"", "game_start", ""}, error);
+    const engine::logic::BlockId set =
+        d->add_logic_step(file, rule, editor::LogicAction{"", "set_variable", ""}, error);
+    REQUIRE(set.is_valid());
+    const std::vector<editor::LogicSource> sources = d->logic_sources(file, set, 0);
+    const auto number = std::find_if(sources.begin(), sources.end(), [](const auto& s) {
+        return s.kind == Kind::Getter && s.object == "inventory" && s.member == "count_of";
+    });
+    REQUIRE(number != sources.end());
+    REQUIRE(d->set_logic_source(file, set, 0, *number, error));
+    REQUIRE(d->add_logic_variable(file, reflect::ValueKind::Text, error)); // variable_2
+    // The thing's name can be written, or come from a text variable, an event value or a
+    // property; not from a number, nor from another object's value.
+    const std::vector<editor::LogicSource> inner = d->logic_inside_sources(file, set, 0, 0);
+    REQUIRE_FALSE(inner.empty());
+    CHECK(inner.front().kind == Kind::Written);
+    const auto named = std::find_if(inner.begin(), inner.end(), [](const auto& s) {
+        return s.kind == Kind::Variable && s.member == "variable_2";
+    });
+    REQUIRE(named != inner.end());
+    CHECK(std::none_of(inner.begin(), inner.end(), [](const auto& s) {
+        return s.member == "variable_1" || s.kind == Kind::Getter;
+    }));
+    CHECK(std::all_of(inner.begin(), inner.end(),
+                      [](const auto& s) { return s.value == reflect::ValueKind::Text; }));
+    CHECK(d->logic_inside_sources(file, set, 0, 1).empty()); // count_of has one value
+    CHECK(d->logic_inside_sources(file, set, 1, 0).empty()); // the variable's name
+    REQUIRE(d->set_logic_inside_source(file, set, 0, 0, *named, error));
+    CHECK(d->undo_label() == "Change where Item comes from");
+    const auto value_of = [&] {
+        const std::vector<editor::LogicSlot> all = d->logic_slots(file, set);
+        const auto found = std::find_if(all.begin(), all.end(),
+                                        [](const editor::LogicSlot& s) { return s.argument == 0; });
+        REQUIRE(found != all.end());
+        return *found;
+    };
+    REQUIRE(value_of().inside.size() == 1);
+    CHECK_FALSE(value_of().inside[0].typed);
+    CHECK(value_of().inside[0].from == "variable_2");
+    const std::string line =
+        std::string("  Set variable_1 to the number of variable_2") + " (inventory)";
+    CHECK(lines() == std::vector<std::string>{"When the game starts", line});
+    CHECK(d->check_logic(file).empty()); // it compiles
+    // Not written, so not edited in place; nor from what is not offered.
+    CHECK_FALSE(d->set_logic_inside(file, set, 0, 0, reflect::Value{std::string("coin")}, error));
+    CHECK(error == "Item comes from variable_2: choose “A value written here” to write it.");
+    CHECK_FALSE(d->set_logic_inside_source(
+        file, set, 0, 0, editor::LogicSource{Kind::Getter, "inventory", "kinds", "", {}}, error));
+    CHECK(error == "That cannot give this value.");
+    CHECK_FALSE(d->set_logic_inside_source(
+        file, set, 0, 0, editor::LogicSource{Kind::Variable, "", "variable_1", "", {}}, error));
+    // Written again: starting empty, then typed in place.
+    REQUIRE(d->set_logic_inside_source(file, set, 0, 0, inner.front(), error));
+    CHECK(value_of().inside[0].typed);
+    REQUIRE(d->set_logic_inside(file, set, 0, 0, reflect::Value{std::string("coin")}, error));
+    CHECK(lines()[1] == std::string("  Set variable_1 to the number of “coin”") + " (inventory)");
+    // Undone step by step: back to the variable, then to written and empty.
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    CHECK(lines()[1] == line);
+    REQUIRE(d->undo());
+    CHECK(value_of().inside[0].typed);
+}
+
 TEST_CASE("Logic conditions turned around, matched any of, and Otherwise branches") {
     const Sample sample;
     const auto d = sample.open();

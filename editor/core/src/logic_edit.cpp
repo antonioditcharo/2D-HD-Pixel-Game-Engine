@@ -861,9 +861,16 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId bloc
                                   value->object, value->member);
                 for (std::size_t i = 0;
                      f != nullptr && i < f->parameters.size() && i < value->operands.size(); ++i) {
-                    if (value->operands[i].kind == logic::ExprKind::Literal) {
-                        slot.inside.push_back(
-                            slot_of_inside(i, f->parameters[i], value->operands[i].literal));
+                    const logic::Expr& operand = value->operands[i];
+                    if (operand.kind == logic::ExprKind::Literal) {
+                        slot.inside.push_back(slot_of_inside(i, f->parameters[i], operand.literal));
+                    } else {
+                        // Taken from elsewhere: the number of [what_wanted], or of a variable.
+                        LogicSlot from =
+                            slot_of_inside(i, f->parameters[i], starting_value(f->parameters[i]));
+                        from.typed = false;
+                        from.from = describe_value(operand, *this);
+                        slot.inside.push_back(std::move(from));
                     }
                 }
             }
@@ -890,6 +897,11 @@ bool Document::set_logic_inside(std::string_view path, BlockId step, std::size_t
         error = "That value has nothing to fill in there.";
         return false;
     }
+    if (!inside->typed) {
+        error = inside->label + " comes from " + inside->from +
+                ": choose “A value written here” to write it.";
+        return false;
+    }
     std::optional<reflect::Value> fitted = fit(*inside, value, error);
     if (!fitted) {
         return false;
@@ -902,6 +914,95 @@ bool Document::set_logic_inside(std::string_view path, BlockId step, std::size_t
              engine::Guid{},
              "logic/" + std::string(path) + "/" + std::to_string(step.value) + "/" +
                  std::to_string(argument) + "/" + std::to_string(index));
+    return true;
+}
+
+namespace {
+
+/// Slot `argument`'s inside value `index`, among `slots` (null if there is none).
+const LogicSlot* inside_of(const std::vector<LogicSlot>& slots, std::size_t argument,
+                           std::size_t index) {
+    for (const LogicSlot& slot : slots) {
+        if (slot.argument != argument) {
+            continue;
+        }
+        for (const LogicSlot& one : slot.inside) {
+            if (one.argument == index) {
+                return &one;
+            }
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+std::vector<LogicSource> Document::logic_inside_sources(std::string_view path, BlockId block,
+                                                        std::size_t argument,
+                                                        std::size_t index) const {
+    const std::vector<LogicSlot> slots = logic_slots(path, block);
+    const LogicSlot* inside = inside_of(slots, argument, index);
+    if (inside == nullptr) {
+        return {};
+    }
+    std::vector<LogicSource> sources{
+        LogicSource{LogicSource::Kind::Written, "", "", "A value written here", inside->kind}};
+    // Not choices (their lists differ) and not values objects give: one object's value
+    // filled in from another's would need fields inside fields.
+    if (inside->kind != reflect::ValueKind::Choice) {
+        for (LogicSource& source : sources_of(path, block, inside->kind)) {
+            if (source.kind != LogicSource::Kind::Getter) {
+                sources.push_back(std::move(source));
+            }
+        }
+    }
+    return sources;
+}
+
+bool Document::set_logic_inside_source(std::string_view path, BlockId block, std::size_t argument,
+                                       std::size_t index, const LogicSource& source,
+                                       std::string& error) {
+    Impl& d = *impl_;
+    const std::vector<LogicSource> offered = logic_inside_sources(path, block, argument, index);
+    const bool fits = std::any_of(offered.begin(), offered.end(), [&](const LogicSource& s) {
+        return s.kind == source.kind && s.object == source.object && s.member == source.member;
+    });
+    if (!fits) {
+        error = "That cannot give this value.";
+        return false;
+    }
+    LogicFile* file = d.logic_file(path);
+    logic::Expr* value = slot_target(file->asset, block, argument);
+    const reflect::FunctionInfo* f =
+        find_function(Lookup{d.registry, *d.world, &d.elsewhere}, value->object, value->member);
+    if (f == nullptr || index >= f->parameters.size() || index >= value->operands.size()) {
+        error = "That value has nothing to fill in there.";
+        return false;
+    }
+    logic::Expr& target = value->operands[index];
+    engine::serialize::Json before = d.snapshot();
+    switch (source.kind) {
+    case LogicSource::Kind::Written:
+        if (target.kind == logic::ExprKind::Literal) {
+            return true; // written already
+        }
+        target = logic::ir::literal(starting_value(f->parameters[index]));
+        break;
+    case LogicSource::Kind::Variable:
+        target = logic::ir::variable(source.member);
+        break;
+    case LogicSource::Kind::EventValue:
+        target = logic::ir::event_value(source.member);
+        break;
+    case LogicSource::Kind::Property:
+        target = logic::ir::property(source.object, source.member);
+        break;
+    case LogicSource::Kind::Getter:
+        error = "That cannot give this value.";
+        return false; // never offered
+    }
+    d.record("Change where " + f->parameters[index].meta.display_name + " comes from",
+             std::move(before));
     return true;
 }
 

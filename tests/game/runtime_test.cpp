@@ -1903,11 +1903,14 @@ TEST_CASE("The inventory: logic gives, takes and checks things, and saves keep t
 
     // In a game: on starting, a Rule gives 4 coins and a key and takes a coin back; then,
     // as the player has the key, another logs how many coins there are (3) and how many
-    // different things (2).
+    // different things (2) and how many of what a variable names (1 key).
     const Project project;
     {
         logic::LogicAsset rules;
         rules.name = "bag";
+        // What to count can come from elsewhere: here a variable naming the key.
+        rules.variables.push_back(logic::Variable{"wanted", reflect::ValueKind::Text, "",
+                                                  reflect::Value{std::string("key")}});
         rules.rules.push_back(logic::Rule{
             logic::BlockId{1},
             "",
@@ -1923,7 +1926,8 @@ TEST_CASE("The inventory: logic gives, takes and checks things, and saves keep t
                         "game_start",
                         {ir::call("inventory", "has", {Project::text("key")})},
                         {ir::log(6, ir::call("inventory", "count_of", {Project::text("coin")})),
-                         ir::log(7, ir::call("inventory", "kinds"))},
+                         ir::log(7, ir::call("inventory", "kinds")),
+                         ir::log(8, ir::call("inventory", "count_of", {ir::variable("wanted")}))},
                         {}});
         write_json(project.folder.path / "assets/logic/bag.drules",
                    serialize::logic_to_json(rules));
@@ -1937,6 +1941,7 @@ TEST_CASE("The inventory: logic gives, takes and checks things, and saves keep t
     };
     CHECK(logged("3") == 1);
     CHECK(logged("2") == 1);
+    CHECK(logged("1") == 1); // the number of wanted: one key
 
     // Saved with the game and restored; loading empties it first. Counts that are not
     // whole numbers above 0 are left out, with a note; a save without it (made before it

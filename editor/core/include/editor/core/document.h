@@ -55,8 +55,9 @@ struct LogicSlot {
     /// Whether the value is a sum (talks + 1, talks × [answer]), which can take more parts.
     bool sum = false;
     /// When the value is one an object gives with something filled in (the number of
-    /// {item}): those written values, each a slot of its own (`argument` is its place),
-    /// edited with Document::set_logic_inside().
+    /// {item}): each of those values, a slot of its own (`argument` is its place), written
+    /// (edited with Document::set_logic_inside()) or taken from elsewhere (`typed` false,
+    /// `from` saying where; chosen with Document::set_logic_inside_source()).
     std::vector<LogicSlot> inside;
 };
 
@@ -271,11 +272,25 @@ public:
                         const engine::reflect::Value& value, std::string& error);
     /// Changes value `index` inside slot `argument`'s value, where it comes from an object
     /// with something filled in (the "coin" of the number of {item}; LogicSlot::inside).
-    /// Refused, changing nothing, with `error`, as set_logic_slot() refuses. Changes to
-    /// the same value merge into one step, as typing does.
+    /// Refused, changing nothing, with `error`, as set_logic_slot() refuses, and for a
+    /// value taken from elsewhere. Changes to the same value merge into one step, as
+    /// typing does.
     bool set_logic_inside(std::string_view path, engine::logic::BlockId step, std::size_t argument,
                           std::size_t index, const engine::reflect::Value& value,
                           std::string& error);
+    /// Where value `index` inside slot `argument`'s value can come from: written there,
+    /// or a variable, an event value or a property of the same kind (the number of
+    /// [answer_text]). Empty if that value has nothing to fill in there.
+    [[nodiscard]] std::vector<LogicSource> logic_inside_sources(std::string_view path,
+                                                                engine::logic::BlockId block,
+                                                                std::size_t argument,
+                                                                std::size_t index) const;
+    /// Takes value `index` inside slot `argument`'s value from `source` (one
+    /// logic_inside_sources() offers); writing it starts it at its parameter's default.
+    /// One undo step. False, changing nothing, with `error`, for a source not offered.
+    bool set_logic_inside_source(std::string_view path, engine::logic::BlockId block,
+                                 std::size_t argument, std::size_t index, const LogicSource& source,
+                                 std::string& error);
     /// Every action a step can do: those of the game's objects and of the scene's named
     /// entities' components, by object, then as they read.
     [[nodiscard]] std::vector<LogicAction> logic_actions() const;
