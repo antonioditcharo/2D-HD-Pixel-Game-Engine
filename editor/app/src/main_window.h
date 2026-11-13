@@ -29,6 +29,7 @@ class QFileSystemModel;
 namespace editor {
 
 class HelpWindow;
+class TutorialPanel;
 
 class LogicPanel;
 class ProjectPanel;
@@ -178,6 +179,9 @@ public:
     /// Saves, then starts the player on the project. Returns false, showing why, if it
     /// could not start.
     bool play();
+    /// How many times Play started the game this session (for the tutorials).
+    [[nodiscard]] int plays() const noexcept { return plays_; }
+    [[nodiscard]] TutorialPanel* tutorials() const noexcept { return tutorials_; }
     /// Exports the game to `folder` (asked for when empty). Returns false, showing why.
     bool export_to(const std::filesystem::path& folder);
 
@@ -216,6 +220,8 @@ private:
     QStackedWidget* stack_ = nullptr; ///< The start page, or the scene.
     SearchBox* search_ = nullptr;
     HelpWindow* guide_ = nullptr;
+    TutorialPanel* tutorials_ = nullptr;
+    int plays_ = 0;
     DoctorPanel* doctor_ = nullptr;
     StartPage* start_ = nullptr;
     QSettings* settings_ = nullptr;

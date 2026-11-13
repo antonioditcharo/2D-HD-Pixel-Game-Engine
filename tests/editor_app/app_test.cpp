@@ -45,9 +45,11 @@
 #include "search.h"
 #include "start_page.h"
 #include "tile_palette.h"
+#include "tutorials.h"
 
 namespace fs = std::filesystem;
 namespace game = engine::game;
+namespace reflect = engine::reflect;
 namespace scene2d = engine::scene2d;
 using engine::Guid;
 
@@ -2112,4 +2114,41 @@ TEST_CASE("Look presets: hovering shows one in the scene, clicking takes it as o
     CHECK(e.window.document()->can_undo());
     e.window.undo();
     CHECK(e.window.document()->settings().look.saturation == own);
+}
+
+TEST_CASE("Tutorials tick off each step as it is done in the editor") {
+    Editor e;
+    editor::TutorialPanel* panel = e.window.tutorials();
+    REQUIRE(panel != nullptr);
+    panel->start(0); // Your first game
+    // A project is open: the first step is done already.
+    CHECK(panel->step() == 1);
+    e.window.select(e.guid("hero"));
+    panel->check();
+    CHECK(panel->step() == 2);
+    const reflect::TypeInfo* mover =
+        e.window.document()->registry().find_type<engine::game::TopDownMover>();
+    REQUIRE(mover != nullptr);
+    const reflect::PropertyInfo* speed = nullptr;
+    for (const reflect::PropertyInfo& p : mover->properties) {
+        speed = p.id == "speed" ? &p : speed;
+    }
+    REQUIRE(speed != nullptr);
+    std::string error;
+    REQUIRE(e.window.document()->set_property(e.guid("hero"), *mover, *speed, reflect::Value{7.0},
+                                              error));
+    panel->check();
+    CHECK(panel->step() == 3);
+    REQUIRE(e.window.document()->paint_tile(e.guid("ground"), 3.5, 2.5, 1));
+    panel->check();
+    CHECK(panel->step() == 4);
+    REQUIRE(e.window.save());
+    panel->check();
+    CHECK(panel->step() == 5); // Play, which this test does not start
+    CHECK_FALSE(panel->finished());
+    panel->skip();
+    CHECK(panel->finished());
+    // Steps are listed, with the done ones ticked.
+    REQUIRE(panel->step_list()->count() == 6);
+    CHECK(panel->step_list()->item(0)->text().startsWith(QStringLiteral("✓")));
 }

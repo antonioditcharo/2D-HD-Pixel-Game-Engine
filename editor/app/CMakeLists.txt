@@ -42,6 +42,8 @@ add_library(editor_app STATIC
     src/start_page.h
     src/tile_palette.cpp
     src/tile_palette.h
+    src/tutorials.cpp
+    src/tutorials.h
 )
 add_library(editor::app ALIAS editor_app)
 set_target_properties(editor_app PROPERTIES AUTOMOC ON AUTORCC ON)

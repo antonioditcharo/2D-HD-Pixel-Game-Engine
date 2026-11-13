@@ -52,6 +52,7 @@
 #include "story_window.h"
 #include "table_window.h"
 #include "tile_palette.h"
+#include "tutorials.h"
 
 namespace editor {
 
@@ -187,6 +188,13 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     tabifyDockWidget(project_dock, doctor_dock);
     connect(doctor_, &DoctorPanel::check_requested, this, [this] { check_project(); });
     connect(doctor_, &DoctorPanel::chosen, this, [this](const Finding& f) { go_to(f); });
+    // Tutorials: steps ticked off as they are done in the editor (Help > Tutorials).
+    tutorials_ = new TutorialPanel(this, this);
+    auto* tutorials_dock = new QDockWidget(tr("Tutorials"), this);
+    tutorials_dock->setObjectName(QStringLiteral("tutorials_dock"));
+    tutorials_dock->setWidget(tutorials_);
+    addDockWidget(Qt::RightDockWidgetArea, tutorials_dock);
+    tabifyDockWidget(project_dock, tutorials_dock);
     inspector_dock->raise();
     resizeDocks({entities, inspector_dock}, {240, 340}, Qt::Horizontal);
 
@@ -713,6 +721,13 @@ void MainWindow::build_actions() {
     QAction* guide = help->addAction(tr("Sparxel &guide"), this, [this] { show_guide({}); });
     guide->setShortcut(QKeySequence::HelpContents);
     guide->setObjectName(QStringLiteral("guide"));
+    QAction* lessons = help->addAction(tr("&Tutorials"), this, [this] {
+        if (auto* dock = findChild<QDockWidget*>(QStringLiteral("tutorials_dock"))) {
+            dock->show();
+            dock->raise();
+        }
+    });
+    lessons->setObjectName(QStringLiteral("show_tutorials"));
     QToolBar* tools = addToolBar(tr("Commands"));
     tools->setObjectName(QStringLiteral("commands"));
 
@@ -1446,6 +1461,7 @@ bool MainWindow::play() {
         report(tr("The player %1 could not be started.").arg(path_text(player_)));
         return false;
     }
+    ++plays_;
     statusBar()->showMessage(tr("Playing…"), 3000);
     return true;
 }
