@@ -33,6 +33,7 @@
 #include "editor/core/logic_text.h"
 #include "editor/core/new_project.h"
 #include "editor/core/preview.h"
+#include "support/aseprite.h"
 #include "support/gpu.h"
 
 namespace fs = std::filesystem;
@@ -3250,10 +3251,16 @@ TEST_CASE("Collecting texts to translate: Rules' words, the menus', once each, k
     REQUIRE(record != nullptr);
     const std::optional<std::vector<std::uint8_t>> bytes = d->assets().read(record->guid);
     REQUIRE(bytes.has_value());
+    if (!bytes) {
+        return;
+    }
     const std::optional<engine::game::Table> table = engine::game::parse_table(
         std::string_view(reinterpret_cast<const char*>(bytes->data()), bytes->size()), // NOLINT
         error);
     REQUIRE(table.has_value());
+    if (!table) {
+        return;
+    }
     CHECK(table->column("fr") != nullptr);
     CHECK(table->column("de") != nullptr);
     CHECK(table->text(engine::game::translation_key("Resume"), "source") == "Resume");
@@ -3294,4 +3301,40 @@ TEST_CASE("Random tile variants: each cell painted with one of them, at random")
     REQUIRE(d->paint_tile_rect(ground, 2.5, 2.5, 3.5, 3.5, 1));
     CHECK(cell(3, 3) == 1);
     CHECK(cell(2, 2) == 1);
+}
+
+TEST_CASE("Aseprite files are imported as a sprite sheet beside them, with their tags") {
+    const Sample sample;
+    {
+        const std::vector<std::uint8_t> bytes =
+            test_support::aseprite(3, 2, {{255, 0, 0, 255}, {0, 0, 255, 255}}, "blink");
+        std::ofstream(sample.path / "assets/art/blob.aseprite", std::ios::binary)
+            .write(reinterpret_cast<const char*>(bytes.data()), // NOLINT
+                   static_cast<std::streamsize>(bytes.size()));
+    }
+    const auto d = sample.open();
+    std::string error;
+    const std::string made = d->import_aseprite("art/blob.aseprite", error);
+    INFO(error);
+    CHECK(made == "art/blob.png");
+    REQUIRE(d->assets().find("art/blob.png") != nullptr);
+    REQUIRE(d->assets().find("art/blob.sheet") != nullptr);
+    const std::optional<std::vector<std::uint8_t>> sheet_bytes =
+        d->assets().read(d->assets().find("art/blob.sheet")->guid);
+    REQUIRE(sheet_bytes.has_value());
+    if (sheet_bytes) {
+        const std::optional<scene2d::SheetInfo> sheet = scene2d::parse_sheet(
+            std::string_view(reinterpret_cast<const char*>(sheet_bytes->data()), // NOLINT
+                             sheet_bytes->size()),
+            error);
+        REQUIRE(sheet.has_value());
+        if (sheet) {
+            CHECK(sheet->frame_width == 3);
+            CHECK(sheet->durations_ms.size() == 2);
+            REQUIRE(sheet->tags.size() == 1);
+            CHECK(sheet->tags[0].name == "blink");
+            CHECK(sheet->tags[0].to == 1);
+        }
+    }
+    CHECK(d->import_aseprite("art/tiles.png", error).empty()); // not an Aseprite file
 }

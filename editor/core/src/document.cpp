@@ -1,5 +1,6 @@
 #include "editor/core/document.h"
 
+#include "engine/assets/aseprite.h"
 #include "engine/assets/autotile.h"
 #include "engine/game/behaviours.h"
 #include "engine/game/conversation.h"
@@ -332,6 +333,59 @@ void Document::set_tile_variants(std::vector<std::int32_t> tiles) {
 
 const std::vector<std::int32_t>& Document::tile_variants() const noexcept {
     return impl_->variants;
+}
+
+std::string Document::import_aseprite(std::string_view path, std::string& error) {
+    const Impl& d = *impl_;
+    const fs::path file(path);
+    std::string extension = file.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    const engine::assets::AssetRecord* record = d.assets->find(path);
+    if (record == nullptr || (extension != ".aseprite" && extension != ".ase")) {
+        error = "There is no Aseprite file " + std::string(path) + " in assets/.";
+        return {};
+    }
+    const std::optional<std::vector<std::uint8_t>> bytes = d.assets->read(record->guid);
+    const std::optional<engine::assets::AsepriteSheet> read =
+        bytes ? engine::assets::read_aseprite(*bytes, error) : std::nullopt;
+    if (!read) {
+        if (error.empty()) {
+            error = std::string(path) + " cannot be read.";
+        }
+        return {};
+    }
+    const fs::path picture = file.parent_path() / (file.stem().string() + ".png");
+    const std::vector<std::uint8_t> png = engine::assets::encode_png(read->sheet);
+    scene2d::SheetInfo sheet;
+    sheet.frame_width = read->frame_width;
+    sheet.frame_height = read->frame_height;
+    for (const std::uint32_t ms : read->durations_ms) {
+        sheet.durations_ms.push_back(std::clamp<std::uint32_t>(ms, 1, 65535));
+    }
+    for (const engine::assets::AsepriteTag& tag : read->tags) {
+        // Aseprite's "ping-pong, backwards first" plays as ping-pong.
+        sheet.tags.push_back(scene2d::SheetTag{tag.name, tag.from, tag.to,
+                                               tag.direction == 1 ? scene2d::TagDirection::Reverse
+                                               : tag.direction >= 2
+                                                   ? scene2d::TagDirection::PingPong
+                                                   : scene2d::TagDirection::Forward});
+    }
+    if (png.empty() ||
+        !game::write_file_atomically(
+            d.folder / "assets" / picture,
+            std::string_view(reinterpret_cast<const char*>(png.data()), png.size()), // NOLINT
+            error) ||
+        !game::write_file_atomically(d.folder / "assets" /
+                                         fs::path(scene2d::sheet_path(picture.generic_string())),
+                                     scene2d::sheet_to_text(sheet), error)) {
+        if (error.empty()) {
+            error = "The sprite sheet could not be written.";
+        }
+        return {};
+    }
+    static_cast<void>(d.assets->refresh());
+    return picture.generic_string();
 }
 
 std::string Document::make_autotiles(std::string_view path, std::string& error) {
@@ -1544,8 +1598,8 @@ std::size_t Document::update_prefab_copies(std::string_view prefab, std::string&
             continue;
         }
         const world::Entity e = loaded.entities.front();
-        if (copy.place.has_value()) {
-            const std::array<double, 2> place = copy.place.value();
+        if (const std::optional<std::array<double, 2>> where = copy.place; where.has_value()) {
+            const std::array<double, 2> place = *where;
             auto* at = d.world->get<scene2d::Transform2D>(e);
             if (at == nullptr) {
                 at = d.world->add<scene2d::Transform2D>(e);

@@ -148,6 +148,11 @@ public:
     /// replacing one there), at the project's pixels per unit. Returns its path; empty, with
     /// `error`, if it cannot.
     std::string make_autotiles(std::string_view path, std::string& error);
+    /// Imports an Aseprite file (".aseprite" or ".ase", its path in assets/) as a sprite
+    /// sheet beside it: "art/hero.aseprite" makes "art/hero.png" (every frame side by side)
+    /// and "art/hero.sheet" (each frame's duration, and the tags as animations), replacing
+    /// them. Returns the picture's path; empty, with `error`, if it cannot.
+    std::string import_aseprite(std::string_view path, std::string& error);
     /// Every text the game shows that can be translated: the conversations' lines, choices
     /// and speakers, what Rules, Sequences and Brains say and ask (and the answers), and the
     /// menus' words. In the order found, each once.

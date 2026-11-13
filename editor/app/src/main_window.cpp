@@ -131,7 +131,8 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
         {QStringLiteral("*.png"), QStringLiteral("*.wav"), QStringLiteral("*.ogg"),
          QStringLiteral("*.mp3"), QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
          QStringLiteral("*.drules"), QStringLiteral("*.dsprite"), QStringLiteral("*.dtalk"),
-         QStringLiteral("*.dprefab"), QStringLiteral("*.dtable")});
+         QStringLiteral("*.dprefab"), QStringLiteral("*.dtable"), QStringLiteral("*.aseprite"),
+         QStringLiteral("*.ase")});
     asset_model_->setNameFilterDisables(false);
     // Pictures are dragged from here into the scene.
     asset_tree_->setDragEnabled(true);
@@ -469,6 +470,25 @@ TableWindow* MainWindow::collect_translations() {
            nullptr, static_cast<int>(added)),
         10000);
     return open_table(QStringLiteral("data/translations.dtable"));
+}
+
+QString MainWindow::import_aseprite(const QString& asset_path) {
+    if (document_ == nullptr) {
+        return {};
+    }
+    std::string error;
+    const std::string made = document_->import_aseprite(utf8_of(asset_path), error);
+    if (made.empty()) {
+        statusBar()->showMessage(tr("Not imported: %1").arg(text_of(error)), 8000);
+        return {};
+    }
+    reload_assets();
+    statusBar()->showMessage(
+        tr("Imported %1: drag it into the scene; its tags play as animations. Saving in "
+           "Aseprite imports it again.")
+            .arg(text_of(made)),
+        10000);
+    return text_of(made);
 }
 
 QString MainWindow::make_autotiles(const QString& asset_path) {
@@ -849,6 +869,9 @@ void MainWindow::build_actions() {
             open_story(relative);
         } else if (file_path.endsWith(QStringLiteral(".dtable"))) {
             open_table(relative);
+        } else if (file_path.endsWith(QStringLiteral(".aseprite"), Qt::CaseInsensitive) ||
+                   file_path.endsWith(QStringLiteral(".ase"), Qt::CaseInsensitive)) {
+            import_aseprite(relative);
         } else if (file_path.endsWith(QStringLiteral(".png")) ||
                    file_path.endsWith(QStringLiteral(".dsprite"))) {
             // Pictures and sprites are drawn in Sprite Studio.
@@ -863,7 +886,10 @@ void MainWindow::build_actions() {
             return;
         }
         const QString file_path = asset_model_->filePath(index);
-        if (!file_path.endsWith(QStringLiteral(".png"))) {
+        const bool aseprite =
+            file_path.endsWith(QStringLiteral(".aseprite"), Qt::CaseInsensitive) ||
+            file_path.endsWith(QStringLiteral(".ase"), Qt::CaseInsensitive);
+        if (!file_path.endsWith(QStringLiteral(".png")) && !aseprite) {
             return;
         }
         std::error_code ignored;
@@ -871,6 +897,12 @@ void MainWindow::build_actions() {
         const fs::path chosen = fs::weakly_canonical(path_of(file_path), ignored);
         const QString relative = text_of(chosen.lexically_proximate(assets).generic_string());
         QMenu menu(this);
+        if (aseprite) {
+            menu.addAction(tr("Import again from Aseprite"), this,
+                           [this, relative] { import_aseprite(relative); });
+            menu.exec(asset_tree_->viewport()->mapToGlobal(at));
+            return;
+        }
         menu.addAction(tr("Open in Sprite Studio"), this,
                        [this, relative] { open_sprite(relative); });
         QAction* make = menu.addAction(tr("Make auto-tiles"), this,
@@ -1152,7 +1184,39 @@ void MainWindow::reload_assets() {
     if (document_ == nullptr) {
         return;
     }
-    const engine::assets::AssetChanges changes = document_->assets().refresh();
+    engine::assets::AssetChanges changes = document_->assets().refresh();
+    // Aseprite files new or changed (saved in Aseprite): their sheets made again, so what
+    // is drawn there shows here at once.
+    std::vector<engine::Guid> made;
+    for (const std::vector<engine::Guid>* list : {&changes.added, &changes.modified}) {
+        for (const engine::Guid& guid : *list) {
+            const engine::assets::AssetRecord* record = document_->assets().find(guid);
+            if (record == nullptr) {
+                continue;
+            }
+            const QString path = text_of(record->path);
+            if (!path.endsWith(QStringLiteral(".aseprite"), Qt::CaseInsensitive) &&
+                !path.endsWith(QStringLiteral(".ase"), Qt::CaseInsensitive)) {
+                continue;
+            }
+            std::string error;
+            const std::string picture = document_->import_aseprite(record->path, error);
+            if (picture.empty()) {
+                statusBar()->showMessage(tr("%1: %2").arg(path, text_of(error)), 8000);
+                continue;
+            }
+            // The picture and sheet made count as changed (the import refreshed already).
+            for (const std::string& file : {picture, engine::scene2d::sheet_path(picture)}) {
+                if (const auto* made_record = document_->assets().find(file)) {
+                    made.push_back(made_record->guid);
+                }
+            }
+        }
+    }
+    if (!made.empty()) {
+        changes.modified.insert(changes.modified.end(), made.begin(), made.end());
+        statusBar()->showMessage(tr("Imported from Aseprite"), 4000);
+    }
     if (changes.empty()) {
         return;
     }

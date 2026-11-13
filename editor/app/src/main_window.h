@@ -129,6 +129,9 @@ public:
     /// Makes auto-tiles from the picture at `asset_path` in assets/ (Document::
     /// make_autotiles()); returns the tileset made, or empty, saying why in the status bar.
     QString make_autotiles(const QString& asset_path);
+    /// Imports an Aseprite file of the project (Document::import_aseprite()): its sprite
+    /// sheet, made again whenever the file changes. Returns the picture made, or empty.
+    QString import_aseprite(const QString& asset_path);
     /// Collects the texts to translate into data/translations
     /// (Document::collect_translations()) and opens it; null if it cannot.
     TableWindow* collect_translations();

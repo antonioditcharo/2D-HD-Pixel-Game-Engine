@@ -1,3 +1,4 @@
+#include "engine/assets/aseprite.h"
 #include "engine/assets/assets.h"
 #include "engine/assets/autotile.h"
 
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <optional>
 #include <string>
@@ -337,4 +339,202 @@ TEST_CASE("Auto-tiles: 47 shapes from the neighbours, each put together from qua
     // Odd tiles, or a picture smaller than a block, are refused.
     CHECK_FALSE(expand_autotiles(block, 3, error).has_value());
     CHECK_FALSE(expand_autotiles(block, 8, error).has_value());
+}
+
+namespace {
+
+/// Builds Aseprite files for tests, chunk by chunk, as Aseprite lays them out.
+struct AseWriter {
+    std::vector<std::uint8_t> out;
+    void u8(std::uint32_t v) { out.push_back(static_cast<std::uint8_t>(v)); }
+    void u16(std::uint32_t v) {
+        u8(v & 0xFFU);
+        u8((v >> 8U) & 0xFFU);
+    }
+    void u32(std::uint32_t v) {
+        u16(v & 0xFFFFU);
+        u16(v >> 16U);
+    }
+    void text(const std::string& s) {
+        u16(static_cast<std::uint32_t>(s.size()));
+        out.insert(out.end(), s.begin(), s.end());
+    }
+    void put_u32(std::size_t at, std::uint32_t v) {
+        for (std::size_t i = 0; i < 4; ++i) {
+            out[at + i] = static_cast<std::uint8_t>(v >> (8U * i));
+        }
+    }
+};
+
+/// zlib with one stored (uncompressed) block, as any inflater reads it.
+std::vector<std::uint8_t> zlib_stored(const std::vector<std::uint8_t>& data) {
+    std::vector<std::uint8_t> z{0x78, 0x01, 0x01};
+    const auto n = static_cast<std::uint16_t>(data.size());
+    const auto inverse = static_cast<std::uint16_t>(~n);
+    z.push_back(static_cast<std::uint8_t>(n & 0xFFU));
+    z.push_back(static_cast<std::uint8_t>(n >> 8U));
+    z.push_back(static_cast<std::uint8_t>(inverse & 0xFFU));
+    z.push_back(static_cast<std::uint8_t>(inverse >> 8U));
+    z.insert(z.end(), data.begin(), data.end());
+    std::uint32_t a = 1;
+    std::uint32_t b = 0;
+    for (const std::uint8_t c : data) {
+        a = (a + c) % 65521U;
+        b = (b + a) % 65521U;
+    }
+    const std::uint32_t adler = (b << 16U) | a;
+    for (unsigned shift = 24;; shift -= 8) {
+        z.push_back(static_cast<std::uint8_t>(adler >> shift));
+        if (shift == 0) {
+            break;
+        }
+    }
+    return z;
+}
+
+std::vector<std::uint8_t> solid(std::uint32_t count, std::array<std::uint8_t, 4> colour) {
+    std::vector<std::uint8_t> p;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        p.insert(p.end(), colour.begin(), colour.end());
+    }
+    return p;
+}
+
+} // namespace
+
+TEST_CASE("Aseprite files: layers, opacity, compressed and linked cels, durations and tags") {
+    AseWriter w;
+    // Header: 2 frames of 4 x 2 RGBA; layer opacity valid.
+    w.u32(0);
+    w.u16(0xA5E0);
+    w.u16(2);
+    w.u16(4);
+    w.u16(2);
+    w.u16(32);
+    w.u32(1);
+    while (w.out.size() < 128) {
+        w.u8(0);
+    }
+    const auto chunk = [&w](std::uint32_t type, const std::function<void()>& body) {
+        const std::size_t start = w.out.size();
+        w.u32(0);
+        w.u16(type);
+        body();
+        w.put_u32(start, static_cast<std::uint32_t>(w.out.size() - start));
+    };
+    const auto frame = [&w](std::uint32_t duration, std::uint32_t chunks,
+                            const std::function<void()>& body) {
+        const std::size_t start = w.out.size();
+        w.u32(0);
+        w.u16(0xF1FA);
+        w.u16(chunks);
+        w.u16(duration);
+        w.u16(0);
+        w.u32(chunks);
+        body();
+        w.put_u32(start, static_cast<std::uint32_t>(w.out.size() - start));
+    };
+    const auto layer = [&](bool visible, std::uint32_t opacity, const char* name) {
+        chunk(0x2004, [&] {
+            w.u16(visible ? 1 : 0);
+            for (int i = 0; i < 5; ++i) {
+                w.u16(0); // a normal layer, child level, default size, normal blending
+            }
+            w.u8(opacity);
+            w.u8(0);
+            w.u8(0);
+            w.u8(0);
+            w.text(name);
+        });
+    };
+    const auto cel_head = [&w](std::uint32_t layer_index, std::uint32_t x, std::uint32_t kind) {
+        w.u16(layer_index);
+        w.u16(x);
+        w.u16(0);
+        w.u8(255);
+        w.u16(kind);
+        w.u16(0);
+        for (int i = 0; i < 5; ++i) {
+            w.u8(0);
+        }
+    };
+    const auto raw = [&](std::uint32_t layer_index, std::array<std::uint8_t, 4> colour) {
+        chunk(0x2005, [&] {
+            cel_head(layer_index, 0, 0);
+            w.u16(4);
+            w.u16(2);
+            const std::vector<std::uint8_t> p = solid(8, colour);
+            w.out.insert(w.out.end(), p.begin(), p.end());
+        });
+    };
+    frame(100, 7, [&] {
+        layer(true, 255, "background");
+        layer(false, 255, "hidden");
+        layer(true, 128, "top");
+        raw(0, {255, 0, 0, 255}); // red everywhere
+        raw(1, {0, 0, 255, 255}); // blue, on the hidden layer: never seen
+        chunk(0x2005, [&] {       // green, 2 x 1 at (1, 0), compressed, at half opacity
+            cel_head(2, 1, 2);
+            w.u16(2);
+            w.u16(1);
+            const std::vector<std::uint8_t> z = zlib_stored(solid(2, {0, 255, 0, 255}));
+            w.out.insert(w.out.end(), z.begin(), z.end());
+        });
+        chunk(0x2018, [&] {
+            w.u16(2);
+            for (int i = 0; i < 8; ++i) {
+                w.u8(0);
+            }
+            const auto tag = [&w](std::uint32_t from, std::uint32_t to, std::uint32_t direction,
+                                  const char* name) {
+                w.u16(from);
+                w.u16(to);
+                w.u8(direction);
+                for (int i = 0; i < 12; ++i) {
+                    w.u8(0);
+                }
+                w.text(name);
+            };
+            tag(0, 1, 0, "walk");
+            tag(1, 1, 2, "rest");
+        });
+    });
+    frame(150, 1, [&] {
+        chunk(0x2005, [&] { // the background, linked to the first frame's
+            cel_head(0, 0, 1);
+            w.u16(0);
+        });
+    });
+    w.put_u32(0, static_cast<std::uint32_t>(w.out.size()));
+
+    std::string error;
+    const std::optional<engine::assets::AsepriteSheet> sheet =
+        engine::assets::read_aseprite(w.out, error);
+    INFO(error);
+    REQUIRE(sheet.has_value());
+    if (!sheet) {
+        return;
+    }
+    CHECK(sheet->frame_width == 4);
+    CHECK(sheet->frame_height == 2);
+    CHECK(sheet->sheet.width == 8);
+    CHECK(sheet->durations_ms == std::vector<std::uint32_t>{100, 150});
+    REQUIRE(sheet->tags.size() == 2);
+    CHECK(sheet->tags[0].name == "walk");
+    CHECK(sheet->tags[1].direction == 2);
+    const auto px = [&sheet](std::uint32_t x, std::uint32_t y) {
+        const std::size_t at = ((std::size_t{y} * sheet->sheet.width) + x) * 4;
+        return std::array<int, 4>{sheet->sheet.rgba[at], sheet->sheet.rgba[at + 1],
+                                  sheet->sheet.rgba[at + 2], sheet->sheet.rgba[at + 3]};
+    };
+    CHECK(px(0, 0) == std::array<int, 4>{255, 0, 0, 255}); // the hidden blue is not drawn
+    const std::array<int, 4> mixed = px(1, 0);             // green at half over red
+    CHECK(mixed[0] == 127);
+    CHECK(mixed[1] == 128);
+    CHECK(mixed[3] == 255);
+    CHECK(px(1, 1) == std::array<int, 4>{255, 0, 0, 255});
+    CHECK(px(5, 0) == std::array<int, 4>{255, 0, 0, 255}); // second frame: linked, no top
+    const std::vector<std::uint8_t> junk(200, 7);
+    CHECK_FALSE(engine::assets::read_aseprite(junk, error).has_value());
+    CHECK(error == "This is not an Aseprite file.");
 }

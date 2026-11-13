@@ -270,6 +270,7 @@ if(TARGET editor_app)
         editor::app
         doctest::doctest
     )
+    target_include_directories(editor_app_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_definitions(editor_app_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS
         SPARXEL_SAMPLES_DIR="${PROJECT_SOURCE_DIR}/samples"
         SPARXEL_PLAYER="$<TARGET_FILE:sparxel_player>")

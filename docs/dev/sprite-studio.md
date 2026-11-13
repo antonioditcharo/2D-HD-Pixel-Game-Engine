@@ -125,6 +125,25 @@ cannot be read."*); tags outside the frames are dropped.
 | The window | *New sprite* makes both files and opens a window; names leaving the art folder or taken are refused; drawing with the mouse (left and right buttons), Alt-click picking, Fill and undo; the timeline's rows and columns, choosing a cell, hiding a layer by its tick box; saving; opening again brings the same window |
 | In the scene | The hero's picture opens cut into its scene's frames; painted over and saved, the scene view draws it differently; a sound is refused |
 
+
+## Aseprite files
+
+Artists who draw in Aseprite keep doing so (`plan/02` B12). Put a `.aseprite` (or `.ase`)
+file anywhere in `assets/`: the editor imports it as a sprite sheet beside it, as Sprite
+Studio saves one, so it is used like any other: `art/hero.aseprite` makes `art/hero.png`
+(every frame side by side) and `art/hero.sheet` (each frame's duration, and Aseprite's
+tags as the animations, forward, reverse or ping-pong). Visible layers are drawn bottom to
+top with their opacity and each cel's; hidden layers, groups and tilemap layers are left
+out; blend modes other than normal are drawn as normal. RGBA, grayscale and indexed
+(palette) files are read, compressed or not, with linked cels
+(`assets::read_aseprite()`, following Aseprite's published file format, with no need for
+Aseprite itself).
+
+It is imported again whenever the file changes: save in Aseprite, come back to the editor,
+and the scene shows the new frames (**live reload**). Double-click an Aseprite file in the
+Assets, or right-click it ▸ *Import again from Aseprite*, to import it at once. A damaged
+file is refused in plain language in the status bar, and the old sheet stays.
+
 ## 7. Next increments
 
 1. **A list of the sheet's tags** in the inspector, in place of typing the tag's name.
@@ -132,6 +151,6 @@ cannot be read."*); tags outside the frames are dropped.
    brushes, tile and wrap mode, an outline generator, and lasso and magic-wand selection.
 3. **Reference layers and layer groups** (B3), palette-swap variants (B4), frame events,
    hitboxes and pivots per frame (B6, B7).
-4. **`.aseprite` import** with live reload (B12), for artists who draw in Aseprite.
+4. **Aseprite slices** as 9-slices and pivots, and its user data as frame events.
 5. **Lighting maps** (B9): a normal-map generator and brush, previewed under the scene's
    lights.

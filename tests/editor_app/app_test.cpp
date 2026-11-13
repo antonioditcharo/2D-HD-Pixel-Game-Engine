@@ -44,6 +44,7 @@
 #include "scene_view.h"
 #include "search.h"
 #include "start_page.h"
+#include "support/aseprite.h"
 #include "tile_palette.h"
 #include "tutorials.h"
 
@@ -2151,4 +2152,33 @@ TEST_CASE("Tutorials tick off each step as it is done in the editor") {
     // Steps are listed, with the done ones ticked.
     REQUIRE(panel->step_list()->count() == 6);
     CHECK(panel->step_list()->item(0)->text().startsWith(QStringLiteral("✓")));
+}
+
+TEST_CASE("An Aseprite file saved again is imported again when the editor reloads assets") {
+    Editor e;
+    const fs::path file = e.sample.path / "assets/art/blob.aseprite";
+    const auto write = [&file](std::array<std::uint8_t, 4> colour) {
+        const std::vector<std::uint8_t> bytes = test_support::aseprite(2, 2, {colour});
+        std::ofstream(file, std::ios::binary)
+            .write(reinterpret_cast<const char*>(bytes.data()), // NOLINT
+                   static_cast<std::streamsize>(bytes.size()));
+    };
+    const auto first_red = [&e] {
+        const engine::assets::AssetRecord* png = e.window.document()->assets().find("art/blob.png");
+        REQUIRE(png != nullptr);
+        const std::optional<std::vector<std::uint8_t>> bytes =
+            e.window.document()->assets().read(png->guid);
+        REQUIRE(bytes.has_value());
+        std::string error;
+        const std::optional<engine::assets::Image> image =
+            engine::assets::decode_png(bytes.value_or(std::vector<std::uint8_t>{}), error);
+        REQUIRE(image.has_value());
+        return image ? int{image->rgba[0]} : -1;
+    };
+    write({255, 0, 0, 255});
+    e.window.reload_assets(); // new: imported
+    CHECK(first_red() == 255);
+    write({0, 255, 0, 255}); // saved again in Aseprite
+    e.window.reload_assets();
+    CHECK(first_red() == 0);
 }

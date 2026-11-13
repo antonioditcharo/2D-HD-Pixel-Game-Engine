@@ -83,5 +83,5 @@ viewport" (`plan/08` Phase 0):
    `.sparxel/`, keyed by content hash, importer version and settings (`plan/03` §5).
 2. **Hot reload:** the editor calls `refresh()` when the operating system reports a change
    (ReadDirectoryChangesW on Windows), and reloads what changed into the running game.
-3. **Aseprite import** (`.aseprite` via its public spec [S46]) with layers, frames and tags.
+3. **Aseprite slices** (Aseprite files themselves are imported: [sprite-studio.md](sprite-studio.md)).
 4. **Packaging** for export: a dependency walk from the start scene.
