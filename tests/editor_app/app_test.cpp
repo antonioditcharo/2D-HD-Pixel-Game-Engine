@@ -1694,6 +1694,22 @@ TEST_CASE("The Logic view takes values from the event, variables and sums") {
     choose(QStringLiteral("action:/set_variable"));
     REQUIRE(tree->currentItem() != nullptr);
     CHECK(tree->currentItem()->text(0) == QStringLiteral("Set variable_1 to 0"));
+    // From an object, with something to fill in: the number of a thing, its name a field
+    // beside the value, which reads as it is typed.
+    from(QStringLiteral("source:0:inventory/count_of"));
+    REQUIRE(tree->currentItem() != nullptr);
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to the number of \u201c\u201d (inventory)"));
+    auto* item_name = panel->findChild<QLineEdit*>(QStringLiteral("logic_inside:0:0"));
+    REQUIRE(item_name != nullptr);
+    item_name->setText(QStringLiteral("coin"));
+    Q_EMIT item_name->textEdited(item_name->text());
+    QApplication::processEvents();
+    CHECK(tree->currentItem()->text(0) ==
+          QStringLiteral("Set variable_1 to the number of \u201ccoin\u201d (inventory)"));
+    auto* whole = panel->findChild<QLabel*>(QStringLiteral("logic_slot:0"));
+    REQUIRE(whole != nullptr);
+    CHECK(whole->text() == QStringLiteral("the number of \u201ccoin\u201d (inventory)"));
     // From the event: the answer picked.
     from(QStringLiteral("source:0:/answer"));
     REQUIRE(tree->currentItem() != nullptr);

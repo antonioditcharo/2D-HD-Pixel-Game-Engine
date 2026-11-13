@@ -54,13 +54,18 @@ struct LogicSlot {
     std::string from;
     /// Whether the value is a sum (talks + 1, talks × [answer]), which can take more parts.
     bool sum = false;
+    /// When the value is one an object gives with something filled in (the number of
+    /// {item}): those written values, each a slot of its own (`argument` is its place),
+    /// edited with Document::set_logic_inside().
+    std::vector<LogicSlot> inside;
 };
 
 /// Where a value can come from instead of being written: a variable of the file, a value
 /// the Rule's event carries, or a property of one of the game's objects or entities.
 struct LogicSource {
-    /// Getter: a value an object gives with nothing to fill in, such as the answer chosen
-    /// (dialogue) or how many different things the player carries (inventory).
+    /// Getter: a value an object gives, such as the answer chosen (dialogue) or how many
+    /// of a thing the player carries (inventory), with its values to fill in, if any,
+    /// starting from their defaults.
     enum class Kind : std::uint8_t { Written, Variable, EventValue, Property, Getter };
     Kind kind = Kind::Written;
     std::string object; ///< For a property or a getter.
@@ -264,6 +269,13 @@ public:
     /// step, as typing does.
     bool set_logic_slot(std::string_view path, engine::logic::BlockId step, std::size_t argument,
                         const engine::reflect::Value& value, std::string& error);
+    /// Changes value `index` inside slot `argument`'s value, where it comes from an object
+    /// with something filled in (the "coin" of the number of {item}; LogicSlot::inside).
+    /// Refused, changing nothing, with `error`, as set_logic_slot() refuses. Changes to
+    /// the same value merge into one step, as typing does.
+    bool set_logic_inside(std::string_view path, engine::logic::BlockId step, std::size_t argument,
+                          std::size_t index, const engine::reflect::Value& value,
+                          std::string& error);
     /// Every action a step can do: those of the game's objects and of the scene's named
     /// entities' components, by object, then as they read.
     [[nodiscard]] std::vector<LogicAction> logic_actions() const;

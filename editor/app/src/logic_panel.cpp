@@ -569,6 +569,64 @@ void LogicPanel::show_fields() {
         }
         field->setParent(row);
         line->addWidget(field, 1);
+        // What a value from an object needs filled in (the "coin" of the number of {item}):
+        // fields of its own, beside it.
+        auto* shown = qobject_cast<QLabel*>(field); // the whole value, as it reads
+        for (const LogicSlot& inner : slot.inside) {
+            const std::size_t index = inner.argument;
+            const auto put = [this, file, block, argument, index,
+                              shown](const reflect::Value& value) {
+                std::string error;
+                if (!document_->set_logic_inside(file, block, argument, index, value, error)) {
+                    Q_EMIT refused(text_of(error));
+                    return;
+                }
+                for (const LogicSlot& now : document_->logic_slots(file, block)) {
+                    if (now.argument == argument && shown != nullptr) {
+                        shown->setText(text_of(now.from));
+                    }
+                }
+                refresh_texts();
+                Q_EMIT edited();
+            };
+            QWidget* box = nullptr;
+            if (inner.kind == reflect::ValueKind::Int) {
+                auto* spin = new QSpinBox(row);
+                spin->setRange(
+                    static_cast<int>(std::max(inner.limits.min.value_or(-1.0e6), double{INT_MIN})),
+                    static_cast<int>(std::min(inner.limits.max.value_or(1.0e6), double{INT_MAX})));
+                if (const auto* i = std::get_if<std::int64_t>(&inner.value)) {
+                    spin->setValue(static_cast<int>(*i));
+                }
+                connect(spin, qOverload<int>(&QSpinBox::valueChanged), this,
+                        [put](int v) { put(reflect::Value{std::int64_t{v}}); });
+                connect(spin, &QSpinBox::editingFinished, this, end);
+                box = spin;
+            } else if (inner.kind == reflect::ValueKind::Float) {
+                auto* spin = new QDoubleSpinBox(row);
+                spin->setDecimals(3);
+                spin->setRange(inner.limits.min.value_or(-1.0e6), inner.limits.max.value_or(1.0e6));
+                if (const auto* v = std::get_if<double>(&inner.value)) {
+                    spin->setValue(*v);
+                }
+                connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+                        [put](double v) { put(reflect::Value{v}); });
+                connect(spin, &QDoubleSpinBox::editingFinished, this, end);
+                box = spin;
+            } else if (inner.kind == reflect::ValueKind::Text) {
+                const auto* words = std::get_if<std::string>(&inner.value);
+                auto* edit = new QLineEdit(words != nullptr ? text_of(*words) : QString(), row);
+                connect(edit, &QLineEdit::textEdited, this,
+                        [put](const QString& text) { put(reflect::Value{utf8(text)}); });
+                connect(edit, &QLineEdit::editingFinished, this, end);
+                box = edit;
+            }
+            if (box != nullptr) {
+                box->setObjectName(QStringLiteral("logic_inside:%1:%2").arg(argument).arg(index));
+                box->setToolTip(text_of(inner.label));
+                line->addWidget(box, 1);
+            }
+        }
         // Where the value comes from, and sums for numbers.
         const std::vector<LogicSource> sources = document_->logic_sources(file, block, argument);
         if (!sources.empty()) {

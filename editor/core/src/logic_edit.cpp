@@ -346,6 +346,15 @@ LogicSlot slot(std::size_t argument, std::string label, reflect::ValueKind kind,
     return s;
 }
 
+/// The slot for value `index` inside a value an object gives (LogicSlot::inside).
+LogicSlot slot_of_inside(std::size_t index, const reflect::ParameterInfo& p,
+                         const reflect::Value& value) {
+    LogicSlot one = slot(index, p.meta.display_name, p.kind, value);
+    one.limits = p.limits;
+    one.choice = p.choice;
+    return one;
+}
+
 /// The value a new variable, or a value compared with one, starts at: no, 0 or "".
 reflect::Value zero_of(reflect::ValueKind kind) {
     switch (kind) {
@@ -845,9 +854,55 @@ std::vector<LogicSlot> Document::logic_slots(std::string_view path, BlockId bloc
         } else {
             slot.typed = false;
             slot.from = describe_value(*value, *this);
+            // A value an object gives with its own written values: fields of their own.
+            if (value->kind == logic::ExprKind::Call) {
+                const reflect::FunctionInfo* f =
+                    find_function(Lookup{impl_->registry, *impl_->world, &impl_->elsewhere},
+                                  value->object, value->member);
+                for (std::size_t i = 0;
+                     f != nullptr && i < f->parameters.size() && i < value->operands.size(); ++i) {
+                    if (value->operands[i].kind == logic::ExprKind::Literal) {
+                        slot.inside.push_back(
+                            slot_of_inside(i, f->parameters[i], value->operands[i].literal));
+                    }
+                }
+            }
         }
     }
     return slots;
+}
+
+bool Document::set_logic_inside(std::string_view path, BlockId step, std::size_t argument,
+                                std::size_t index, const reflect::Value& value,
+                                std::string& error) {
+    Impl& d = *impl_;
+    const std::vector<LogicSlot> slots = logic_slots(path, step);
+    const auto slot = std::find_if(slots.begin(), slots.end(), [argument](const LogicSlot& s) {
+        return s.argument == argument;
+    });
+    const LogicSlot* inside = nullptr;
+    if (slot != slots.end()) {
+        for (const LogicSlot& one : slot->inside) {
+            inside = one.argument == index ? &one : inside;
+        }
+    }
+    if (inside == nullptr) {
+        error = "That value has nothing to fill in there.";
+        return false;
+    }
+    std::optional<reflect::Value> fitted = fit(*inside, value, error);
+    if (!fitted) {
+        return false;
+    }
+    LogicFile* file = d.logic_file(path);
+    logic::Expr* target = slot_target(file->asset, step, argument);
+    engine::serialize::Json before = d.snapshot();
+    target->operands[index].literal = std::move(*fitted);
+    d.record("Change " + inside->label + " in " + std::string(path), std::move(before),
+             engine::Guid{},
+             "logic/" + std::string(path) + "/" + std::to_string(step.value) + "/" +
+                 std::to_string(argument) + "/" + std::to_string(index));
+    return true;
 }
 
 std::vector<LogicSlot> Document::unfilled_slots(std::string_view path, BlockId step) const {
@@ -1549,11 +1604,17 @@ BlockId Document::add_logic_comparison(std::string_view path, BlockId block,
         return BlockId{};
     }
     const BlockId id = next_id(file->asset);
+    const auto called = [&d](const std::string& object, const std::string& member) {
+        const reflect::FunctionInfo* f =
+            find_function(Lookup{d.registry, *d.world, &d.elsewhere}, object, member);
+        return logic::ir::call(object, member,
+                               f != nullptr ? starting_operands(*f) : std::vector<logic::Expr>{});
+    };
     logic::Expr value =
         found->kind == LogicSource::Kind::Variable ? logic::ir::variable(found->member)
         : found->kind == LogicSource::Kind::Property
             ? logic::ir::property(found->object, found->member)
-        : found->kind == LogicSource::Kind::Getter ? logic::ir::call(found->object, found->member)
+        : found->kind == LogicSource::Kind::Getter ? called(found->object, found->member)
                                                    : logic::ir::event_value(found->member);
     logic::Expr test = logic::ir::compare(logic::CompareOp::Equal, std::move(value),
                                           logic::ir::literal(zero_of(found->value)));
@@ -1642,10 +1703,15 @@ std::vector<LogicSource> Document::sources_of(std::string_view path, BlockId blo
                                                   p.meta.display_name + " of " + object, p.kind});
                 }
             }
-            // Values it gives with nothing to fill in (the answer chosen, ...).
+            // Values it gives (the answer chosen, the number of {item}), whose values to
+            // fill in, if any, are written ones (not choices).
             for (const reflect::FunctionInfo& f : type->functions) {
-                if (f.role == reflect::FunctionRole::Getter && f.parameters.empty() &&
-                    f.result_kind && fits(*f.result_kind)) {
+                const bool written_in =
+                    std::none_of(f.parameters.begin(), f.parameters.end(), [](const auto& p) {
+                        return p.kind == reflect::ValueKind::Choice;
+                    });
+                if (f.role == reflect::FunctionRole::Getter && written_in && f.result_kind &&
+                    fits(*f.result_kind)) {
                     sources.push_back(LogicSource{LogicSource::Kind::Getter, object, f.id,
                                                   reflect::block_text(f) + " (" + object + ")",
                                                   *f.result_kind});
@@ -1693,9 +1759,13 @@ bool Document::set_logic_source(std::string_view path, BlockId block, std::size_
     case LogicSource::Kind::Property:
         *value = logic::ir::property(source.object, source.member);
         break;
-    case LogicSource::Kind::Getter:
-        *value = logic::ir::call(source.object, source.member);
+    case LogicSource::Kind::Getter: {
+        const reflect::FunctionInfo* f =
+            find_function(Lookup{d.registry, *d.world, &d.elsewhere}, source.object, source.member);
+        *value = logic::ir::call(source.object, source.member,
+                                 f != nullptr ? starting_operands(*f) : std::vector<logic::Expr>{});
         break;
+    }
     }
     value->id = id;
     d.record("Change where a value comes from", std::move(before));
@@ -1854,9 +1924,13 @@ bool Document::set_logic_sum_with(std::string_view path, BlockId block, std::siz
     case LogicSource::Kind::Property:
         second = logic::ir::property(with.object, with.member);
         break;
-    case LogicSource::Kind::Getter:
-        second = logic::ir::call(with.object, with.member);
+    case LogicSource::Kind::Getter: {
+        const reflect::FunctionInfo* f =
+            find_function(Lookup{d.registry, *d.world, &d.elsewhere}, with.object, with.member);
+        second = logic::ir::call(with.object, with.member,
+                                 f != nullptr ? starting_operands(*f) : std::vector<logic::Expr>{});
         break;
+    }
     }
     d.record("Change a value's sum", std::move(before));
     return true;

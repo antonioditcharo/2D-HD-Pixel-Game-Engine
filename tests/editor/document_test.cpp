@@ -1979,10 +1979,36 @@ TEST_CASE("The inventory in logic: give, take, check, and values with nothing to
     REQUIRE(kinds != sources.end());
     CHECK(kinds->text == "The number of different things carried (inventory)");
     CHECK(kinds->value == reflect::ValueKind::Int);
-    // Only values with nothing to fill in: not the number of a thing, which needs its name.
-    CHECK(std::none_of(sources.begin(), sources.end(),
-                       [](const auto& s) { return s.member == "count_of"; }));
     REQUIRE(d->set_logic_source(file, set, 0, *kinds, error));
+    // The step's value (its argument 0; argument 1 is the variable's name).
+    const auto value_of = [&](engine::logic::BlockId step) {
+        const std::vector<editor::LogicSlot> all = d->logic_slots(file, step);
+        const auto found = std::find_if(all.begin(), all.end(),
+                                        [](const editor::LogicSlot& s) { return s.argument == 0; });
+        REQUIRE(found != all.end());
+        return *found;
+    };
+    CHECK(value_of(set).inside.empty()); // nothing to fill in
+    // A value with something to fill in: the number of a thing, its name a field of its own
+    // inside the value, edited in place (and refused if it does not fit).
+    const auto number = std::find_if(sources.begin(), sources.end(), [](const auto& s) {
+        return s.kind == Kind::Getter && s.member == "count_of";
+    });
+    REQUIRE(number != sources.end());
+    const engine::logic::BlockId counted =
+        d->add_logic_step(file, set, editor::LogicAction{"", "set_variable", ""}, error);
+    REQUIRE(d->set_logic_source(file, counted, 0, *number, error));
+    const editor::LogicSlot counting = value_of(counted);
+    CHECK_FALSE(counting.typed);
+    REQUIRE(counting.inside.size() == 1);
+    CHECK(counting.inside[0].label == "Item");
+    CHECK(counting.inside[0].kind == reflect::ValueKind::Text);
+    REQUIRE(d->set_logic_inside(file, counted, 0, 0, reflect::Value{std::string("co")}, error));
+    REQUIRE(d->set_logic_inside(file, counted, 0, 0, reflect::Value{std::string("coin")}, error));
+    CHECK(d->undo_label() == "Change Item in logic/bag.drules"); // typing merged
+    CHECK_FALSE(d->set_logic_inside(file, counted, 0, 0, reflect::Value{std::int64_t{3}}, error));
+    CHECK_FALSE(d->set_logic_inside(file, counted, 0, 1, reflect::Value{std::string("x")}, error));
+    CHECK(error == "That value has nothing to fill in there.");
     const std::vector<editor::LogicSource> comparable = d->logic_comparables(file, rule);
     const auto answer_text = std::find_if(comparable.begin(), comparable.end(), [](const auto& s) {
         return s.kind == Kind::Getter && s.object == "dialogue" && s.member == "answer_text";
@@ -1992,11 +2018,13 @@ TEST_CASE("The inventory in logic: give, take, check, and values with nothing to
     const std::string set_line =
         std::string("    Set variable_1 to the number of different things carried") +
         " (inventory)";
-    CHECK(lines() == std::vector<std::string>{"When the game starts",
-                                              "  If the answer's text (dialogue) = “”",
-                                              "  Give 1 “key” (inventory)",
-                                              "  If the player has at least 3 “coin” (inventory):",
-                                              "    Take 3 “coin” (inventory)", set_line});
+    const std::string count_line =
+        std::string("    Set variable_1 to the number of “coin”") + " (inventory)";
+    CHECK(lines() ==
+          std::vector<std::string>{"When the game starts", "  If the answer's text (dialogue) = “”",
+                                   "  Give 1 “key” (inventory)",
+                                   "  If the player has at least 3 “coin” (inventory):",
+                                   "    Take 3 “coin” (inventory)", set_line, count_line});
     CHECK(d->check_logic(file).empty());
 }
 
