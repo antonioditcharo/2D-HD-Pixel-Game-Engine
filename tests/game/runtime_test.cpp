@@ -2810,3 +2810,99 @@ TEST_CASE("Night is drawn bluer than noon, and the clock is saved") {
     CHECK(night.r < noon.r);
     CHECK(night.b >= night.r);
 }
+
+TEST_CASE("The title screen starts the game; the pause menu saves, loads and shows pages") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["title_screen"] = true;
+        settings["pause_menu"] = true;
+        write_json(project.folder.path / game::project_file, settings);
+        logic::LogicAsset rules;
+        rules.name = "start";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1}, "", "game_start", {}, {ir::log(2, Project::text("started"))}, {}});
+        write_json(project.folder.path / "assets/logic/start.drules",
+                   serialize::logic_to_json(rules));
+    }
+    // Keys: Interact (New game); later Menu (Escape), Down to Save, Interact, Interact (slot 1).
+    input::Recording replay;
+    const auto press = [&replay](std::uint64_t step, input::Key k) {
+        replay.record(step, key(k), true);
+        replay.record(step + 1, key(k), false);
+    };
+    press(5, input::Key::Z);
+    press(10, input::Key::Escape);
+    for (std::uint64_t s = 0; s < 4; ++s) {
+        press(14 + (s * 3), input::Key::Down);
+    }
+    press(30, input::Key::Z); // Save page
+    press(34, input::Key::Z); // slot 1
+    const auto runtime = project.open(no_graphics(&replay));
+    runtime->step();
+    CHECK(runtime->menu().page() == game::GameMenu::Page::Title);
+    CHECK(std::count(runtime->log().begin(), runtime->log().end(), "started") == 0);
+    for (int i = 0; i < 9; ++i) {
+        runtime->step();
+    }
+    CHECK_FALSE(runtime->menu().open());
+    CHECK(std::count(runtime->log().begin(), runtime->log().end(), "started") == 1);
+    for (int i = 0; i < 30; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->menu().page() == game::GameMenu::Page::Save);
+    // Saved in slot 1 by the menu.
+    CHECK(fs::exists(game::save_slot_file(runtime->save_folder(), 1)));
+}
+
+TEST_CASE("The title screen and the pause menu are drawn over the game") {
+    const Project project;
+    std::vector<serialize::Issue> issues;
+    std::ifstream in(project.folder.path / game::project_file);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+    settings["title_screen"] = true;
+    settings["pause_menu"] = true;
+    settings["width"] = 320;
+    settings["height"] = 180;
+    write_json(project.folder.path / game::project_file, settings);
+    input::Recording replay;
+    replay.record(3, key(input::Key::Z), true); // New game
+    replay.record(4, key(input::Key::Z), false);
+    replay.record(6, key(input::Key::Escape), true); // the pause menu
+    replay.record(7, key(input::Key::Escape), false);
+    replay.record(9, key(input::Key::Down), true); // Items
+    replay.record(10, key(input::Key::Down), false);
+    replay.record(12, key(input::Key::Z), true);
+    replay.record(13, key(input::Key::Z), false);
+    game::RuntimeOptions options;
+    options.headless = true;
+    options.replay = &replay;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    const auto shot = [&](const char* name) {
+        REQUIRE(runtime->draw());
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        bool gold = false;
+        for (std::size_t i = 0; i + 3 < pixels.size(); i += 4) {
+            gold = gold || (pixels[i] == 255 && pixels[i + 1] == 210 && pixels[i + 2] == 122);
+        }
+        CHECK(gold); // the chosen line, or the game's name
+        const assets::Image image{320, 180, pixels};
+        const std::vector<std::uint8_t> png = assets::encode_png(image);
+        std::ofstream(std::filesystem::temp_directory_path() / name, std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+    };
+    runtime->step();
+    shot("sparxel-title.png");
+    for (int i = 0; i < 14; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->menu().page() == game::GameMenu::Page::Items);
+    shot("sparxel-pause.png");
+}

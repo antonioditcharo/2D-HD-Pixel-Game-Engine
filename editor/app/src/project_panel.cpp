@@ -181,6 +181,16 @@ void ProjectPanel::build() {
     channel(tr("Background green"), "background_g", &engine::render::Color::g);
     channel(tr("Background blue"), "background_b", &engine::render::Color::b);
 
+    QFormLayout* menus = group(tr("Menus"));
+    tick(
+        menus, tr("Title screen (New game, Continue, Quit)"), "title_screen",
+        [](const Settings& s) { return s.title_screen; },
+        [](Settings& s, bool on) { s.title_screen = on; });
+    tick(
+        menus, tr("Pause menu on the Menu key"), "pause_menu",
+        [](const Settings& s) { return s.pause_menu; },
+        [](Settings& s, bool on) { s.pause_menu = on; });
+
     QFormLayout* day = group(tr("Day and night"));
     number(
         day, tr("Day length (minutes, 0: no clock)"), "day_minutes", 0, 1440, 1, 0,

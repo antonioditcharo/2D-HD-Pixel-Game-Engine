@@ -17,6 +17,7 @@
 #include "engine/game/dialogue.h"
 #include "engine/game/inventory.h"
 #include "engine/game/lighting.h"
+#include "engine/game/menus.h"
 #include "engine/game/particles.h"
 #include "engine/game/quests.h"
 #include "engine/game/save.h"
@@ -75,6 +76,11 @@ struct ProjectSettings {
     double camera_smoothing = 0.0;
     /// Day and night: how many real minutes a game day lasts (0: no clock, the light as set
     /// above), and the hour a game starts at (0 to 24).
+    /// Ready-made menus: a title screen before the game starts (New game, Continue,
+    /// Quit), and a pause menu on the Menu key (Resume, Items, Quests, Party, Save, Load,
+    /// Quit). Off by default: Rules then decide what the Menu key does.
+    bool title_screen = false;
+    bool pause_menu = false;
     double day_minutes = 0.0;
     double start_hour = 12.0;
     double camera_dead_zone = 0.0;
@@ -224,6 +230,8 @@ public:
     [[nodiscard]] const InventoryObject& inventory() const noexcept;
     [[nodiscard]] const QuestObject& quests() const noexcept;
     [[nodiscard]] const PartyObject& party() const noexcept;
+    /// The title screen or pause menu, open or not.
+    [[nodiscard]] const GameMenu& menu() const noexcept;
     /// The battle being fought, if any.
     [[nodiscard]] const BattleScreen* battle_screen() const noexcept;
     [[nodiscard]] DialogueObject& dialogue() noexcept;

@@ -64,7 +64,8 @@ private:
 
 /// Queues `text` on one line with its top-left at (x, y), in `color`. `atlas` is the font's
 /// atlas uploaded with Device::create_texture().
+/// `scale` draws each pixel of the font as a square of that many pixels (titles).
 void draw_text(render::SpriteRenderer& sprites, const render::Texture& atlas, const PixelFont& font,
-               std::string_view text, float x, float y, render::Color color);
+               std::string_view text, float x, float y, render::Color color, int scale = 1);
 
 } // namespace engine::ui

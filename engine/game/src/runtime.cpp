@@ -40,7 +40,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 28> known_project_keys{"format",
+constexpr std::array<std::string_view, 30> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -67,7 +67,9 @@ constexpr std::array<std::string_view, 28> known_project_keys{"format",
                                                               "block_shadow",
                                                               "scene_fade",
                                                               "day_minutes",
-                                                              "start_hour"};
+                                                              "start_hour",
+                                                              "title_screen",
+                                                              "pause_menu"};
 
 } // namespace
 
@@ -411,6 +413,17 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
             }
         }
     }
+    for (const auto& [key, target] : {std::pair{"title_screen", &settings.title_screen},
+                                      std::pair{"pause_menu", &settings.pause_menu}}) {
+        if (const auto found = doc.find(key); found != doc.end()) {
+            if (found->is_boolean()) {
+                *target = found->get<bool>();
+            } else {
+                issues.push_back(serialize::Issue{file + "/" + key, "This must be true or false."});
+                ok = false;
+            }
+        }
+    }
     if (const auto clamp = doc.find("camera_clamp"); clamp != doc.end()) {
         if (clamp->is_boolean()) {
             settings.camera_clamp = clamp->get<bool>();
@@ -463,6 +476,8 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["camera_distance"] = settings.camera_distance;
     json["camera_fov"] = settings.camera_fov;
     json["camera_clamp"] = settings.camera_clamp;
+    json["title_screen"] = settings.title_screen;
+    json["pause_menu"] = settings.pause_menu;
     json["ambient_light"] = settings.ambient_light;
     json["sun_light"] = settings.sun_light;
     json["sun_angle"] = settings.sun_angle;
@@ -540,6 +555,7 @@ struct Runtime::Impl {
     PartyObject party;
     BattleObject battle;
     std::optional<BattleScreen> battle_screen;
+    GameMenu menu;
     ConversationPlayer conversation;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
@@ -823,7 +839,12 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         }
     }
 
-    r.vm->emit("", "game_start");
+    // With a title screen, the game starts when New game is chosen.
+    if (r.settings.title_screen) {
+        r.menu.open_title();
+    } else {
+        r.vm->emit("", "game_start");
+    }
     return std::unique_ptr<Runtime>(new Runtime(std::move(impl)));
 }
 
@@ -841,7 +862,8 @@ void Runtime::step() {
     // So does everyone while the scene fades out and in.
     const bool talking = r.dialogue.is_open();
     const input::InputState& moves =
-        talking || r.battle_screen || r.fading != Impl::Fade::None ? r.idle : r.state;
+        talking || r.battle_screen || r.menu.open() || r.fading != Impl::Fade::None ? r.idle
+                                                                                    : r.state;
 
     // 2. Movement, with walls, bodies and walk animations; then trigger areas.
     const double dt = r.clock.step_seconds();
@@ -874,6 +896,41 @@ void Runtime::step() {
     // 3. Events: each pressed action runs the Rules listening for it. Interact also
     //    reaches what each mover faces, in mover GUID order.
     for (const std::string& action : r.state.pressed_actions()) {
+        // The title screen or the pause menu takes every press while open.
+        if (r.menu.open()) {
+            const GameMenu::Result result = r.menu.press(action, r.save_object);
+            switch (result.kind) {
+            case GameMenu::Result::Kind::NewGame:
+                r.vm->emit("", "game_start");
+                break;
+            case GameMenu::Result::Kind::Load: {
+                std::vector<serialize::Issue> issues;
+                if (!load_from_slot(result.slot, issues)) {
+                    r.problems.push_back("Slot " + std::to_string(result.slot) +
+                                         " could not be loaded.");
+                }
+                break;
+            }
+            case GameMenu::Result::Kind::Save: {
+                std::string error;
+                r.menu.say(save_to_slot(result.slot, error)
+                               ? "Saved in slot " + std::to_string(result.slot) + "."
+                               : "Not saved: " + error);
+                break;
+            }
+            case GameMenu::Result::Kind::Quit:
+                r.keep_running = false;
+                break;
+            default:
+                break;
+            }
+            continue;
+        }
+        // The pause menu opens on the Menu key, when the project has it.
+        if (action == "menu" && r.settings.pause_menu && !talking && !r.battle_screen) {
+            r.menu.open_pause();
+            continue;
+        }
         // In a battle, the battle screen takes every press.
         if (r.battle_screen) {
             r.battle_screen->press(action, r.inventory);
@@ -1273,6 +1330,9 @@ bool Runtime::draw() {
             render::Color{0, 0, 0, static_cast<std::uint8_t>(std::lround(dark * 255.0))});
         r.sprites->end();
     }
+    // The title screen or the pause menu, over everything.
+    r.menu.draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(), r.settings.name,
+                r.save_object, r.inventory, r.quests, r.party);
     return true;
 }
 
@@ -1739,6 +1799,10 @@ const QuestObject& Runtime::quests() const noexcept {
 
 const PartyObject& Runtime::party() const noexcept {
     return impl_->party;
+}
+
+const GameMenu& Runtime::menu() const noexcept {
+    return impl_->menu;
 }
 
 const BattleScreen* Runtime::battle_screen() const noexcept {

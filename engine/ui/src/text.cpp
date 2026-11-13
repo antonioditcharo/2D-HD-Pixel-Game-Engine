@@ -270,14 +270,16 @@ std::vector<std::string> wrap(const PixelFont& font, std::string_view text, int 
 }
 
 void draw_text(render::SpriteRenderer& sprites, const render::Texture& atlas, const PixelFont& font,
-               std::string_view text, float x, float y, render::Color color) {
+               std::string_view text, float x, float y, render::Color color, int scale) {
+    const auto times = static_cast<float>(std::max(scale, 1));
     float pen = x;
     for (const char32_t c : decode_utf8(text)) {
         if (c != U' ') {
             const render::Rect source = font.glyph(c);
-            sprites.draw(atlas, source, render::Rect{pen, y, source.w, source.h}, color);
+            sprites.draw(atlas, source, render::Rect{pen, y, source.w * times, source.h * times},
+                         color);
         }
-        pen += static_cast<float>(font.advance(c));
+        pen += static_cast<float>(font.advance(c)) * times;
     }
 }
 
