@@ -104,8 +104,13 @@ jobs:
           status=$?
           set -e
           cat tidy.log
-          grep -E '^[^ ]+:[0-9]+:[0-9]+: (error|warning): ' tidy.log | sort -u | head -50 |
-            sed -E "s#^${GITHUB_WORKSPACE}/##; s#^([^:]+):([0-9]+):([0-9]+): (error|warning): (.*)#::error file=\1,line=\2,col=\3::\5#" || true
+          # GitHub shows at most 10 error and 10 warning annotations a step: the first
+          # findings as errors, the next as warnings.
+          grep -E '^[^ ]+:[0-9]+:[0-9]+: (error|warning): ' tidy.log | sort -u |
+            sed -E "s#^${GITHUB_WORKSPACE}/##; s#^([^:]+):([0-9]+):([0-9]+): (error|warning): (.*)#file=\1,line=\2,col=\3::\5#" > findings.txt || true
+          head -10 findings.txt | sed 's/^/::error /' || true
+          sed -n '11,20p' findings.txt | sed 's/^/::warning /' || true
+          echo "$(wc -l < findings.txt) findings"
           exit $status
 
   windows:

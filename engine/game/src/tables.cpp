@@ -554,7 +554,10 @@ const Table* TablesObject::find(std::string_view path) const {
         key += ".dtable";
     }
     if (const auto known = tables_.find(key); known != tables_.end()) {
-        return known->second ? &*known->second : nullptr;
+        if (const auto& found = known->second; found.has_value()) {
+            return &*found;
+        }
+        return nullptr;
     }
     std::optional<Table> table;
     const assets::AssetRecord* record = assets_ != nullptr ? assets_->find(key) : nullptr;
@@ -568,7 +571,10 @@ const Table* TablesObject::find(std::string_view path) const {
     }
     const auto [at, added] = tables_.emplace(key, std::move(table));
     static_cast<void>(added);
-    return at->second ? &*at->second : nullptr;
+    if (const auto& made = at->second; made.has_value()) {
+        return &*made;
+    }
+    return nullptr;
 }
 
 double TablesObject::number_of(const std::string& table, const std::string& row,

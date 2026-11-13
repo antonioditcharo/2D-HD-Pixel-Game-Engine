@@ -3186,8 +3186,10 @@ TEST_CASE("Auto-tiles: made from a picture's blocks, and painted by their neighb
         const std::optional<engine::assets::Image> tiles =
             engine::assets::decode_png(bytes.value_or(std::vector<std::uint8_t>{}), bad);
         REQUIRE(tiles.has_value());
-        CHECK(tiles->width == 8 * 16);
-        CHECK(tiles->height == 6 * 16);
+        if (tiles) {
+            CHECK(tiles->width == 8 * 16);
+            CHECK(tiles->height == 6 * 16);
+        }
     }
 
     // The ground, cleared in the middle, painted as an auto-tile map.

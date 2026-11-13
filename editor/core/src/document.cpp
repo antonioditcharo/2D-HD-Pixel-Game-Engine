@@ -1503,14 +1503,15 @@ std::size_t Document::update_prefab_copies(std::string_view prefab, std::string&
             continue;
         }
         const world::Entity e = loaded.entities.front();
-        if (copy.place) {
+        if (copy.place.has_value()) {
+            const std::array<double, 2> place = copy.place.value();
             auto* at = d.world->get<scene2d::Transform2D>(e);
             if (at == nullptr) {
                 at = d.world->add<scene2d::Transform2D>(e);
             }
             if (at != nullptr) {
-                at->x = (*copy.place)[0];
-                at->y = (*copy.place)[1];
+                at->x = place[0];
+                at->y = place[1];
             }
         }
         if (auto* link = d.world->add<game::PrefabLink>(e)) {

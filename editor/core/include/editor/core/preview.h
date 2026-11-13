@@ -35,7 +35,7 @@ public:
                                                               double y, std::string& error);
     /// Draws with `look` in place of the project's (a preset being hovered), until reset.
     void set_look_override(std::optional<engine::render::Look> look) {
-        look_override_ = std::move(look);
+        look_override_ = look;
     }
 
     /// Forgets the pictures that `changes` (from the document's AssetDatabase::refresh())

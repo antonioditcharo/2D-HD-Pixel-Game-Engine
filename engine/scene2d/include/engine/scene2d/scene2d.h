@@ -180,33 +180,32 @@ inline constexpr std::uint32_t max_tilemap_side = 4096;
 /// entity's position. Tiles are numbered like sprite sheet frames. They are stored as text
 /// (see parse_tiles()) so scene files stay readable and diff well.
 struct Tilemap {
-    std::string tileset;         ///< The GUID of a PNG asset.
-    std::uint32_t tile_size = 0; ///< In pixels, square. 0 uses the camera's PPU.
-    std::string tiles;
-    bool visible = true;
-    /// Every tile of this map blocks movement (see sweep()). Paint walls on their own map,
-    /// hidden if the art is on another one.
-    bool solid = false;
     /// In the Diorama style, how tall each tile stands, in tiles: 0 is flat ground; above,
     /// every tile is a block with the tile's picture on its top and sides.
     double height = 0.0;
+    /// How solid the tiles look, 0 (invisible) to 1: below 1 they are see-through, for
+    /// water over a riverbed or glass blocks; what is behind shows through, blended.
+    double opacity = 1.0;
+    double animation_fps = 4.0;
+    double elapsed = 0.0; ///< Seconds the animation has run (hidden; saved with scenes).
+    std::string tileset;         ///< The GUID of a PNG asset.
+    std::string tiles;
     /// Each tile's own height, for terrain built tile by tile: text like `tiles`, a number
     /// per cell (0 to 16, halves and quarters allowed); an empty cell, or a cell past the
     /// text, stands at `height`.
     std::string heights;
-    /// How solid the tiles look, 0 (invisible) to 1: below 1 they are see-through, for
-    /// water over a riverbed or glass blocks; what is behind shows through, blended.
-    double opacity = 1.0;
+    std::uint32_t tile_size = 0; ///< In pixels, square. 0 uses the camera's PPU.
     /// Animated tiles, for water, lava or flowers in the wind: each tile shows itself and
     /// then the next animation_frames - 1 tiles of the tileset in turn, at animation_fps
     /// frames a second (1 frame: still). Put animated tiles on their own map.
     std::uint32_t animation_frames = 1;
-    double animation_fps = 4.0;
+    bool visible = true;
+    /// Every tile of this map blocks movement (see sweep()). Paint walls on their own map,
+    /// hidden if the art is on another one.
+    bool solid = false;
     /// Painting picks each tile's shape from its neighbours: for a tileset expanded from
     /// auto-tile blocks (assets/autotile.h), where each 48 tiles are one terrain.
     bool autotile = false;
-    double elapsed = 0.0; ///< Seconds the animation has run (hidden; saved with scenes).
-
     /// The alpha the tiles are drawn with, 0 to 255, from `opacity`.
     [[nodiscard]] std::uint8_t alpha() const noexcept;
     /// How far each tile is through its animation: 0 to animation_frames - 1.
@@ -225,12 +224,12 @@ struct Tilemap {
 
 private:
     // A cache only: not reflected, so never saved.
-    mutable std::string parsed_text_;
-    mutable std::optional<TileGrid> parsed_;
-    mutable std::string parse_error_;
-    mutable bool parsed_once_ = false;
-    mutable std::string heights_text_;
     mutable std::vector<std::vector<double>> heights_; ///< By row; NaN for the map's height.
+    mutable std::string parsed_text_;
+    mutable std::string parse_error_;
+    mutable std::string heights_text_;
+    mutable std::optional<TileGrid> parsed_;
+    mutable bool parsed_once_ = false;
     mutable bool heights_once_ = false;
 };
 

@@ -757,7 +757,10 @@ SheetLibrary::SheetLibrary(const assets::AssetDatabase& assets) : assets_(assets
 const SheetInfo* SheetLibrary::find(std::string_view image) {
     const auto known = sheets_.find(std::string(image));
     if (known != sheets_.end()) {
-        return known->second ? &*known->second : nullptr;
+        if (const auto& found = known->second; found.has_value()) {
+            return &*found;
+        }
+        return nullptr;
     }
     std::optional<SheetInfo> sheet;
     const std::optional<Guid> guid = Guid::parse(image);
@@ -775,7 +778,10 @@ const SheetInfo* SheetLibrary::find(std::string_view image) {
     }
     const auto [at, added] = sheets_.emplace(std::string(image), std::move(sheet));
     static_cast<void>(added);
-    return at->second ? &*at->second : nullptr;
+    if (const auto& made = at->second; made.has_value()) {
+        return &*made;
+    }
+    return nullptr;
 }
 
 void SheetLibrary::apply(const assets::AssetChanges& changes) {
