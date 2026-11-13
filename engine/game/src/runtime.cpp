@@ -2,6 +2,7 @@
 
 #include "engine/foundation/text.h"
 #include "engine/game/logic_world.h"
+#include "engine/game/shop.h"
 #include "engine/logic/compiler.h"
 #include "engine/ui/text.h"
 
@@ -704,6 +705,7 @@ struct Runtime::Impl {
     PartyObject party;
     BattleObject battle;
     std::optional<BattleScreen> battle_screen;
+    std::optional<ShopScreen> shop_screen;
     GameMenu menu;
     std::optional<std::array<double, 2>> player_was; ///< For encounters: where the player stood.
     ConversationPlayer conversation;
@@ -1101,8 +1103,9 @@ void Runtime::step() {
     // So does everyone while the scene fades out and in.
     const bool talking = r.dialogue.is_open();
     const input::InputState& moves =
-        talking || r.battle_screen || r.menu.open() || r.fading != Impl::Fade::None ? r.idle
-                                                                                    : r.state;
+        talking || r.battle_screen || r.shop_screen || r.menu.open() || r.fading != Impl::Fade::None
+            ? r.idle
+            : r.state;
 
     // 2. Movement, with walls, bodies and walk animations; then trigger areas.
     const double dt = r.clock.step_seconds();
@@ -1115,7 +1118,7 @@ void Runtime::step() {
     update_camera(r.camera, *r.world, dt);
     // Encounters: the distance the player walked counts inside Encounter Areas.
     if (const std::optional<std::array<double, 2>> now = player_position(*r.world)) {
-        if (r.player_was && !talking && !r.battle_screen && !r.menu.open()) {
+        if (r.player_was && !talking && !r.battle_screen && !r.shop_screen && !r.menu.open()) {
             const double walked =
                 std::hypot((*now)[0] - (*r.player_was)[0], (*now)[1] - (*r.player_was)[1]);
             if (const std::optional<std::string> enemies = update_encounters(*r.world, walked)) {
@@ -1195,6 +1198,11 @@ void Runtime::step() {
             default:
                 break;
             }
+            continue;
+        }
+        // In a shop, the shop screen takes every press.
+        if (r.shop_screen) {
+            r.shop_screen->press(action, r.inventory);
             continue;
         }
         // The pause menu opens on the Menu key, when the project has it.
@@ -1322,6 +1330,24 @@ void Runtime::step() {
         } else {
             r.problems.push_back("The battle could not start: " + error);
         }
+    }
+    // Shops: one logic asked for opens with the prices of data/items; one left tells Rules.
+    if (std::optional<std::string> wanted = r.inventory.take_shop_request();
+        wanted && !r.shop_screen) {
+        const Table* items = r.tables.find("data/items");
+        std::vector<std::string> missing;
+        std::vector<Ware> wares = shop_wares(*wanted, items, missing);
+        for (const std::string& item : missing) {
+            r.problems.push_back("The shop cannot sell " + item +
+                                 ": it needs a row in data/items with a price above 0.");
+        }
+        r.shop_screen.emplace(std::move(wares), items);
+        r.inventory.set_shopping(true);
+    }
+    if (r.shop_screen && r.shop_screen->closed()) {
+        r.shop_screen.reset();
+        r.inventory.set_shopping(false);
+        r.vm->emit("inventory", "shop_closed");
     }
     if (r.battle_screen && r.battle_screen->finished()) {
         Battle& fought = r.battle_screen->battle();
@@ -1536,6 +1562,11 @@ bool Runtime::draw() {
         };
         r.battle_screen->draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(),
                               r.inventory, picture);
+    }
+    // A shop, over the world.
+    if (r.shop_screen) {
+        r.shop_screen->draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(),
+                            r.inventory);
     }
 
     // The message box, over everything.
@@ -1867,9 +1898,11 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
             }
         }
     }
-    // The party, if the save has it; a battle being fought stops.
+    // The party, if the save has it; a battle being fought stops, and so does shopping.
     r.battle_screen.reset();
     r.battle.set_fighting(false);
+    r.shop_screen.reset();
+    r.inventory.set_shopping(false);
     r.party.clear();
     if (const auto party = json.find("party"); party != json.end() && party->is_object()) {
         if (party->contains("members") && (*party)["members"].is_array()) {

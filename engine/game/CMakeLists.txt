@@ -13,6 +13,7 @@ add_library(engine_game STATIC
     src/inventory.cpp
     src/logic_world.cpp
     src/menus.cpp
+    src/shop.cpp
     src/particles.cpp
     src/quests.cpp
     src/runtime.cpp

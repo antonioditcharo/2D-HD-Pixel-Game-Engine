@@ -140,6 +140,7 @@ Details and the questions that remain open are in
 | [Audio](dev/audio.md) | Sound effects and music: buses, fades, decoding, sound in no-code logic |
 | [Menus](dev/menus.md) | The ready-made title screen and pause menu: items, quests, party, saving and loading |
 | [Battles](dev/battle.md) | Turn-based battles from the data tables: the party, commands, speed order, rewards, the battle screen |
+| [Shops](dev/shop.md) | The ready-made shop screen: buying and selling the items of `data/items` for gold, by quantity |
 | [Data tables](dev/tables.md) | Items, enemies, skills and levels as tables: typed columns, formulas, CSV, the grid editor, logic reading cells |
 | [Story: conversations](dev/story.md) | Conversations as graphs: the Story editor, speakers and name plates, choices, conditions, effects and flags, played by the game |
 | [Sprite Studio](dev/sprite-studio.md) | Drawing and animating pixel-art sprites: tools, layers, frames, tags, onion skin, the `.dsprite` file and its sprite sheet, hot reload |

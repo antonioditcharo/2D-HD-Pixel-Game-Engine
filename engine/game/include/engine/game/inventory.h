@@ -10,8 +10,10 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace engine::game {
 
@@ -44,8 +46,20 @@ public:
     /// Empties it: when a save is loaded.
     void clear() noexcept { items_.clear(); }
 
+    /// Opens a shop selling `items` (rows of data/items, separated by commas: "potion,
+    /// ether"), for gold. The runtime takes the request.
+    void open_shop(const std::string& items) { shop_request_ = items; }
+    [[nodiscard]] std::optional<std::string> take_shop_request() {
+        return std::exchange(shop_request_, std::nullopt);
+    }
+    /// Whether the player is in a shop.
+    [[nodiscard]] bool shopping() const noexcept { return shopping_; }
+    void set_shopping(bool on) noexcept { shopping_ = on; }
+
 private:
     std::map<std::string, std::int64_t, std::less<>> items_;
+    std::optional<std::string> shop_request_;
+    bool shopping_ = false;
 };
 
 /// Registers InventoryObject as "inventory".

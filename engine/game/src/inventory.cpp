@@ -95,6 +95,16 @@ void register_inventory_types(reflect::Registry& registry) {
     inventory.getter<&InventoryObject::kinds>("kinds")
         .text("The number of different things carried")
         .tooltip("How many different things the player carries.");
+    inventory.action<&InventoryObject::open_shop>("open_shop", {"items"})
+        .text("Open a shop selling {items}")
+        .tooltip("The shop screen: the player buys these rows of data/items (separated by "
+                 "commas: potion, ether) at their price, and sells what they carry, for gold.");
+    inventory.condition<&InventoryObject::shopping>("shopping")
+        .text("The player is in a shop")
+        .tooltip("Whether the shop screen is open.");
+    inventory.event<>("shop_closed")
+        .text("When the player leaves a shop")
+        .tooltip("The shop screen closed.");
 }
 
 } // namespace engine::game

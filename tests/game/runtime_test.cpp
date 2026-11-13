@@ -6,6 +6,7 @@
 #include "engine/game/conversation.h"
 #include "engine/game/logic_world.h"
 #include "engine/game/runtime.h"
+#include "engine/game/shop.h"
 #include "engine/ui/text.h"
 
 #include <doctest/doctest.h>
@@ -826,6 +827,7 @@ TEST_CASE("Rules play music and sounds from assets") {
         std::vector<float> out(std::size_t{frames} * 2);
         REQUIRE(mixer->render(out));
         std::vector<float> channel;
+        channel.reserve(frames);
         for (std::uint32_t i = 0; i < frames; ++i) {
             channel.push_back(out[std::size_t{i} * 2]);
         }
@@ -2598,6 +2600,10 @@ TEST_CASE("Battles: commands, speed order, skills, items, victory, and the same 
     for (std::uint32_t seed = 1; seed < 20 && !fled; ++seed) {
         std::optional<game::Battle> b =
             game::Battle::start(tables.data(), {"mage"}, {}, {"slime"}, seed, error);
+        REQUIRE(b.has_value());
+        if (!b) {
+            break;
+        }
         b->choose({game::BattleCommand::Kind::Flee, {}, 0}, {}, error);
         fled = b->outcome() == game::BattleOutcome::Fled;
     }
@@ -2642,7 +2648,7 @@ TEST_CASE("A battle from logic: fought with the keys on the battle screen, won, 
         replay.record(step, key(input::Key::Z), true);
         replay.record(step + 2, key(input::Key::Z), false);
     }
-    game::RuntimeOptions options = no_graphics(&replay);
+    const game::RuntimeOptions options = no_graphics(&replay);
     const auto runtime = project.open(options);
     runtime->step();
     runtime->step();
@@ -2740,7 +2746,7 @@ TEST_CASE("The battle screen is drawn over the world: enemies, the party, the me
     }
     CHECK(gold);
     // A picture of it, for looking at.
-    assets::Image image{320, 180, pixels};
+    const assets::Image image{320, 180, pixels};
     const std::vector<std::uint8_t> png = assets::encode_png(image);
     std::ofstream(std::filesystem::temp_directory_path() / "sparxel-battle-screen.png",
                   std::ios::binary)
@@ -3162,4 +3168,157 @@ TEST_CASE("A conversation gives each line its speaker's look, with the line's ow
     dialogue.close_current();
     CHECK(player.update(dialogue, bag, quests, dialogue.flags()).empty());
     CHECK(dialogue.current_look().portrait == "faces/elder.png");
+}
+
+namespace {
+
+/// data/items for shops: a potion (10 gold), an ether (25, sold back for 5), a key with no
+/// price, and a name and description for the potion.
+game::Table shop_items() {
+    game::Table t;
+    t.columns = {{"name", game::ColumnKind::Text},
+                 {"description", game::ColumnKind::Text},
+                 {"price", game::ColumnKind::Whole},
+                 {"sell", game::ColumnKind::Whole}};
+    t.rows.push_back(
+        {"potion", {{"name", "Potion"}, {"description", "Heals 20 HP."}, {"price", "10"}}});
+    t.rows.push_back({"ether", {{"price", "25"}, {"sell", "5"}}});
+    t.rows.push_back({"key", {}});
+    return t;
+}
+
+} // namespace
+
+TEST_CASE("Shops: wares by price, buying a quantity for gold, and selling back") {
+    const game::Table items = shop_items();
+    std::vector<std::string> missing;
+    const std::vector<game::Ware> wares =
+        game::shop_wares("potion, ether, key, nothing", &items, missing);
+    REQUIRE(wares.size() == 2);
+    CHECK(wares[0].name == "Potion");
+    CHECK(wares[0].price == 10);
+    CHECK(wares[0].description == "Heals 20 HP.");
+    CHECK(missing == std::vector<std::string>{"key", "nothing"});
+    // Its own sell price, or else half its price.
+    CHECK(game::sell_ware("ether", &items).sell == 5);
+    CHECK(game::sell_ware("potion", &items).sell == 5);
+
+    game::InventoryObject bag;
+    bag.give("gold", 45);
+    game::ShopScreen shop(wares, &items);
+    CHECK(shop.page() == game::ShopScreen::Page::Menu);
+    shop.press("interact", bag); // Buy
+    CHECK(shop.page() == game::ShopScreen::Page::Buy);
+    CHECK(shop.note() == "Heals 20 HP.");
+    shop.press("interact", bag); // the potion
+    CHECK(shop.page() == game::ShopScreen::Page::Quantity);
+    shop.press("move_right", bag);
+    shop.press("move_right", bag);
+    CHECK(shop.quantity() == 3);
+    shop.press("move_up", bag); // +10, but 4 is the most 45 gold buys
+    CHECK(shop.quantity() == 4);
+    shop.press("move_left", bag);
+    shop.press("interact", bag); // buys 3
+    CHECK(bag.count_of("potion") == 3);
+    CHECK(bag.count_of("gold") == 15);
+    CHECK(shop.note() == "Bought 3 Potion.");
+    shop.press("move_down", bag); // the ether: 25 is too much
+    shop.press("interact", bag);
+    CHECK(shop.page() == game::ShopScreen::Page::Buy);
+    CHECK(shop.note() == "Not enough gold.");
+    shop.press("cancel", bag); // to the menu, on Buy
+    shop.press("move_down", bag);
+    shop.press("interact", bag); // Sell
+    REQUIRE(shop.page() == game::ShopScreen::Page::Sell);
+    // The key has no price: the shop does not buy it; gold is not listed.
+    bag.give("key", 1);
+    REQUIRE(shop.sellable(bag).size() == 1);
+    shop.press("interact", bag);
+    shop.press("move_left", bag); // from 1 round to the most: all 3
+    CHECK(shop.quantity() == 3);
+    shop.press("interact", bag);
+    CHECK_FALSE(bag.has("potion"));
+    CHECK(bag.count_of("gold") == 30); // 15 + 3 x 5
+    shop.press("cancel", bag);
+    shop.press("cancel", bag);
+    CHECK(shop.closed());
+}
+
+TEST_CASE("A shop from logic: opened, bought from with the keys, drawn, and left") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["width"] = 320;
+        settings["height"] = 180;
+        write_json(project.folder.path / game::project_file, settings);
+        std::filesystem::create_directories(project.folder.path / "assets/data");
+        std::ofstream(project.folder.path / "assets/data/items.dtable", std::ios::binary)
+            << game::table_to_text(shop_items());
+        logic::LogicAsset rules;
+        rules.name = "shop";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "",
+            "game_start",
+            {},
+            {ir::do_action(2, "inventory", "give", {Project::text("gold"), Project::whole(30)}),
+             ir::do_action(3, "inventory", "open_shop", {Project::text("potion, ether")})},
+            {}});
+        rules.rules.push_back(logic::Rule{logic::BlockId{4},
+                                          "inventory",
+                                          "shop_closed",
+                                          {},
+                                          {ir::log(5, Project::text("left the shop"))},
+                                          {}});
+        write_json(project.folder.path / "assets/logic/shop.drules",
+                   serialize::logic_to_json(rules));
+    }
+    input::Recording replay;
+    std::uint64_t at = 3;
+    const auto press = [&replay, &at](input::Key k) {
+        replay.record(at, key(k), true);
+        replay.record(at + 1, key(k), false);
+        at += 3;
+    };
+    press(input::Key::Z);     // Buy
+    press(input::Key::Z);     // the potion
+    press(input::Key::Right); // 2
+    const std::uint64_t buying = at;
+    press(input::Key::Z); // bought
+    press(input::Key::X); // to the menu
+    press(input::Key::X); // left
+    game::RuntimeOptions options;
+    options.headless = true;
+    options.replay = &replay;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    for (std::uint64_t i = 0; i < buying; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->inventory().shopping());
+    REQUIRE(runtime->draw());
+    {
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        bool gold = false;
+        for (std::size_t i = 0; i + 3 < pixels.size(); i += 4) {
+            gold = gold || (pixels[i] == 255 && pixels[i + 1] == 210 && pixels[i + 2] == 122);
+        }
+        CHECK(gold);
+        const assets::Image image{320, 180, pixels};
+        const std::vector<std::uint8_t> png = assets::encode_png(image);
+        std::ofstream(std::filesystem::temp_directory_path() / "sparxel-shop.png", std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+    }
+    for (std::uint64_t i = buying; i < at + 2; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->inventory().count_of("potion") == 2);
+    CHECK(runtime->inventory().count_of("gold") == 10);
+    CHECK_FALSE(runtime->inventory().shopping());
+    CHECK(std::count(runtime->log().begin(), runtime->log().end(), "left the shop") == 1);
 }
