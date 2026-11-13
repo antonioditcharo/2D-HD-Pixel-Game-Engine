@@ -200,6 +200,20 @@ public:
     /// FLAC or MP3), a Sound Source repeating it there. One undo step. Returns its GUID,
     /// or an invalid one, with `error` in plain language, if the asset is neither.
     engine::Guid place_asset(std::string_view asset_path, double x, double y, std::string& error);
+    /// Makes a prefab of `entity` and what is under it: assets/prefabs/<name>.dprefab, the
+    /// entity's place left at 0, 0. The entity becomes a copy of it (a Prefab link), as one
+    /// undo step; the file stays. Refused, with `error`, for a name taken or not a plain file
+    /// name.
+    bool make_prefab(engine::Guid entity, std::string_view name, std::string& error);
+    /// Places a copy of a prefab (its path in assets/) at map point (x, y), snapped to whole
+    /// pixels: its entities with new GUIDs, the root linked to the prefab. One undo step.
+    engine::Guid place_prefab(std::string_view prefab, double x, double y, std::string& error);
+    /// Makes every copy of a prefab in this scene match it again, each keeping its name, its
+    /// place and its GUID (what is under it is made anew): one undo step. Returns how many
+    /// were updated; 0, with `error`, for a file that cannot be read.
+    std::size_t update_prefab_copies(std::string_view prefab, std::string& error);
+    /// The prefab (its path in assets/) `entity` is a copy of; empty if none.
+    [[nodiscard]] std::string prefab_of(engine::Guid entity) const;
     /// Places a door to another of the project's scenes (its path in assets/, such as
     /// "maps/cave.dscene") at map point (x, y), snapped to whole pixels: an entity
     /// "door_to_cave" (numbered if the name is taken) with a Trigger Area, and in

@@ -224,6 +224,16 @@ void register_behaviours(reflect::Registry& registry) {
         .text("When {who} walks out")
         .tooltip("Happens when a walking character leaves the area.");
 
+    auto prefab = registry.add_type<PrefabLink>("prefab_link")
+                      .display_name("Prefab")
+                      .category("Objects")
+                      .tooltip("This is a copy of a prefab, a reusable object; Edit > Update "
+                               "copies of this prefab makes it match the prefab again.");
+    prefab.property<&PrefabLink::prefab>("prefab")
+        .flags(reflect::property_flag::read_only)
+        .display_name("Prefab")
+        .tooltip("The prefab this is a copy of.");
+
     auto interactable = registry.add_type<Interactable>("interactable")
                             .display_name("Interactable")
                             .category("Events")
@@ -353,6 +363,7 @@ bool register_behaviour_components(world::World& world) {
     const bool mover = world.register_component<TopDownMover>();
     const bool walker = world.register_component<Walker>();
     const bool particles = world.register_component<ParticleEmitter>();
+    const bool prefab = world.register_component<PrefabLink>();
     const bool walk = world.register_component<WalkAnimation>();
     const bool body = world.register_component<Body>();
     const bool trigger = world.register_component<Trigger>();
@@ -360,8 +371,8 @@ bool register_behaviour_components(world::World& world) {
     const bool simulated = world.register_component<PhysicsBody>();
     const bool sound = world.register_component<SoundSource>();
     const bool jumping = world.register_component<Jumping>();
-    return mover && walker && particles && walk && body && trigger && interactable && simulated &&
-           sound && jumping;
+    return mover && walker && particles && prefab && walk && body && trigger && interactable &&
+           simulated && sound && jumping;
 }
 
 // ---------------------------------------------------------------------------------------

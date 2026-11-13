@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -29,10 +30,13 @@ struct Planned {
 
 } // namespace
 
-Json scene_to_json(const world::World& world) {
+namespace {
+
+/// Entities from `roots` down, parents first, as scene documents list them.
+Json entities_json(const world::World& world, std::vector<world::Entity> pending,
+                   world::Entity root_without_parent) {
     Json entities = Json::array();
     // Parents first, without recursion: a stack of entities still to write.
-    std::vector<world::Entity> pending = world.roots();
     std::reverse(pending.begin(), pending.end());
     while (!pending.empty()) {
         const world::Entity entity = pending.back();
@@ -43,7 +47,8 @@ Json scene_to_json(const world::World& world) {
         if (!world.name(entity).empty()) {
             item["name"] = std::string(world.name(entity));
         }
-        if (const world::Entity parent = world.parent(entity); parent.is_valid()) {
+        if (const world::Entity parent = world.parent(entity);
+            parent.is_valid() && entity != root_without_parent) {
             item["parent"] = world.guid(parent).to_string();
         }
         Json components = Json::object();
@@ -58,11 +63,46 @@ Json scene_to_json(const world::World& world) {
         const std::vector<world::Entity> children = world.children(entity);
         pending.insert(pending.end(), children.rbegin(), children.rend());
     }
-
     Json out = Json::object();
     out["format"] = scene_format;
     out["version"] = scene_version;
     out["entities"] = std::move(entities);
+    return out;
+}
+
+} // namespace
+
+Json scene_to_json(const world::World& world) {
+    return entities_json(world, world.roots(), world::Entity{});
+}
+
+Json subtree_to_json(const world::World& world, world::Entity root) {
+    return entities_json(
+        world, root.is_valid() ? std::vector<world::Entity>{root} : std::vector<world::Entity>{},
+        root);
+}
+
+Json with_new_guids(const Json& scene) {
+    Json out = scene;
+    if (!out.is_object() || !out.contains("entities") || !out["entities"].is_array()) {
+        return out;
+    }
+    std::map<std::string, std::string> renamed;
+    for (Json& item : out["entities"]) {
+        if (item.is_object() && item.contains("guid") && item["guid"].is_string()) {
+            const std::string fresh = Guid::generate().to_string();
+            renamed[item["guid"].get<std::string>()] = fresh;
+            item["guid"] = fresh;
+        }
+    }
+    for (Json& item : out["entities"]) {
+        if (item.is_object() && item.contains("parent") && item["parent"].is_string()) {
+            const auto found = renamed.find(item["parent"].get<std::string>());
+            if (found != renamed.end()) {
+                item["parent"] = found->second;
+            }
+        }
+    }
     return out;
 }
 

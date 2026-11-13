@@ -1069,8 +1069,205 @@ Guid Document::create_entity(std::string_view name, double x, double y) {
     return guid;
 }
 
+bool Document::make_prefab(Guid entity, std::string_view name, std::string& error) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(entity);
+    const std::string trimmed(name);
+    if (!e.is_valid()) {
+        error = "There is no such entity.";
+        return false;
+    }
+    if (trimmed.empty() || trimmed.find_first_of("/\\:") != std::string::npos ||
+        trimmed.front() == '.') {
+        error = "A prefab needs a name without slashes, such as house.";
+        return false;
+    }
+    const std::string path = "prefabs/" + trimmed + ".dprefab";
+    const fs::path file = d.folder / "assets" / path;
+    std::error_code ignored;
+    if (fs::exists(file, ignored)) {
+        error = "There is a prefab called " + trimmed + " already.";
+        return false;
+    }
+    serialize::Json json = serialize::subtree_to_json(*d.world, e);
+    // The root's place belongs to each copy, not to the prefab.
+    if (!json["entities"].empty()) {
+        serialize::Json& root = json["entities"][0];
+        if (root.contains("components") && root["components"].contains("transform_2d")) {
+            root["components"]["transform_2d"]["x"] = 0.0;
+            root["components"]["transform_2d"]["y"] = 0.0;
+        }
+        if (root.contains("components")) {
+            root["components"].erase("prefab_link");
+        }
+    }
+    if (!game::write_file_atomically(file, serialize::to_text(json), error)) {
+        return false;
+    }
+    static_cast<void>(d.assets->refresh());
+    const engine::assets::AssetRecord* record = d.assets->find(path);
+    if (record == nullptr) {
+        error = "The prefab was written but could not be read back.";
+        return false;
+    }
+    serialize::Json before = d.snapshot();
+    if (auto* link = d.world->add<game::PrefabLink>(e)) {
+        link->prefab = record->guid.to_string();
+    }
+    d.record("Make prefab " + trimmed, std::move(before));
+    return true;
+}
+
+std::string Document::prefab_of(Guid entity) const {
+    const Impl& d = *impl_;
+    const world::Entity e = d.world->find(entity);
+    const auto* link = e.is_valid() ? d.world->get<game::PrefabLink>(e) : nullptr;
+    if (link == nullptr) {
+        return {};
+    }
+    const std::optional<Guid> guid = Guid::parse(link->prefab);
+    const engine::assets::AssetRecord* record = guid ? d.assets->find(*guid) : nullptr;
+    return record != nullptr ? record->path : std::string();
+}
+
+namespace {
+
+/// A prefab file's scene document, or nothing with `error`.
+std::optional<serialize::Json>
+read_prefab(const fs::path& folder, const engine::assets::AssetRecord* record, std::string& error) {
+    if (record == nullptr || !record->path.ends_with(".dprefab")) {
+        error = "That is not one of the project's prefabs.";
+        return std::nullopt;
+    }
+    std::ifstream in(folder / "assets" / record->path, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<Issue> issues;
+    std::optional<serialize::Json> json = serialize::parse(text, issues);
+    if (!json || !json->contains("entities") || !(*json)["entities"].is_array() ||
+        (*json)["entities"].empty()) {
+        error = record->path + " cannot be read as a prefab.";
+        return std::nullopt;
+    }
+    return json;
+}
+
+} // namespace
+
+Guid Document::place_prefab(std::string_view prefab, double x, double y, std::string& error) {
+    Impl& d = *impl_;
+    const engine::assets::AssetRecord* record = d.assets->find(prefab);
+    std::optional<serialize::Json> json = read_prefab(d.folder, record, error);
+    if (!json) {
+        return Guid{};
+    }
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        error = "That point is not on the map.";
+        return Guid{};
+    }
+    const serialize::Json copy = serialize::with_new_guids(*json);
+    serialize::Json before = d.snapshot();
+    const serialize::SceneLoad loaded = serialize::scene_from_json(copy, *d.world);
+    if (loaded.entities.empty()) {
+        error = loaded.issues.empty() ? std::string("The prefab is empty.")
+                                      : loaded.issues.front().message;
+        return Guid{};
+    }
+    const world::Entity root = loaded.entities.front();
+    const double ppu = std::max(1U, d.settings.ppu);
+    auto* at = d.world->get<scene2d::Transform2D>(root);
+    if (at == nullptr) {
+        at = d.world->add<scene2d::Transform2D>(root);
+    }
+    if (at != nullptr) {
+        at->x = std::round(x * ppu) / ppu;
+        at->y = std::round(y * ppu) / ppu;
+    }
+    if (auto* link = d.world->add<game::PrefabLink>(root)) {
+        link->prefab = record->guid.to_string();
+    }
+    const Guid guid = d.world->guid(root);
+    d.record("Place " + fs::path(record->path).stem().string(), std::move(before));
+    return guid;
+}
+
+std::size_t Document::update_prefab_copies(std::string_view prefab, std::string& error) {
+    Impl& d = *impl_;
+    const engine::assets::AssetRecord* record = d.assets->find(prefab);
+    std::optional<serialize::Json> json = read_prefab(d.folder, record, error);
+    if (!json) {
+        return 0;
+    }
+    const std::string link_guid = record->guid.to_string();
+    // The copies, by their root's GUID, name and place.
+    struct Copy {
+        Guid guid;
+        std::string name;
+        std::optional<std::array<double, 2>> place;
+        Guid parent;
+    };
+    std::vector<Copy> copies;
+    for (const world::Entity e : entities()) {
+        const auto* link = d.world->get<game::PrefabLink>(e);
+        if (link != nullptr && link->prefab == link_guid) {
+            const auto* at = d.world->get<scene2d::Transform2D>(e);
+            const world::Entity parent = d.world->parent(e);
+            copies.push_back(Copy{d.world->guid(e), std::string(d.world->name(e)),
+                                  at != nullptr ? std::optional<std::array<double, 2>>(
+                                                      std::array<double, 2>{at->x, at->y})
+                                                : std::nullopt,
+                                  parent.is_valid() ? d.world->guid(parent) : Guid{}});
+        }
+    }
+    if (copies.empty()) {
+        return 0;
+    }
+    serialize::Json before = d.snapshot();
+    for (const Copy& copy : copies) {
+        d.world->destroy(d.world->find(copy.guid));
+        serialize::Json fresh = serialize::with_new_guids(*json);
+        serialize::Json& root = fresh["entities"][0];
+        const serialize::Json made_root = root["guid"];
+        root["guid"] = copy.guid.to_string(); // the copy keeps its own
+        root["name"] = copy.name;
+        if (copy.parent.is_valid()) {
+            root["parent"] = copy.parent.to_string();
+        }
+        // Its children name the root by the GUID just made: point them at the kept one.
+        for (serialize::Json& item : fresh["entities"]) {
+            if (item.contains("parent") && item["parent"] == made_root) {
+                item["parent"] = copy.guid.to_string();
+            }
+        }
+        const serialize::SceneLoad loaded = serialize::scene_from_json(fresh, *d.world);
+        if (loaded.entities.empty()) {
+            continue;
+        }
+        const world::Entity e = loaded.entities.front();
+        if (copy.place) {
+            auto* at = d.world->get<scene2d::Transform2D>(e);
+            if (at == nullptr) {
+                at = d.world->add<scene2d::Transform2D>(e);
+            }
+            if (at != nullptr) {
+                at->x = (*copy.place)[0];
+                at->y = (*copy.place)[1];
+            }
+        }
+        if (auto* link = d.world->add<game::PrefabLink>(e)) {
+            link->prefab = link_guid;
+        }
+    }
+    d.record("Update " + std::to_string(copies.size()) + " copies of " +
+                 fs::path(record->path).stem().string(),
+             std::move(before));
+    return copies.size();
+}
+
 Guid Document::place_asset(std::string_view asset_path, double x, double y, std::string& error) {
     Impl& d = *impl_;
+    if (asset_path.ends_with(".dprefab")) {
+        return place_prefab(asset_path, x, y, error);
+    }
     const engine::assets::AssetRecord* record = d.assets->find(asset_path);
     const fs::path path(asset_path);
     std::string extension = path.extension().string();

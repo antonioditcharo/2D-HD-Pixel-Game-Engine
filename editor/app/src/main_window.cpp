@@ -71,6 +71,11 @@ QString path_text(const fs::path& path) {
                              static_cast<qsizetype>(text.size()));
 }
 
+std::string utf8_of(const QString& text) {
+    const QByteArray bytes = text.toUtf8();
+    return {bytes.constData(), static_cast<std::size_t>(bytes.size())};
+}
+
 fs::path path_of(const QString& text) {
     const QByteArray utf8 = text.toUtf8();
     return fs::path(std::u8string(utf8.begin(), utf8.end()));
@@ -120,11 +125,11 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     asset_tree_->setObjectName(QStringLiteral("assets"));
     asset_tree_->setAccessibleName(tr("Assets"));
     asset_tree_->setModel(asset_model_);
-    asset_model_->setNameFilters({QStringLiteral("*.png"), QStringLiteral("*.wav"),
-                                  QStringLiteral("*.ogg"), QStringLiteral("*.mp3"),
-                                  QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
-                                  QStringLiteral("*.drules"), QStringLiteral("*.dsprite"),
-                                  QStringLiteral("*.dtalk"), QStringLiteral("*.dtable")});
+    asset_model_->setNameFilters(
+        {QStringLiteral("*.png"), QStringLiteral("*.wav"), QStringLiteral("*.ogg"),
+         QStringLiteral("*.mp3"), QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
+         QStringLiteral("*.drules"), QStringLiteral("*.dsprite"), QStringLiteral("*.dtalk"),
+         QStringLiteral("*.dprefab"), QStringLiteral("*.dtable")});
     asset_model_->setNameFilterDisables(false);
     // Pictures are dragged from here into the scene.
     asset_tree_->setDragEnabled(true);
@@ -447,6 +452,42 @@ StoryWindow* MainWindow::new_story(const QString& name) {
     return open_story(relative);
 }
 
+bool MainWindow::make_prefab(const QString& name) {
+    std::string error;
+    if (document_ == nullptr ||
+        !document_->make_prefab(selection_, utf8_of(name.trimmed()), error)) {
+        report(tr("The prefab could not be made: %1").arg(text_of(error)));
+        return false;
+    }
+    changed(true);
+    statusBar()->showMessage(
+        tr("Made prefabs/%1.dprefab: drag it from the Assets into any scene").arg(name.trimmed()),
+        6000);
+    return true;
+}
+
+std::size_t MainWindow::update_prefab_copies() {
+    if (document_ == nullptr) {
+        return 0;
+    }
+    const std::string prefab = document_->prefab_of(selection_);
+    if (prefab.empty()) {
+        report(tr("The selected entity is not a copy of a prefab."));
+        return 0;
+    }
+    std::string error;
+    const std::size_t updated = document_->update_prefab_copies(prefab, error);
+    if (!error.empty()) {
+        report(tr("The copies could not be updated: %1").arg(text_of(error)));
+    }
+    rebuild_outliner();
+    reselect();
+    view_->refresh();
+    update_title_and_actions();
+    statusBar()->showMessage(tr("%n copies updated", nullptr, static_cast<int>(updated)), 5000);
+    return updated;
+}
+
 SfxGenerator* MainWindow::show_sfx_generator() {
     if (document_ == nullptr) {
         return nullptr;
@@ -727,6 +768,25 @@ void MainWindow::build_actions() {
     edit->addSeparator();
     new_entity_ = edit->addAction(tr("&New entity"), this, [this] { new_entity(); });
     delete_ = edit->addAction(tr("&Delete"), this, [this] { delete_selection(); });
+    QAction* prefab = edit->addAction(tr("Make a &prefab…"), this, [this] {
+        if (document_ == nullptr || !selection_.is_valid()) {
+            return;
+        }
+        bool named = false;
+        const std::string_view now = document_->world().name(document_->world().find(selection_));
+        const QString name = QInputDialog::getText(
+            this, tr("Make a prefab"), tr("The prefab's name:"), QLineEdit::Normal,
+            now.empty() ? tr("prefab") : text_of(std::string(now)), &named);
+        if (named) {
+            make_prefab(name);
+        }
+    });
+    prefab->setObjectName(QStringLiteral("make_prefab"));
+    prefab->setToolTip(tr("Save the selected entity, with what is under it, as a reusable "
+                          "prefab: drag it from the Assets into any scene"));
+    QAction* copies = edit->addAction(tr("&Update copies of this prefab"), this,
+                                      [this] { update_prefab_copies(); });
+    copies->setObjectName(QStringLiteral("update_prefab"));
     delete_->setShortcut(QKeySequence::Delete);
     QAction* find = edit->addAction(tr("Search &everything…"), this, [this] { show_search(); });
     find->setObjectName(QStringLiteral("search"));

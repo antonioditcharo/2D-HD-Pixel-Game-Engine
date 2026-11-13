@@ -130,6 +130,10 @@ public:
     TableWindow* open_table(const QString& asset_path);
     /// Makes a table as assets/data/<name>.dtable and opens it.
     TableWindow* new_table(const QString& name);
+    /// Makes a prefab of the selected entity, named `name` (Edit > Make a prefab).
+    bool make_prefab(const QString& name);
+    /// Makes every copy of the selected entity's prefab in this scene match it again.
+    std::size_t update_prefab_copies();
     /// Opens the sound effect generator, saving into the project's assets/sfx.
     SfxGenerator* show_sfx_generator();
     /// Reads the assets folder again, and draws again the pictures that changed (hot

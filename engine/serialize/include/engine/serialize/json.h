@@ -99,6 +99,12 @@ inline constexpr int scene_version = 1;
 /// listed parents first: roots in creation order, each followed by its descendants in
 /// order. Components are keyed by their registered type name.
 [[nodiscard]] Json scene_to_json(const world::World& world);
+/// The same for one entity and its descendants only (a prefab): `root` first, without its
+/// parent.
+[[nodiscard]] Json subtree_to_json(const world::World& world, world::Entity root);
+/// A copy of a scene document with every GUID replaced by a new one, parents following,
+/// so it can be added to a world that has the originals: a prefab placed again.
+[[nodiscard]] Json with_new_guids(const Json& scene);
 
 struct SceneLoad {
     /// The entities created, in the order of the file. Empty if the scene was refused.

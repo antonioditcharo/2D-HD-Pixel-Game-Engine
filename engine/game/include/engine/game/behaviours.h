@@ -174,6 +174,12 @@ struct Trigger {
 /// "Interactable": tells Rules when the player presses Interact while facing it within
 /// reach ("interacted", with the mover's name as "who"). For people to talk to, signs and
 /// chests.
+/// "Prefab": this entity (and what is under it) is a copy of a prefab, a reusable object
+/// saved as a ".dprefab" file; the editor updates copies from it.
+struct PrefabLink {
+    std::string prefab; ///< The GUID of the prefab file.
+};
+
 struct Interactable {
     double width = 1.0;  ///< In tiles.
     double height = 1.0; ///< In tiles, upwards from the position.

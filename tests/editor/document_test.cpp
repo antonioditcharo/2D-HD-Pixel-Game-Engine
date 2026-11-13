@@ -3106,3 +3106,48 @@ TEST_CASE("Raising and lowering tiles builds Diorama terrain, a stroke one undo 
     CHECK(map->height_at(0, 0) == was);
     CHECK(map->height_at(1, 0) == was);
 }
+
+TEST_CASE("Prefabs: made from an entity, placed as copies, and the copies updated") {
+    const Sample sample;
+    const std::unique_ptr<editor::Document> doc = sample.open();
+    const Guid elder = doc->world().guid(doc->world().find_named("elder").at(0));
+    std::string error;
+    REQUIRE(doc->make_prefab(elder, "villager", error));
+    CHECK(fs::exists(sample.path / "assets" / "prefabs" / "villager.dprefab"));
+    CHECK(doc->prefab_of(elder) == "prefabs/villager.dprefab");
+    CHECK(doc->undo_label() == "Make prefab villager");
+    CHECK_FALSE(doc->make_prefab(elder, "villager", error));
+    CHECK(error == "There is a prefab called villager already.");
+    CHECK_FALSE(doc->make_prefab(elder, "a/b", error));
+
+    // Placed twice: new GUIDs, at the points given, each linked to the prefab.
+    const Guid first = doc->place_prefab("prefabs/villager.dprefab", 3.0, 4.0, error);
+    const Guid second = doc->place_asset("prefabs/villager.dprefab", 7.25, 2.0, error);
+    REQUIRE(first.is_valid());
+    REQUIRE(second.is_valid());
+    CHECK(first != elder);
+    const auto at = [&](Guid g) {
+        return *doc->world().get<scene2d::Transform2D>(doc->world().find(g));
+    };
+    CHECK(at(first).x == 3.0);
+    CHECK(at(second).x == 7.25);
+    CHECK(doc->prefab_of(second) == "prefabs/villager.dprefab");
+    CHECK(doc->world().get<scene2d::Sprite>(doc->world().find(first)) != nullptr);
+    CHECK(doc->undo_label() == "Place villager");
+
+    // The prefab file changes (here: a faster walk animation... any component); copies match
+    // it again, each keeping its name, place and GUID.
+    REQUIRE(doc->rename(first, "farmer"));
+    doc->world().get<scene2d::Sprite>(doc->world().find(first))->tint_r = 10;
+    const std::size_t updated = doc->update_prefab_copies("prefabs/villager.dprefab", error);
+    CHECK(updated == 3); // the elder and the two placed
+    CHECK(doc->world().find(first).is_valid());
+    CHECK(doc->world().name(doc->world().find(first)) == "farmer");
+    CHECK(at(first).x == 3.0);
+    CHECK(doc->world().get<scene2d::Sprite>(doc->world().find(first))->tint_r == 255);
+    CHECK(doc->undo_label() == "Update 3 copies of villager");
+    REQUIRE(doc->undo());
+    CHECK(doc->world().get<scene2d::Sprite>(doc->world().find(first))->tint_r == 10);
+    CHECK(doc->update_prefab_copies("maps/village.dscene", error) == 0);
+    CHECK(error == "That is not one of the project's prefabs.");
+}

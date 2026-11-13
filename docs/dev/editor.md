@@ -50,6 +50,16 @@ exported games). The status bar sums it up (*Doctor: 1 problem(s), 0 warning(s),
 note(s)*). (`editor::examine()` in [`doctor.h`](../../editor/core/include/editor/core/doctor.h),
 without Qt.)
 
+**Prefabs** (`plan/02` C3): **Edit ▸ Make a prefab…** saves the selected entity, with
+what is under it, as `assets/prefabs/<name>.dprefab` (its place left at 0, 0) and links the
+entity to it (a *Prefab* component). **Drag a prefab from the Assets into the scene** to
+place a copy where it is dropped: its entities with new GUIDs, the copy linked to the
+prefab, one undo step (*Place villager*). **Edit ▸ Update copies of this prefab** (with a copy
+selected) makes every copy in the scene match the prefab file again, each keeping its own
+name, place and GUID, as one undo step (*Update 3 copies of villager*); what was changed on
+a copy is replaced. (`Document::make_prefab()`, `place_prefab()`, `update_prefab_copies()`;
+`serialize::subtree_to_json()` and `with_new_guids()`.)
+
 **Search everything** (Ctrl+K, in the Edit menu): one box that finds, as you type, every
 command of the menus that can run now (by its menu: *Game ▸ Play*, with its shortcut), the
 project's scenes (opened), pictures and sprites (opened in Sprite Studio) and logic files
