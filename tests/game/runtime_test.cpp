@@ -2906,3 +2906,47 @@ TEST_CASE("The title screen and the pause menu are drawn over the game") {
     CHECK(runtime->menu().page() == game::GameMenu::Page::Items);
     shot("sparxel-pause.png");
 }
+
+TEST_CASE("Messages are typed out at the text speed, waiting at pauses; Interact finishes them") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["text_speed"] = 60.0; // a letter a step
+        settings["width"] = 320;       // room for the message on one page
+        settings["height"] = 180;
+        write_json(project.folder.path / game::project_file, settings);
+        logic::LogicAsset rules;
+        rules.name = "say";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "dialogue", "say",
+                                       {Project::text("Hello[pause=1] [wave]you[/wave]")})},
+                        {}});
+        write_json(project.folder.path / "assets/logic/say.drules",
+                   serialize::logic_to_json(rules));
+    }
+    input::Recording replay;
+    replay.record(30, key(input::Key::Z), true); // finish the message
+    replay.record(31, key(input::Key::Z), false);
+    replay.record(33, key(input::Key::Z), true); // close it
+    replay.record(34, key(input::Key::Z), false);
+    const auto runtime = project.open(no_graphics(&replay));
+    for (int i = 0; i < 10; ++i) {
+        runtime->step();
+    }
+    // Typing stopped at the pause, after "Hello"; the message is open.
+    REQUIRE(runtime->dialogue().is_open());
+    for (int i = 0; i < 25; ++i) {
+        runtime->step();
+    }
+    // Interact showed the rest rather than closing it; the second press closed it.
+    CHECK_FALSE(runtime->dialogue().is_open());
+    CHECK(runtime->dialogue().said().front() == "Hello[pause=1] [wave]you[/wave]");
+}

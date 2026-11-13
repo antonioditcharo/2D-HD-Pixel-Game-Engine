@@ -80,7 +80,6 @@ them.
 
 1. **Portraits and voices** beside the name plate (`plan/02` G3): a picture per speaker
    and emotion, and voice blips.
-2. **Text effects** (G4): wave, shake, colour, speed and pauses inside the words.
 3. **More conditions and effects**: variables, numbers of items, any action of the shared
    logic vocabulary.
 4. **Playing from a node in the editor**, and a list of the conversation's lines for

@@ -40,7 +40,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 30> known_project_keys{"format",
+constexpr std::array<std::string_view, 31> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -69,7 +69,8 @@ constexpr std::array<std::string_view, 30> known_project_keys{"format",
                                                               "day_minutes",
                                                               "start_hour",
                                                               "title_screen",
-                                                              "pause_menu"};
+                                                              "pause_menu",
+                                                              "text_speed"};
 
 } // namespace
 
@@ -200,8 +201,10 @@ std::size_t message_pages(const DialogueObject& dialogue, const ProjectSettings&
     const std::string* message = dialogue.current();
     const MessageLayout layout = message_layout(settings.width, settings.height);
     const std::size_t lines =
-        message == nullptr ? 0
-                           : ui::wrap(ui::PixelFont::builtin(), *message, layout.text_width).size();
+        message == nullptr
+            ? 0
+            : ui::wrap(ui::PixelFont::builtin(), ui::parse_rich(*message).plain, layout.text_width)
+                  .size();
     const auto per_page = static_cast<std::size_t>(layout.lines);
     return std::max<std::size_t>(1, (lines + per_page - 1) / per_page);
 }
@@ -359,6 +362,7 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     number("scene_fade", settings.scene_fade, 0.0, 3.0);
     number("camera_smoothing", settings.camera_smoothing, 0.0, 2.0);
     number("day_minutes", settings.day_minutes, 0.0, 1440.0);
+    number("text_speed", settings.text_speed, 0.0, 1000.0);
     number("start_hour", settings.start_hour, 0.0, 24.0);
     number("camera_dead_zone", settings.camera_dead_zone, 0.0, 16.0);
     number("camera_look_ahead", settings.camera_look_ahead, 0.0, 8.0);
@@ -488,6 +492,7 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["scene_fade"] = settings.scene_fade;
     json["camera_smoothing"] = settings.camera_smoothing;
     json["day_minutes"] = settings.day_minutes;
+    json["text_speed"] = settings.text_speed;
     json["start_hour"] = settings.start_hour;
     json["camera_dead_zone"] = settings.camera_dead_zone;
     json["camera_look_ahead"] = settings.camera_look_ahead;
@@ -560,7 +565,14 @@ struct Runtime::Impl {
     ConversationPlayer conversation;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
-    input::InputState idle; ///< No controls held: what movement sees while a message is open.
+    // The typewriter, for the message showing.
+    std::string typing_for;   ///< The message being typed (with its tags).
+    ui::RichText rich;        ///< It, without tags, with each letter's style.
+    double typed = 0.0;       ///< Bytes of rich.plain shown.
+    double typing_wait = 0.0; ///< Seconds a [pause] still holds typing.
+    std::size_t pauses_done = 0;
+    double message_seconds = 0.0; ///< How long it has shown, for waves and shakes.
+    input::InputState idle;       ///< No controls held: what movement sees while a message is open.
     std::unique_ptr<audio::AudioEngine> audio_engine;
     AudioObject audio_object;
     std::vector<std::string> problems;
@@ -859,6 +871,43 @@ void Runtime::step() {
         r.keep_running = input::pump_events(r.state) && r.keep_running;
     }
 
+    // The typewriter: the message showing is typed out at the project's text speed, its
+    // [speed] parts faster or slower, waiting at its [pause]s.
+    if (const std::string* message = r.dialogue.current()) {
+        if (*message != r.typing_for) {
+            r.typing_for = *message;
+            r.rich = ui::parse_rich(*message);
+            r.typed = 0.0;
+            r.typing_wait = 0.0;
+            r.pauses_done = 0;
+            r.message_seconds = 0.0;
+        }
+        const double step_seconds = r.clock.step_seconds();
+        r.message_seconds += step_seconds;
+        const auto size = static_cast<double>(r.rich.plain.size());
+        if (!(r.settings.text_speed > 0.0)) {
+            r.typed = size;
+        } else if (r.typed < size) {
+            if (r.typing_wait > 0.0) {
+                r.typing_wait -= step_seconds;
+            } else {
+                const auto at = static_cast<std::size_t>(r.typed);
+                const float speed = at < r.rich.styles.size() ? r.rich.styles[at].speed : 1.0F;
+                double next = r.typed + (r.settings.text_speed * speed * step_seconds);
+                // A pause reached: typing stops there and waits.
+                if (r.pauses_done < r.rich.pauses.size() &&
+                    static_cast<double>(r.rich.pauses[r.pauses_done].first) <= next) {
+                    next = static_cast<double>(r.rich.pauses[r.pauses_done].first);
+                    r.typing_wait = r.rich.pauses[r.pauses_done].second;
+                    ++r.pauses_done;
+                }
+                r.typed = std::min(next, size);
+            }
+        }
+    } else {
+        r.typing_for.clear();
+    }
+
     // While a message is open, the player stands still and Interact turns its pages.
     // So does everyone while the scene fades out and in.
     const bool talking = r.dialogue.is_open();
@@ -956,6 +1005,26 @@ void Runtime::step() {
             r.choice = action == "move_up" ? (r.choice + choices.size() - 1) % choices.size()
                                            : (r.choice + 1) % choices.size();
             continue;
+        }
+        if (talking && action == "interact" && r.settings.text_speed > 0.0) {
+            // Still typing: the page shows whole first.
+            const MessageLayout box = message_layout(r.settings.width, r.settings.height);
+            const std::vector<std::string> lines =
+                ui::wrap(ui::PixelFont::builtin(), r.rich.plain, box.text_width);
+            const std::vector<std::size_t> starts = ui::line_starts(r.rich.plain, lines);
+            const std::size_t next_page = (r.page + 1) * static_cast<std::size_t>(box.lines);
+            const double page_end = next_page < starts.size()
+                                        ? static_cast<double>(starts[next_page])
+                                        : static_cast<double>(r.rich.plain.size());
+            if (r.typed < page_end) {
+                r.typed = page_end;
+                r.typing_wait = 0.0;
+                while (r.pauses_done < r.rich.pauses.size() &&
+                       static_cast<double>(r.rich.pauses[r.pauses_done].first) <= page_end) {
+                    ++r.pauses_done;
+                }
+                continue;
+            }
         }
         if (talking && action == "interact") {
             // The next page, or the next message; the last one closing tells Rules.
@@ -1261,7 +1330,11 @@ bool Runtime::draw() {
     if (const std::string* message = r.dialogue.current()) {
         const MessageLayout box = message_layout(r.target->width(), r.target->height());
         const ui::PixelFont& font = ui::PixelFont::builtin();
-        const std::vector<std::string> lines = ui::wrap(font, *message, box.text_width);
+        const ui::RichText rich = *message == r.typing_for ? r.rich : ui::parse_rich(*message);
+        const std::vector<std::string> lines = ui::wrap(font, rich.plain, box.text_width);
+        const std::vector<std::size_t> starts = ui::line_starts(rich.plain, lines);
+        const auto shown =
+            *message == r.typing_for ? static_cast<std::size_t>(r.typed) : rich.plain.size();
         r.sprites->begin_over(*r.target);
         const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
         r.sprites->draw(*r.white, one, render::Rect{box.x, box.y, box.width, box.height},
@@ -1289,17 +1362,19 @@ bool Runtime::draw() {
         const std::size_t first = r.page * static_cast<std::size_t>(box.lines);
         for (std::size_t i = first;
              i < lines.size() && i < first + static_cast<std::size_t>(box.lines); ++i) {
-            ui::draw_text(*r.sprites, *r.font, font, lines[i], box.x + message_padding,
+            ui::draw_rich(*r.sprites, *r.font, font, rich, starts[i], starts[i] + lines[i].size(),
+                          box.x + message_padding,
                           box.y + message_padding +
                               static_cast<float>(static_cast<int>(i - first) * font.line_height()),
-                          render::Color{255, 255, 255, 255});
+                          r.message_seconds, shown);
         }
         // A question's answers, on its last page: a box above the message, at the right,
         // with a cursor on the answer chosen.
         const std::vector<std::string>& choices = r.dialogue.choices();
         const std::size_t pages = (lines.size() + static_cast<std::size_t>(box.lines) - 1) /
                                   static_cast<std::size_t>(box.lines);
-        if (!choices.empty() && r.page + 1 >= std::max<std::size_t>(pages, 1)) {
+        if (!choices.empty() && r.page + 1 >= std::max<std::size_t>(pages, 1) &&
+            shown >= rich.plain.size()) {
             const float marker = static_cast<float>(ui::measure(font, ">") + 3);
             int widest = 0;
             for (const std::string& choice : choices) {

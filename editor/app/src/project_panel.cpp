@@ -202,7 +202,11 @@ void ProjectPanel::build() {
     channel(tr("Background green"), "background_g", &engine::render::Color::g);
     channel(tr("Background blue"), "background_b", &engine::render::Color::b);
 
-    QFormLayout* menus = group(tr("Menus"));
+    QFormLayout* menus = group(tr("Menus and messages"));
+    number(
+        menus, tr("Text speed (letters a second, 0: at once)"), "text_speed", 0, 1000, 5, 0,
+        [](const Settings& s) { return s.text_speed; },
+        [](Settings& s, double v) { s.text_speed = v; });
     tick(
         menus, tr("Title screen (New game, Continue, Quit)"), "title_screen",
         [](const Settings& s) { return s.title_screen; },

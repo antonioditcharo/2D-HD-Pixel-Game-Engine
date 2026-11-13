@@ -134,6 +134,29 @@ bottom. The text is white.
 | The sample's elder | Playing the sample with recorded input: the welcome closed, the elder's greeting closed, "No, thanks" picked, and the elder's reply to it shown; every line said in order, no problems |
 | The sample | `sparxel-player` prints the welcome as `said: …` in both render styles |
 
+
+## Text effects and the typewriter
+
+Messages (and conversations' lines) carry effects as tags in their words, as RPG Maker's
+message codes do (`plan/02` G4; `ui::parse_rich()`):
+
+| Tag | Effect |
+|---|---|
+| `[wave]…[/wave]` | The letters bob up and down, one after another |
+| `[shake]…[/shake]` | They tremble, a pixel either way |
+| `[color=gold]…[/color]` | A colour: *red*, *gold*, *green*, *blue*, *grey*, *white*, or `#rrggbb` |
+| `[speed=2]…[/speed]` | Typed twice as fast (below 1, slower) |
+| `[pause=0.5]` | Typing waits half a second there |
+| `[[` | A `[` |
+
+Anything else in brackets is shown as written. Tags nest. Paging and wrapping use the words
+without their tags.
+
+**The typewriter.** The Project view's *Text speed* (letters a second; `text_speed`, 0 by
+default, which shows each message whole at once) types messages out. Interact while a page
+is still typing shows the page whole; the next press turns the page or closes the message,
+as before. A question's answers show once its words are all typed.
+
 ## 5. Next increments
 
 1. **The dialogue graph** (feature G1): lines, choices, conditions and effects drawn as a

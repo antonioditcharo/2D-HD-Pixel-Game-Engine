@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <cmath>
+#include <optional>
 
 namespace engine::ui {
 
@@ -280,6 +283,192 @@ void draw_text(render::SpriteRenderer& sprites, const render::Texture& atlas, co
                          color);
         }
         pen += static_cast<float>(font.advance(c)) * times;
+    }
+}
+
+namespace {
+
+std::optional<render::Color> named_colour(std::string_view name) {
+    struct Named {
+        std::string_view name;
+        render::Color colour;
+    };
+    static constexpr std::array<Named, 6> named{{{"red", {240, 90, 90, 255}},
+                                                 {"gold", {255, 210, 122, 255}},
+                                                 {"green", {130, 220, 120, 255}},
+                                                 {"blue", {120, 170, 255, 255}},
+                                                 {"grey", {160, 160, 170, 255}},
+                                                 {"white", {255, 255, 255, 255}}}};
+    for (const Named& n : named) {
+        if (n.name == name) {
+            return n.colour;
+        }
+    }
+    if (name.size() == 7 && name.front() == '#') {
+        const auto hex = [&](std::size_t i) -> int {
+            int v = 0;
+            for (std::size_t k = i; k < i + 2; ++k) {
+                const char c = name[k];
+                v *= 16;
+                if (c >= '0' && c <= '9') {
+                    v += c - '0';
+                } else if (c >= 'a' && c <= 'f') {
+                    v += c - 'a' + 10;
+                } else if (c >= 'A' && c <= 'F') {
+                    v += c - 'A' + 10;
+                } else {
+                    return -1;
+                }
+            }
+            return v;
+        };
+        const int r = hex(1);
+        const int g = hex(3);
+        const int b = hex(5);
+        if (r >= 0 && g >= 0 && b >= 0) {
+            return render::Color{static_cast<std::uint8_t>(r), static_cast<std::uint8_t>(g),
+                                 static_cast<std::uint8_t>(b), 255};
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<float> number_of(std::string_view text) {
+    float value = 0.0F;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc{} || end != text.data() + text.size() || !std::isfinite(value)) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+} // namespace
+
+RichText parse_rich(std::string_view text) {
+    RichText out;
+    std::vector<RichText::Style> stack{RichText::Style{}};
+    std::size_t i = 0;
+    while (i < text.size()) {
+        if (text[i] == '[' && i + 1 < text.size() && text[i + 1] == '[') {
+            out.plain += '[';
+            out.styles.push_back(stack.back());
+            i += 2;
+            continue;
+        }
+        if (text[i] == '[') {
+            const std::size_t close = text.find(']', i);
+            if (close != std::string_view::npos) {
+                const std::string_view tag = text.substr(i + 1, close - i - 1);
+                const std::size_t eq = tag.find('=');
+                const std::string_view name = tag.substr(0, eq);
+                const std::string_view value =
+                    eq == std::string_view::npos ? std::string_view{} : tag.substr(eq + 1);
+                bool known = true;
+                RichText::Style next = stack.back();
+                if (name == "wave") {
+                    next.wave = true;
+                    stack.push_back(next);
+                } else if (name == "shake") {
+                    next.shake = true;
+                    stack.push_back(next);
+                } else if (name == "color" || name == "colour") {
+                    if (const std::optional<render::Color> c = named_colour(value)) {
+                        next.color = *c;
+                        stack.push_back(next);
+                    } else {
+                        known = false;
+                    }
+                } else if (name == "speed") {
+                    if (const std::optional<float> v = number_of(value); v && *v > 0.0F) {
+                        next.speed = std::clamp(*v, 0.05F, 20.0F);
+                        stack.push_back(next);
+                    } else {
+                        known = false;
+                    }
+                } else if (name == "pause") {
+                    if (const std::optional<float> v = number_of(value); v && *v >= 0.0F) {
+                        out.pauses.emplace_back(out.plain.size(), std::min(*v, 10.0F));
+                    } else {
+                        known = false;
+                    }
+                } else if (!name.empty() && name.front() == '/' &&
+                           (name == "/wave" || name == "/shake" || name == "/color" ||
+                            name == "/colour" || name == "/speed")) {
+                    if (stack.size() > 1) {
+                        stack.pop_back();
+                    }
+                } else {
+                    known = false;
+                }
+                if (known) {
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        out.plain += text[i];
+        out.styles.push_back(stack.back());
+        ++i;
+    }
+    return out;
+}
+
+std::vector<std::size_t> line_starts(std::string_view plain,
+                                     const std::vector<std::string>& lines) {
+    // Lines are pieces of the text in order, with the spaces and line breaks between them
+    // dropped: each is found from where the one before ended.
+    std::vector<std::size_t> out;
+    std::size_t at = 0;
+    for (const std::string& line : lines) {
+        std::size_t found = line.empty() ? at : plain.find(line, at);
+        if (found == std::string_view::npos) {
+            found = at;
+        }
+        out.push_back(found);
+        at = std::min(plain.size(), found + line.size());
+    }
+    return out;
+}
+
+void draw_rich(render::SpriteRenderer& sprites, const render::Texture& atlas, const PixelFont& font,
+               const RichText& rich, std::size_t begin, std::size_t end, float x, float y,
+               double seconds, std::size_t shown) {
+    float pen = x;
+    std::size_t at = begin;
+    end = std::min(end, rich.plain.size());
+    while (at < end && at < shown) {
+        // One UTF-8 character.
+        std::size_t length = 1;
+        const auto lead = static_cast<unsigned char>(rich.plain[at]);
+        if (lead >= 0xF0U) {
+            length = 4;
+        } else if (lead >= 0xE0U) {
+            length = 3;
+        } else if (lead >= 0xC0U) {
+            length = 2;
+        }
+        const std::u32string code = decode_utf8(std::string_view(rich.plain).substr(at, length));
+        const char32_t c = code.empty() ? U'?' : code.front();
+        const RichText::Style& style = rich.styles[at];
+        float dy = 0.0F;
+        float dx = 0.0F;
+        if (style.wave) {
+            dy = std::round(1.5F * static_cast<float>(std::sin((seconds * 8.0) +
+                                                               (static_cast<double>(at) * 0.7))));
+        }
+        if (style.shake) {
+            const auto tick = static_cast<std::uint64_t>(seconds * 30.0);
+            const std::uint64_t h = (tick * 0x9E3779B97F4A7C15ULL) ^ (at * 0xC2B2AE3D27D4EB4FULL);
+            dx = static_cast<float>(static_cast<int>(h % 3U) - 1);
+            dy += static_cast<float>(static_cast<int>((h >> 8U) % 3U) - 1);
+        }
+        if (c != U' ') {
+            const render::Rect source = font.glyph(c);
+            sprites.draw(atlas, source, render::Rect{pen + dx, y + dy, source.w, source.h},
+                         style.color);
+        }
+        pen += static_cast<float>(font.advance(c));
+        at += length;
     }
 }
 

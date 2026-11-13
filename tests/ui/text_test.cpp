@@ -101,3 +101,28 @@ TEST_CASE("Text draws pixel-exact") {
     CHECK_FALSE(lit(0, 0)); // nothing outside
     CHECK_FALSE(lit(1, 8)); // nothing below the baseline for H
 }
+
+TEST_CASE("Rich text: tags become styles, pauses and speeds; the rest is kept as written") {
+    const ui::RichText rich = ui::parse_rich(
+        "A [wave]big[/wave] [color=gold]prize[/color]![pause=0.5] [speed=2]go[/speed] "
+        "[[x] [nope] [color=puce]c");
+    CHECK(rich.plain == "A big prize! go [x] [nope] [color=puce]c");
+    REQUIRE(rich.styles.size() == rich.plain.size());
+    CHECK_FALSE(rich.styles[0].wave);
+    CHECK(rich.styles[2].wave); // b
+    CHECK_FALSE(rich.styles[5].wave);
+    CHECK(rich.styles[6].color.g == 210);  // p, in gold
+    CHECK(rich.styles[11].color.g == 255); // !, white again
+    REQUIRE(rich.pauses.size() == 1);
+    CHECK(rich.pauses[0].first == 12); // before the space after "!"
+    CHECK(rich.pauses[0].second == doctest::Approx(0.5F));
+    CHECK(rich.styles[13].speed == doctest::Approx(2.0F)); // g
+    CHECK(rich.styles[16].speed == doctest::Approx(1.0F));
+    const ui::RichText hex = ui::parse_rich("[color=#102030]a");
+    CHECK(hex.styles[0].color.r == 16);
+    CHECK(hex.styles[0].color.b == 48);
+    // Where wrapped lines start in the words.
+    const std::string words = "one two three four";
+    const std::vector<std::string> lines{"one two", "three", "four"};
+    CHECK(ui::line_starts(words, lines) == std::vector<std::size_t>{0, 8, 14});
+}

@@ -81,6 +81,8 @@ struct ProjectSettings {
     /// Quit). Off by default: Rules then decide what the Menu key does.
     bool title_screen = false;
     bool pause_menu = false;
+    /// How fast messages are typed out, in letters a second; 0 shows each whole at once.
+    double text_speed = 0.0;
     double day_minutes = 0.0;
     double start_hour = 12.0;
     double camera_dead_zone = 0.0;

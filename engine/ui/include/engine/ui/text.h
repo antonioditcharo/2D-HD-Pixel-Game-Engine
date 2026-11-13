@@ -68,4 +68,39 @@ private:
 void draw_text(render::SpriteRenderer& sprites, const render::Texture& atlas, const PixelFont& font,
                std::string_view text, float x, float y, render::Color color, int scale = 1);
 
+/// Text with effects, as messages carry them (plan/02 G4): the words without their tags,
+/// and how each byte of them is shown.
+///
+/// Tags: [wave]...[/wave] (letters bob up and down), [shake]...[/shake] (they tremble),
+/// [color=gold]...[/color] (red, gold, green, blue, grey, white, or #rrggbb),
+/// [speed=2]...[/speed] (typed that many times faster; below 1, slower), and [pause=0.5]
+/// (typing waits that many seconds). "[[" is a "["; anything else in brackets is left as
+/// written.
+struct RichText {
+    struct Style {
+        render::Color color{255, 255, 255, 255};
+        bool wave = false;
+        bool shake = false;
+        float speed = 1.0F;
+    };
+    std::string plain;         ///< The words, without tags.
+    std::vector<Style> styles; ///< One per byte of `plain`.
+    /// Seconds typing waits before the byte at each index.
+    std::vector<std::pair<std::size_t, float>> pauses;
+};
+
+[[nodiscard]] RichText parse_rich(std::string_view text);
+
+/// Queues the bytes `begin` to `end` of `rich.plain` (one line of it, as wrap() gave it) at
+/// (x, y), each glyph in its style, `seconds` into its showing (for waves and shakes), and
+/// only those before byte `shown` (the typewriter).
+void draw_rich(render::SpriteRenderer& sprites, const render::Texture& atlas, const PixelFont& font,
+               const RichText& rich, std::size_t begin, std::size_t end, float x, float y,
+               double seconds, std::size_t shown);
+
+/// Where each of `lines` (wrap() of `plain`) starts in `plain`: they are its bytes in order,
+/// with the spaces wrap() drops at breaks skipped.
+[[nodiscard]] std::vector<std::size_t> line_starts(std::string_view plain,
+                                                   const std::vector<std::string>& lines);
+
 } // namespace engine::ui
