@@ -24,6 +24,7 @@
 #include <variant>
 #include <vector>
 
+#include "editor/core/doctor.h"
 #include "editor/core/document.h"
 #include "editor/core/logic_text.h"
 #include "editor/core/new_project.h"
@@ -3016,4 +3017,57 @@ TEST_CASE("Unsaved work is kept for recovery, restored as one undo step, and gon
         CHECK(error == "The unsaved work could not be read: its file is damaged.");
         CHECK_FALSE(editor::recovery_scene(sample.path).has_value());
     }
+}
+
+TEST_CASE("Project Doctor finds missing files, broken logic, unreachable scenes and unused files") {
+    const Sample sample;
+    const std::unique_ptr<editor::Document> doc = sample.open();
+    using Severity = editor::Finding::Severity;
+    const auto count = [](const std::vector<editor::Finding>& found, Severity severity) {
+        return std::count_if(found.begin(), found.end(), [severity](const editor::Finding& f) {
+            return f.severity == severity;
+        });
+    };
+    // The sample as it is: nothing wrong.
+    const std::vector<editor::Finding> clean = editor::examine(*doc);
+    CHECK(count(clean, Severity::Problem) == 0);
+    CHECK(count(clean, Severity::Warning) == 0);
+
+    // A picture that is gone, on the hero: a problem pointing at the hero.
+    const world::Entity hero = doc->world().find_named("hero").at(0);
+    doc->world().get<scene2d::Sprite>(hero)->image = Guid::generate().to_string();
+    std::vector<editor::Finding> found = editor::examine(*doc);
+    REQUIRE(count(found, Severity::Problem) == 1);
+    CHECK(found.front().severity == Severity::Problem);
+    CHECK(found.front().entity == doc->world().guid(hero));
+    CHECK(found.front().scene == "maps/village.dscene");
+    CHECK(found.front().message.find("\"hero\"") != std::string::npos);
+
+    // Unused files are notes; logic that names a missing entity is a problem.
+    std::ofstream(sample.path / "assets" / "art" / "spare.png", std::ios::binary)
+        << std::string("not really a picture");
+    static_cast<void>(doc->assets().refresh());
+    REQUIRE(doc->rename(doc->world().guid(doc->world().find_named("elder").at(0)), "sage"));
+    found = editor::examine(*doc);
+    CHECK(std::any_of(found.begin(), found.end(), [](const editor::Finding& f) {
+        return f.severity == Severity::Note && f.asset == "art/spare.png";
+    }));
+    CHECK(std::any_of(found.begin(), found.end(), [](const editor::Finding& f) {
+        return f.severity == Severity::Problem && f.logic == "logic/main.drules" &&
+               f.block.is_valid();
+    }));
+    // Problems come first.
+    CHECK(std::is_sorted(found.begin(), found.end(),
+                         [](const editor::Finding& a, const editor::Finding& b) {
+                             return static_cast<int>(a.severity) < static_cast<int>(b.severity);
+                         }));
+
+    // A new scene, which nothing leads to.
+    const std::unique_ptr<editor::Document> fresh = sample.open();
+    std::string error;
+    REQUIRE(fresh->create_scene("maps/attic.dscene", error));
+    found = editor::examine(*fresh);
+    CHECK(std::any_of(found.begin(), found.end(), [](const editor::Finding& f) {
+        return f.severity == Severity::Warning && f.scene == "maps/attic.dscene";
+    }));
 }

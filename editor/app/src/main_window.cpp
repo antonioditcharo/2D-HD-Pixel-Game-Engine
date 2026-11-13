@@ -38,6 +38,7 @@
 #include <utility>
 #include <vector>
 
+#include "doctor_panel.h"
 #include "editor/core/new_project.h"
 #include "editor/exporter/exporter.h"
 #include "inspector.h"
@@ -168,6 +169,15 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     project_dock->setWidget(project_scroll);
     addDockWidget(Qt::RightDockWidgetArea, project_dock);
     tabifyDockWidget(logic_dock, project_dock);
+    // Project Doctor, beside the project's settings.
+    doctor_ = new DoctorPanel(this);
+    auto* doctor_dock = new QDockWidget(tr("Doctor"), this);
+    doctor_dock->setObjectName(QStringLiteral("doctor_dock"));
+    doctor_dock->setWidget(doctor_);
+    addDockWidget(Qt::RightDockWidgetArea, doctor_dock);
+    tabifyDockWidget(project_dock, doctor_dock);
+    connect(doctor_, &DoctorPanel::check_requested, this, [this] { check_project(); });
+    connect(doctor_, &DoctorPanel::chosen, this, [this](const Finding& f) { go_to(f); });
     inspector_dock->raise();
     resizeDocks({entities, inspector_dock}, {240, 340}, Qt::Horizontal);
 
@@ -337,6 +347,55 @@ SfxGenerator* MainWindow::show_sfx_generator() {
     return generator;
 }
 
+void MainWindow::check_project() {
+    doctor_->check(document_.get());
+    for (QDockWidget* dock : findChildren<QDockWidget*>()) {
+        if (dock->widget() == doctor_) {
+            dock->show();
+            dock->raise();
+        }
+    }
+    if (document_ != nullptr) {
+        statusBar()->showMessage(tr("Doctor: %1").arg(doctor_->summary()), 8000);
+    }
+}
+
+void MainWindow::go_to(const Finding& finding) {
+    if (document_ == nullptr) {
+        return;
+    }
+    if (!finding.scene.empty() && finding.scene != document_->scene_path() &&
+        !open_scene(text_of(finding.scene))) {
+        return;
+    }
+    if (finding.entity.is_valid() && document_->world().find(finding.entity).is_valid()) {
+        select(finding.entity);
+        return;
+    }
+    if (!finding.logic.empty()) {
+        for (QDockWidget* dock : findChildren<QDockWidget*>()) {
+            if (dock->widget() == logic_) {
+                dock->show();
+                dock->raise();
+            }
+        }
+        const QList<QTreeWidgetItem*> found =
+            logic_view()->findItems(text_of(finding.logic), Qt::MatchExactly);
+        if (!found.isEmpty()) {
+            logic_view()->setCurrentItem(found.front());
+        }
+        return;
+    }
+    if (!finding.asset.empty()) {
+        const QModelIndex index =
+            asset_model_->index(path_text(document_->folder() / "assets" / finding.asset));
+        if (index.isValid()) {
+            asset_tree_->setCurrentIndex(index);
+            asset_tree_->scrollTo(index);
+        }
+    }
+}
+
 bool MainWindow::starting() const noexcept {
     return stack_->currentWidget() == start_;
 }
@@ -481,6 +540,9 @@ void MainWindow::build_actions() {
         file->addAction(tr("New sound &effect…"), this, [this] { show_sfx_generator(); });
     sound_action->setObjectName(QStringLiteral("new_sound"));
     sprite_action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+N")));
+    QAction* doctor = game->addAction(tr("Check the &project"), this, [this] { check_project(); });
+    doctor->setObjectName(QStringLiteral("check_project"));
+    doctor->setShortcut(QKeySequence(QStringLiteral("F7")));
     QAction* start =
         file->addAction(tr("Start the game in this scene"), this, [this] { start_here(); });
     start->setObjectName(QStringLiteral("start_here"));

@@ -37,6 +37,19 @@ sparxel-editor samples/hello
 | **Project** (right, beside the logic) | The project's settings as fields, grouped as a creator thinks of them: the game (name, gravity, the fade between scenes), the picture (style, size, pixels per tile, background), the Diorama camera, light and shadows (ambient light, sunlight, the sun's direction and height, sprite and block shadows), and the Look (tilt-shift, blur, bloom, grading, vignette). Changes show in the scene as you make them; values the game would refuse are refused with its message; each change is an undo step, and Save writes the project file |
 | **Commands** | **New project** (Ctrl+N: asks for the game's name, what to start from, and an empty folder. **Classic 2D** or a **Diorama** (the same game in 3D, lit by the sun, with shadows and tilt-shift) make a small game: a field of grass crossed by a path, stone walls that stop the hero, and a hero moved with the arrow keys, with the tileset and the hero's picture as ordinary files in `assets/art` to draw over. A **Platformer** makes a level seen from the side, under a sky: grass over stone, walls at both ends, three ledges rising to the right, the hero, who walks left and right and jumps 3 tiles with Space or Up ([game.md](game.md), Jumping), and a gold coin on each ledge; `logic/coins.drules` gives the player a coin for each one walked into (the [inventory](game.md#the-inventory)), hiding it and switching its area off, and says *You found all the coins!* with all three. A **Visual novel** makes a story: a backdrop filling the screen (sky, hills and a meadow), a character, Mira, and `logic/story.drules`, in which she greets the player, asks whether they will walk with her, and answers whichever they pick, all of it to change in the Logic view), **New sprite** (Ctrl+Shift+N: a name and a size; makes `art/<name>.dsprite` and its sprite sheet and opens them in Sprite Studio), **New scene** (asks for a name; makes an empty `maps/<name>.dscene` and opens it), **Start the game in this scene**, Open, Save (Ctrl+S), Undo and Redo (with what they will undo, for example *Undo Change Speed of hero*), New entity (where the camera looks), Delete, **Snap to tiles** (dragged things land on the grid: the one grabbed, with any others selected moving by as much), **Snap grid** (*Whole tiles*, *Half tiles* or *Quarter tiles*), **Play** (F5: saves, then starts `sparxel-player` on the project) and **Export** (saves, asks for an empty folder, then exports: [export.md](export.md)) |
 
+**Project Doctor** (the *Doctor* panel beside *Project*, or **Game ▸ Check the project**,
+F7): checks the whole project for what would go wrong in the game and lists it in plain
+language, **problems** first, then **warnings**, then **notes**, the kind written as well as
+coloured. It finds a start scene that is not a scene; in every scene (the open one as it is
+now, the others as saved), any component whose picture, tileset or sound is no longer in
+`assets/` (a problem naming the entity; double-clicking opens its scene and selects it);
+logic the compiler refuses, on its block (double-clicking shows the file in the Logic
+view); scenes that nothing leads to: not the start, and no logic or door goes there (a
+warning); and pictures and sounds no scene or logic uses (a note: they still go into
+exported games). The status bar sums it up (*Doctor: 1 problem(s), 0 warning(s), 2
+note(s)*). (`editor::examine()` in [`doctor.h`](../../editor/core/include/editor/core/doctor.h),
+without Qt.)
+
 **Search everything** (Ctrl+K, in the Edit menu): one box that finds, as you type, every
 command of the menus that can run now (by its menu: *Game ▸ Play*, with its shortcut), the
 project's scenes (opened), pictures and sprites (opened in Sprite Studio) and logic files

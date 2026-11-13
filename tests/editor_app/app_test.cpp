@@ -36,6 +36,7 @@
 #include <memory>
 #include <string>
 
+#include "doctor_panel.h"
 #include "inspector.h"
 #include "logic_panel.h"
 #include "main_window.h"
@@ -2030,4 +2031,26 @@ TEST_CASE("Search everything scores letters in order, and finds commands, assets
     box->field()->setText(QStringLiteral("qqqqzz"));
     CHECK(box->list()->count() == 0);
     CHECK_FALSE(box->run_current());
+}
+
+TEST_CASE("Check the project lists what Project Doctor finds, and goes to it") {
+    Editor e;
+    e.window.check_project();
+    editor::DoctorPanel* doctor = e.window.doctor();
+    REQUIRE(doctor != nullptr);
+    const bool nothing_wrong = doctor->summary().startsWith(QStringLiteral("All good")) ||
+                               doctor->summary().startsWith(QStringLiteral("0 problem"));
+    CHECK(nothing_wrong);
+    // A picture gone from the elder: listed first, and double-clicking selects the elder.
+    const Guid elder = e.guid("elder");
+    e.window.document()
+        ->world()
+        .get<scene2d::Sprite>(e.window.document()->world().find(elder))
+        ->image = Guid::generate().to_string();
+    e.window.check_project();
+    REQUIRE(doctor->list()->topLevelItemCount() >= 1);
+    CHECK(doctor->list()->topLevelItem(0)->text(0) == QStringLiteral("Problem"));
+    Q_EMIT doctor->list()->itemActivated(doctor->list()->topLevelItem(0), 0);
+    CHECK(e.window.selection() == elder);
+    CHECK(e.window.statusBar()->currentMessage().startsWith(QStringLiteral("Doctor: 1 problem")));
 }

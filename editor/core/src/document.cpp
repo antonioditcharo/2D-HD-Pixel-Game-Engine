@@ -398,6 +398,9 @@ const reflect::Registry& Document::registry() const noexcept {
 engine::assets::AssetDatabase& Document::assets() noexcept {
     return *impl_->assets;
 }
+const engine::assets::AssetDatabase& Document::assets() const noexcept {
+    return *impl_->assets;
+}
 world::World& Document::world() noexcept {
     return *impl_->world;
 }

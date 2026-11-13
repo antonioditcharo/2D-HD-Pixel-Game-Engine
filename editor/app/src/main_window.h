@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 
+#include "editor/core/doctor.h"
 #include "editor/core/document.h"
 #include "editor/core/new_project.h"
 #include "search.h"
@@ -35,6 +36,7 @@ class SceneView;
 class SpriteStudio;
 class StartPage;
 class SfxGenerator;
+class DoctorPanel;
 class TilePalette;
 
 class MainWindow : public QMainWindow {
@@ -65,6 +67,11 @@ public:
     /// Leaves a project off the recent projects.
     void forget_recent(const QString& folder);
     [[nodiscard]] StartPage* start_page() const noexcept { return start_; }
+    [[nodiscard]] DoctorPanel* doctor() const noexcept { return doctor_; }
+    /// Checks the project with Project Doctor, showing what it found.
+    void check_project();
+    /// Goes where a finding can be fixed: its scene and entity, its logic, or its asset.
+    void go_to(const Finding& finding);
     /// Whether the start page is showing (no project open).
     [[nodiscard]] bool starting() const noexcept;
     /// Makes a new project named `name` in `folder` (new or empty), a small starter game,
@@ -178,6 +185,7 @@ private:
     QTimer* autosave_timer_ = nullptr;
     QStackedWidget* stack_ = nullptr; ///< The start page, or the scene.
     SearchBox* search_ = nullptr;
+    DoctorPanel* doctor_ = nullptr;
     StartPage* start_ = nullptr;
     QSettings* settings_ = nullptr;
     QStringList recent_;

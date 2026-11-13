@@ -2,6 +2,8 @@
 # exported games never link it.
 
 add_library(editor_app STATIC
+    src/doctor_panel.cpp
+    src/doctor_panel.h
     src/inspector.cpp
     src/inspector.h
     src/logic_panel.cpp

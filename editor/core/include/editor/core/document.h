@@ -126,6 +126,7 @@ public:
     bool set_settings(const engine::game::ProjectSettings& settings, std::string& error);
     [[nodiscard]] const engine::reflect::Registry& registry() const noexcept;
     [[nodiscard]] engine::assets::AssetDatabase& assets() noexcept;
+    [[nodiscard]] const engine::assets::AssetDatabase& assets() const noexcept;
     [[nodiscard]] engine::world::World& world() noexcept;
     [[nodiscard]] const engine::world::World& world() const noexcept;
     /// The scene file being edited, relative to assets/.

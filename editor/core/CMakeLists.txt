@@ -2,6 +2,7 @@
 # user interface, so it builds and is tested without Qt.
 
 add_library(editor_core STATIC
+    src/doctor.cpp
     src/document.cpp
     src/logic_edit.cpp
     src/logic_text.cpp
