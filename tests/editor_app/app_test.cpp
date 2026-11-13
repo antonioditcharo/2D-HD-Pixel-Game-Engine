@@ -2182,3 +2182,37 @@ TEST_CASE("An Aseprite file saved again is imported again when the editor reload
     e.window.reload_assets();
     CHECK(first_red() == 0);
 }
+
+TEST_CASE("The Animation's Tag offers the tags of the sprite's sheet") {
+    Sample sample;
+    {
+        scene2d::SheetInfo sheet;
+        sheet.frame_width = 1;
+        sheet.frame_height = 1;
+        sheet.durations_ms = {100, 100};
+        sheet.tags = {{"walk", 0, 1, scene2d::TagDirection::Forward},
+                      {"idle", 0, 0, scene2d::TagDirection::Forward}};
+        std::ofstream(sample.path / "assets/art/hero.sheet", std::ios::binary)
+            << scene2d::sheet_to_text(sheet);
+    }
+    editor::MainWindow window(SPARXEL_PLAYER);
+    window.show();
+    REQUIRE(window.open_project(sample.path));
+    const auto heroes = window.document()->world().find_named("hero");
+    REQUIRE(heroes.size() == 1);
+    const engine::Guid hero = window.document()->world().guid(heroes[0]);
+    const reflect::TypeInfo* animation =
+        window.document()->registry().find_type<scene2d::SpriteAnimation>();
+    REQUIRE(animation != nullptr);
+    REQUIRE(window.document()->add_component(hero, *animation));
+    window.select(hero);
+    QApplication::processEvents();
+    auto* tag =
+        window.inspector()->findChild<QComboBox*>(QStringLiteral("property:sprite_animation/tag"));
+    REQUIRE(tag != nullptr);
+    CHECK(tag->findText(QStringLiteral("walk")) > 0);
+    CHECK(tag->findText(QStringLiteral("idle")) > 0);
+    tag->setCurrentIndex(tag->findText(QStringLiteral("walk")));
+    Q_EMIT tag->activated(tag->currentIndex());
+    CHECK(window.document()->world().get<scene2d::SpriteAnimation>(heroes[0])->tag == "walk");
+}

@@ -1,6 +1,7 @@
 #include "inspector.h"
 
 #include "engine/foundation/reflect.h"
+#include "engine/scene2d/scene2d.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -24,6 +25,33 @@ namespace editor {
 namespace reflect = engine::reflect;
 
 namespace {
+
+/// The tags of the sheet of `entity`'s Sprite picture; empty if it has none.
+std::vector<std::string> sheet_tags(const Document& document, engine::world::Entity entity) {
+    const auto* sprite = document.world().get<engine::scene2d::Sprite>(entity);
+    const std::optional<engine::Guid> guid =
+        sprite != nullptr ? engine::Guid::parse(sprite->image) : std::nullopt;
+    const engine::assets::AssetRecord* picture = guid ? document.assets().find(*guid) : nullptr;
+    const engine::assets::AssetRecord* file =
+        picture != nullptr ? document.assets().find(engine::scene2d::sheet_path(picture->path))
+                           : nullptr;
+    const std::optional<std::vector<std::uint8_t>> bytes =
+        file != nullptr ? document.assets().read(file->guid) : std::nullopt;
+    std::vector<std::string> out;
+    if (!bytes) {
+        return out;
+    }
+    std::string error;
+    const std::optional<engine::scene2d::SheetInfo> sheet = engine::scene2d::parse_sheet(
+        std::string_view(reinterpret_cast<const char*>(bytes->data()), bytes->size()), // NOLINT
+        error);
+    if (sheet) {
+        for (const engine::scene2d::SheetTag& tag : sheet->tags) {
+            out.push_back(tag.name);
+        }
+    }
+    return out;
+}
 
 QString text_of(const std::string& s) {
     return QString::fromStdString(s);
@@ -370,6 +398,30 @@ QWidget* Inspector::field(const reflect::TypeInfo& component,
                         write(reflect::Value{choose->itemData(i).toString().toStdString()});
                         end();
                     });
+            widget = choose;
+            break;
+        }
+        if (component.name == "sprite_animation" && property.id == "tag") {
+            // The tags of the sprite's sheet, as drawn in Sprite Studio or Aseprite; another
+            // name may still be typed (a tag not drawn yet).
+            auto* choose = new QComboBox(content_);
+            choose->setEditable(true);
+            choose->addItem(QString());
+            for (const std::string& tag : sheet_tags(*document_, entity)) {
+                choose->addItem(text_of(tag));
+            }
+            choose->setCurrentText(text_of(value));
+            choose->lineEdit()->setPlaceholderText(tr("(frames by number)"));
+            const QString was = text_of(value);
+            const auto choose_tag = [write, end, choose, was] {
+                const QString now = choose->currentText().trimmed();
+                if (now != was) {
+                    write(reflect::Value{now.toStdString()});
+                    end();
+                }
+            };
+            connect(choose, qOverload<int>(&QComboBox::activated), this, choose_tag);
+            connect(choose->lineEdit(), &QLineEdit::editingFinished, this, choose_tag);
             widget = choose;
             break;
         }

@@ -58,7 +58,7 @@ editor or opening another project.
 | File | What |
 |---|---|
 | `<name>.dsprite` | The sprite as made: its size, layers (name, shown, locked, opacity), frames (each one's time), tags (name, first and last frame, direction), palette, and each layer's pixels in each frame as a PNG in base64. JSON with sorted keys (`format` *sparxel.sprite*, `version` 1), so it diffs well and the same sprite always saves the same text. Empty cels are not written |
-| `<name>.sheet` | What the game reads of the sprite besides its pixels: the frame size, each frame's time and the tags ([scene2d.md](scene2d.md) §3). An Animation whose *Tag* is *walk* plays the *walk* tag, each frame for its own time, in its direction |
+| `<name>.sheet` | What the game reads of the sprite besides its pixels: the frame size, each frame's time and the tags ([scene2d.md](scene2d.md) §3). An Animation whose *Tag* is *walk* plays the *walk* tag, each frame for its own time, in its direction; the inspector lists the sheet's tags to pick from (a name not drawn yet may still be typed) |
 | `<name>.png` | The sprite sheet: every frame flattened (shown layers, bottom first, blended by opacity), left to right then top to bottom, as a Sprite's `frame_width` and `frame_height` read it ([scene2d.md](scene2d.md) §3). Frames go across as far as 4,096 pixels, then wrap; a sprite opened from a sheet keeps that sheet's frames across, so the frame numbers a scene uses stay the same. *Frames across in the sheet…* changes it |
 
 Both are written to a temporary file first and then renamed over the old one, so a failed
@@ -146,7 +146,6 @@ file is refused in plain language in the status bar, and the old sheet stays.
 
 ## 7. Next increments
 
-1. **A list of the sheet's tags** in the inspector, in place of typing the tag's name.
 2. **More pixel-art helpers** (`plan/02` B2): shading ink along palette ramps, dithering
    brushes, tile and wrap mode, an outline generator, and lasso and magic-wand selection.
 3. **Reference layers and layer groups** (B3), palette-swap variants (B4), frame events,
