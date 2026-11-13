@@ -23,6 +23,7 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
@@ -43,6 +44,7 @@
 #include "project_panel.h"
 #include "scene_view.h"
 #include "sprite_studio.h"
+#include "start_page.h"
 #include "tile_palette.h"
 
 namespace editor {
@@ -85,7 +87,12 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     : QMainWindow(parent), player_(std::move(player)) {
     resize(1280, 800);
     view_ = new SceneView(this);
-    setCentralWidget(view_);
+    // With no project open, the start page; with one, the scene.
+    start_ = new StartPage(this);
+    stack_ = new QStackedWidget(this);
+    stack_->addWidget(start_);
+    stack_->addWidget(view_);
+    setCentralWidget(stack_);
     // Panels split beside and under each other anywhere, gather as tabs (with the tabs on
     // top), float as windows, and a group of tabs drags as one.
     setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks |
@@ -218,10 +225,74 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     });
     connect(inspector_, &Inspector::edited, this, [this](bool structure) { changed(structure); });
     connect(inspector_, &Inspector::refused, this, &MainWindow::report);
+    connect(start_, &StartPage::open_folder, this,
+            [this](const QString& folder) { open_project(path_of(folder)); });
+    connect(start_, &StartPage::forget, this,
+            [this](const QString& folder) { forget_recent(folder); });
+    start_->set_recent(recent_);
     update_title_and_actions();
 }
 
 MainWindow::~MainWindow() = default;
+
+bool MainWindow::starting() const noexcept {
+    return stack_->currentWidget() == start_;
+}
+
+void MainWindow::set_settings(QSettings* settings) {
+    settings_ = settings;
+    if (settings_ != nullptr) {
+        recent_ = settings_->value(QStringLiteral("recent/projects")).toStringList();
+    }
+    start_->set_recent(recent_);
+}
+
+void MainWindow::set_sample(const fs::path& folder) {
+    start_->set_sample(folder.empty() ? QString() : path_text(folder));
+}
+
+void MainWindow::forget_recent(const QString& folder) {
+    recent_.removeAll(folder);
+    if (settings_ != nullptr) {
+        settings_->setValue(QStringLiteral("recent/projects"), recent_);
+    }
+    start_->set_recent(recent_);
+}
+
+bool MainWindow::close_project() {
+    if (document_ == nullptr) {
+        return true;
+    }
+    if (document_->dirty() &&
+        !QApplication::platformName().startsWith(QStringLiteral("offscreen"))) {
+        const auto answer = QMessageBox::question(
+            this, tr("Sparxel Editor"), tr("Save the changes to the scene first?"),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        if (answer == QMessageBox::Cancel || (answer == QMessageBox::Save && !save())) {
+            return false;
+        }
+        if (answer == QMessageBox::Discard) {
+            document_->discard_recovery();
+        }
+    }
+    if (!close_sprites()) {
+        return false;
+    }
+    selection_ = engine::Guid{};
+    selected_.clear();
+    view_->set_document(nullptr);
+    inspector_->show_entity(nullptr, selection_);
+    palette_->show_tilemap(nullptr, selection_);
+    logic_->set_document(nullptr);
+    project_->set_document(nullptr);
+    asset_tree_->setRootIndex(QModelIndex());
+    document_.reset();
+    rebuild_outliner();
+    start_->set_recent(recent_);
+    stack_->setCurrentWidget(start_);
+    update_title_and_actions();
+    return true;
+}
 
 void MainWindow::build_actions() {
     QMenu* file = menuBar()->addMenu(tr("&File"));
@@ -336,6 +407,11 @@ void MainWindow::build_actions() {
         }
     });
     open->setShortcut(QKeySequence::Open);
+    QAction* close = file->addAction(tr("&Close project"), this, [this] { close_project(); });
+    close->setObjectName(QStringLiteral("close_project"));
+    close->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+W")));
+    connect(start_, &StartPage::new_project, fresh, &QAction::trigger);
+    connect(start_, &StartPage::open_project, open, &QAction::trigger);
     save_ = file->addAction(tr("&Save"), this, [this] { save(); });
     save_->setShortcut(QKeySequence::Save);
     undo_ = edit->addAction(tr("&Undo"), this, [this] { undo(); });
@@ -650,6 +726,19 @@ bool MainWindow::open_project(const fs::path& folder) {
     rebuild_outliner();
     logic_->set_document(document_.get());
     project_->set_document(document_.get());
+    stack_->setCurrentWidget(view_);
+    // To the top of the recent projects.
+    std::error_code ignored;
+    const QString opened_folder = path_text(fs::weakly_canonical(folder, ignored));
+    recent_.removeAll(opened_folder);
+    recent_.prepend(opened_folder);
+    while (recent_.size() > 10) {
+        recent_.removeLast();
+    }
+    if (settings_ != nullptr) {
+        settings_->setValue(QStringLiteral("recent/projects"), recent_);
+    }
+    start_->set_recent(recent_);
     update_title_and_actions();
     if (!issues.empty()) {
         report(tr("Opened, with notes:\n%1").arg(issues_text(issues)));

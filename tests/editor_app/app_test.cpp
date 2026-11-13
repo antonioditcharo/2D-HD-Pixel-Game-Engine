@@ -20,6 +20,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -40,6 +41,7 @@
 #include "main_window.h"
 #include "project_panel.h"
 #include "scene_view.h"
+#include "start_page.h"
 #include "tile_palette.h"
 
 namespace fs = std::filesystem;
@@ -1928,4 +1930,57 @@ TEST_CASE("Unsaved work is kept, and restored in a new window after a crash") {
     CHECK(again.windowTitle().endsWith(QStringLiteral(" * — Sparxel Editor")));
     REQUIRE(again.save());
     CHECK_FALSE(fs::exists(e.sample.path / editor::recovery_file));
+}
+
+TEST_CASE("The start page offers new, open and recent projects, and comes back on closing") {
+    const Sample sample;
+    const fs::path ini =
+        fs::temp_directory_path() / ("sparxel-recent-" + Guid::generate().to_string() + ".ini");
+    {
+        QSettings settings(QString::fromStdString(ini.string()), QSettings::IniFormat);
+        editor::MainWindow window(SPARXEL_PLAYER);
+        window.set_settings(&settings);
+        window.set_sample(sample.path);
+        window.show();
+        CHECK(window.starting());
+        CHECK(window.windowTitle() == QStringLiteral("Sparxel Editor"));
+        editor::StartPage* start = window.start_page();
+        CHECK(start->sample_button()->isVisibleTo(start));
+        CHECK(start->recent_list()->count() == 1); // what to do first
+        CHECK_FALSE(start->recent_list()->item(0)->flags().testFlag(Qt::ItemIsEnabled));
+        // Trying the sample opens it, and it becomes a recent project.
+        start->sample_button()->click();
+        REQUIRE(window.document() != nullptr);
+        CHECK_FALSE(window.starting());
+        REQUIRE(window.recent_projects().size() == 1);
+        // Closing goes back to the start page, which lists it by its game's name.
+        REQUIRE(window.close_project());
+        CHECK(window.starting());
+        CHECK(window.document() == nullptr);
+        CHECK(window.windowTitle() == QStringLiteral("Sparxel Editor"));
+        REQUIRE(start->recent_list()->count() == 1);
+        CHECK(start->recent_list()->item(0)->text().startsWith(QStringLiteral("Hello Sparxel\n")));
+        // Opening it from the list.
+        Q_EMIT start->recent_list()->itemActivated(start->recent_list()->item(0));
+        CHECK(window.document() != nullptr);
+        REQUIRE(window.close_project());
+    }
+    {
+        // Kept for next time; a project that is gone is listed as missing, and can be left off.
+        QSettings settings(QString::fromStdString(ini.string()), QSettings::IniFormat);
+        settings.setValue(QStringLiteral("recent/projects"),
+                          settings.value(QStringLiteral("recent/projects")).toStringList()
+                              << QStringLiteral("C:/no/such/project"));
+        editor::MainWindow window(SPARXEL_PLAYER);
+        window.set_settings(&settings);
+        editor::StartPage* start = window.start_page();
+        REQUIRE(start->recent_list()->count() == 2);
+        CHECK(
+            start->recent_list()->item(1)->text().startsWith(QStringLiteral("project (missing)")));
+        window.forget_recent(QStringLiteral("C:/no/such/project"));
+        CHECK(start->recent_list()->count() == 1);
+        CHECK(settings.value(QStringLiteral("recent/projects")).toStringList().size() == 1);
+    }
+    std::error_code ignored;
+    fs::remove(ini, ignored);
 }

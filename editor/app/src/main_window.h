@@ -7,6 +7,7 @@
 // See docs/dev/editor.md.
 
 #include <QMainWindow>
+#include <QStringList>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -17,6 +18,7 @@
 
 class QAction;
 class QTimer;
+class QStackedWidget;
 class QSettings;
 class QTreeWidget;
 class QTreeView;
@@ -30,6 +32,7 @@ class ProjectPanel;
 class Inspector;
 class SceneView;
 class SpriteStudio;
+class StartPage;
 class TilePalette;
 
 class MainWindow : public QMainWindow {
@@ -44,8 +47,24 @@ public:
     MainWindow(MainWindow&&) = delete;
     MainWindow& operator=(MainWindow&&) = delete;
 
-    /// Opens a project folder. Returns false, showing why, if it cannot be opened.
+    /// Opens a project folder. Returns false, showing why, if it cannot be opened. The
+    /// project goes to the top of the recent projects.
     bool open_project(const std::filesystem::path& folder);
+    /// Closes the project (asking to save its changes) and shows the start page. False if
+    /// it stays open.
+    bool close_project();
+    /// Where the recent projects are kept between sessions (the user's settings); without
+    /// it, they are kept only while the editor runs.
+    void set_settings(QSettings* settings);
+    /// The sample project the start page offers to try; empty offers none.
+    void set_sample(const std::filesystem::path& folder);
+    /// The projects opened lately, by folder, the latest first (at most 10).
+    [[nodiscard]] const QStringList& recent_projects() const noexcept { return recent_; }
+    /// Leaves a project off the recent projects.
+    void forget_recent(const QString& folder);
+    [[nodiscard]] StartPage* start_page() const noexcept { return start_; }
+    /// Whether the start page is showing (no project open).
+    [[nodiscard]] bool starting() const noexcept;
     /// Makes a new project named `name` in `folder` (new or empty), a small starter game,
     /// and opens it. Returns false, with the reason shown, if it cannot.
     bool new_project(const std::filesystem::path& folder, const QString& name,
@@ -146,6 +165,10 @@ private:
     /// The open Sprite Studio windows, by the .dsprite each edits.
     std::map<std::string, SpriteStudio*> studios_;
     QTimer* autosave_timer_ = nullptr;
+    QStackedWidget* stack_ = nullptr; ///< The start page, or the scene.
+    StartPage* start_ = nullptr;
+    QSettings* settings_ = nullptr;
+    QStringList recent_;
     std::unique_ptr<Document> document_;
     engine::Guid selection_;
     SceneView* view_ = nullptr;

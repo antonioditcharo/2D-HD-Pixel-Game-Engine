@@ -40,6 +40,16 @@ int main(int argc, char** argv) {
         player = SPARXEL_DEFAULT_PLAYER;
     }
     editor::MainWindow window(player);
+    // The recent projects and the panels' places are kept in the user's settings (the
+    // registry on Windows).
+    QSettings settings;
+    window.set_settings(&settings);
+    // The sample village, packaged beside the editor, to try from the start page.
+    const std::filesystem::path sample = here / "samples" / "hello";
+    std::error_code missing;
+    if (std::filesystem::exists(sample / "project.sparxel.json", missing)) {
+        window.set_sample(sample);
+    }
     QStringList arguments = QApplication::arguments();
     // --check: start, open the project given (if any) and leave at once, saying by the
     // exit code whether that worked. For checking a packaged editor without a person.
@@ -52,8 +62,7 @@ int main(int argc, char** argv) {
     if (check) {
         return opened && std::filesystem::exists(player) ? 0 : 1;
     }
-    // Where the panels were last time (in the user's settings: the registry on Windows).
-    QSettings settings;
+    // Where the panels were last time.
     window.restore_layout(settings);
     window.show();
     const int result = QApplication::exec();
