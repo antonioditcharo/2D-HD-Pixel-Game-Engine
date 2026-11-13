@@ -106,7 +106,9 @@ void print_new(const std::vector<std::string>& lines, std::size_t& printed, std:
 
 } // namespace
 
-int main(int argc, char** argv) {
+namespace {
+
+int run(int argc, char** argv) {
     const std::optional<Arguments> args = parse(argc, argv);
     if (!args) {
         usage();
@@ -172,4 +174,19 @@ int main(int argc, char** argv) {
         }
     }
     return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    // Nothing the program does should throw past here; if it does, say so and stop.
+    try {
+        return run(argc, argv);
+    } catch (const std::exception& e) {
+        std::fputs(e.what(), stderr);
+        std::fputs("\n", stderr);
+    } catch (...) {
+        std::fputs("An unexpected error stopped the game.\n", stderr);
+    }
+    return 1;
 }

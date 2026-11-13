@@ -7,6 +7,8 @@
 #include <QApplication>
 #include <QDir>
 #include <QSettings>
+#include <cstdio>
+#include <exception>
 #include <filesystem>
 
 #include "main_window.h"
@@ -20,7 +22,9 @@ std::filesystem::path path_of(const QString& text) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+namespace {
+
+int run(int argc, char** argv) {
     const QApplication app(argc, argv);
     QApplication::setOrganizationName(QStringLiteral("Sparxel"));
     QApplication::setApplicationName(QStringLiteral("Sparxel Editor"));
@@ -68,4 +72,19 @@ int main(int argc, char** argv) {
     const int result = QApplication::exec();
     window.save_layout(settings);
     return result;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    // Nothing the program does should throw past here; if it does, say so and stop.
+    try {
+        return run(argc, argv);
+    } catch (const std::exception& e) {
+        std::fputs(e.what(), stderr);
+        std::fputs("\n", stderr);
+    } catch (...) {
+        std::fputs("An unexpected error stopped the editor.\n", stderr);
+    }
+    return 1;
 }

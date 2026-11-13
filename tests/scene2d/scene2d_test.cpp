@@ -109,7 +109,7 @@ struct Fixture {
         blue_image = db.find("blue.png")->guid;
     }
 
-    std::unique_ptr<world::World> make_world() const {
+    [[nodiscard]] std::unique_ptr<world::World> make_world() const {
         auto w = std::make_unique<world::World>(registry);
         REQUIRE(scene2d::register_components(*w));
         return w;

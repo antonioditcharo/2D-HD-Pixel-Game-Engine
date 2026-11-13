@@ -345,7 +345,7 @@ void LogicPanel::show_variables() {
     if (file == document_->logic().end()) {
         return;
     }
-    const std::string at = path;
+    const std::string& at = path;
     // Rebuilt later, not from inside the signal of a field that goes with it.
     const auto later = [this, at] {
         QTimer::singleShot(0, this, [this, at] {
@@ -688,7 +688,7 @@ void LogicPanel::show_fields() {
             from->setPopupMode(QToolButton::InstantPopup);
             auto* menu = new QMenu(from);
             // Later, not from inside the menu's own signal: the menu goes with the fields.
-            const auto later = [this, file, block](auto change) {
+            const auto later = [this, file, block](const auto& change) {
                 QTimer::singleShot(0, this, [this, file, block, change] {
                     std::string error;
                     if (!change(error)) {

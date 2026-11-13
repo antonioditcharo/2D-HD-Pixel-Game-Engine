@@ -153,7 +153,7 @@ void SceneView::assets_changed(const engine::assets::AssetChanges& changes) {
 
 void SceneView::preview_look(std::optional<engine::render::Look> look) {
     if (preview_ != nullptr) {
-        preview_->set_look_override(std::move(look));
+        preview_->set_look_override(look);
     }
     refresh();
 }

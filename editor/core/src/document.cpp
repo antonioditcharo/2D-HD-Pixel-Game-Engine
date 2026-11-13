@@ -317,7 +317,7 @@ bool Document::open_scene(std::string_view path, std::string& error) {
 }
 
 bool Document::create_scene(std::string_view path, std::string& error) {
-    Impl& d = *impl_;
+    const Impl& d = *impl_;
     const fs::path file(path);
     if (file.extension() != ".dscene" || file.stem().empty() || file.is_absolute() ||
         std::any_of(file.begin(), file.end(), [](const fs::path& part) { return part == ".."; })) {

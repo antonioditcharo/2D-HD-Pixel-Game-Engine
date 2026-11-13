@@ -146,7 +146,7 @@ TEST_CASE("Trigger areas report movers walking in and out, once each") {
 }
 
 TEST_CASE("Interact reaches the nearest interactable the mover faces") {
-    Fixture f;
+    const Fixture f;
     const world::Entity sign = f.place("sign", 1.0, 0.0); // 1 x 1: x 0.5 to 1.5
     f.w->add<game::Interactable>(sign);
     game::TopDownMover* mover = f.w->get<game::TopDownMover>(f.hero);
@@ -577,7 +577,7 @@ TEST_CASE("The camera follows, smooths, keeps a dead zone, looks ahead and shake
 }
 
 TEST_CASE("Encounter Areas start battles as the player walks inside them") {
-    Fixture f;
+    const Fixture f;
     const world::Entity grass = f.place("grass", 5.0, 5.0);
     game::EncounterArea* area = f.w->add<game::EncounterArea>(grass);
     REQUIRE(area != nullptr);
