@@ -15,6 +15,7 @@
 #include "engine/game/dialogue.h"
 #include "engine/game/inventory.h"
 #include "engine/game/lighting.h"
+#include "engine/game/particles.h"
 #include "engine/game/quests.h"
 #include "engine/game/save.h"
 #include "engine/game/sound.h"

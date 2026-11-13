@@ -1,5 +1,7 @@
 #include "engine/game/behaviours.h"
 
+#include "engine/game/particles.h"
+
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -350,6 +352,7 @@ std::optional<std::array<double, 2>> player_position(const world::World& world) 
 bool register_behaviour_components(world::World& world) {
     const bool mover = world.register_component<TopDownMover>();
     const bool walker = world.register_component<Walker>();
+    const bool particles = world.register_component<ParticleEmitter>();
     const bool walk = world.register_component<WalkAnimation>();
     const bool body = world.register_component<Body>();
     const bool trigger = world.register_component<Trigger>();
@@ -357,8 +360,8 @@ bool register_behaviour_components(world::World& world) {
     const bool simulated = world.register_component<PhysicsBody>();
     const bool sound = world.register_component<SoundSource>();
     const bool jumping = world.register_component<Jumping>();
-    return mover && walker && walk && body && trigger && interactable && simulated && sound &&
-           jumping;
+    return mover && walker && particles && walk && body && trigger && interactable && simulated &&
+           sound && jumping;
 }
 
 // ---------------------------------------------------------------------------------------

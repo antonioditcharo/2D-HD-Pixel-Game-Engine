@@ -485,6 +485,7 @@ void register_types(reflect::Registry& registry) {
     register_inventory_types(registry);
     register_camera_types(registry);
     register_quest_types(registry);
+    register_particle_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -896,6 +897,7 @@ void Runtime::step() {
     for (const world::Entity entity : scene2d::animate(*r.world, dt, r.sheets.get())) {
         emit(*r.vm, *r.world, entity, "finished");
     }
+    update_particles(*r.world, dt);
     ++r.steps;
 
     // 6. Saving and loading that logic asked for, now that no script is running.
@@ -1010,15 +1012,24 @@ bool Runtime::draw() {
         }
     }
     render::RenderTarget& world_target = r.post != nullptr ? *r.scene : *r.target;
+    ParticleView particles;
+    particles.flat = camera;
+    particles.width = world_target.width();
+    particles.height = world_target.height();
     if (r.settings.style == RenderStyle::Diorama) {
         orbit.x = camera.x;
         orbit.y = camera.y;
         scene2d::draw_diorama(*r.world, *r.textures, *r.world_renderer, world_target, orbit,
                               r.settings.background, diorama_light(r.settings, r.lighting));
+        particles.diorama = true;
+        particles.view_projection =
+            scene2d::diorama_view_projection(orbit, static_cast<float>(aspect));
     } else {
         scene2d::draw_world(*r.world, *r.textures, *r.sprites, world_target, camera,
                             r.settings.background);
     }
+    // Particles over the world, before the look, so bloom makes fire glow.
+    static_cast<void>(draw_particles(*r.world, *r.sprites, *r.white, world_target, particles));
     // The look, applied to the world only: the message box is drawn after, crisp.
     if (r.post != nullptr && !r.post->apply(*r.scene, *r.target, effective_look(r.settings))) {
         return false;

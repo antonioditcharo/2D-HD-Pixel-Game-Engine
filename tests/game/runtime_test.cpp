@@ -2047,3 +2047,99 @@ TEST_CASE("Quests: started, staged, finished, listed in the journal, and saved")
     CHECK(issues.size() == 1);
     CHECK_FALSE(other->quests().started("broken"));
 }
+
+TEST_CASE("Particles come at their rate, move their kind's way, end, and replay the same") {
+    reflect::Registry registry;
+    game::register_types(registry);
+    REQUIRE(registry.errors().empty());
+    world::World w(registry);
+    REQUIRE(scene2d::register_components(w));
+    REQUIRE(game::register_behaviour_components(w));
+    const world::Entity fire = w.create("fire");
+    w.add<scene2d::Transform2D>(fire)->x = 2.0;
+    game::ParticleEmitter* flames = w.add<game::ParticleEmitter>(fire);
+    REQUIRE(flames != nullptr);
+    const world::Entity rain = w.create("rain");
+    w.add<scene2d::Transform2D>(rain);
+    w.add<game::ParticleEmitter>(rain)->preset = game::ParticlePreset::Rain;
+
+    // Half a second: fire (30 a second) has sent out 15, rising; rain (120) 60, falling.
+    for (int i = 0; i < 30; ++i) {
+        game::update_particles(w, 1.0 / 60.0);
+    }
+    flames = w.get<game::ParticleEmitter>(fire);
+    CHECK(flames->particles.size() == 15);
+    bool rising = true;
+    for (const game::Particle& p : flames->particles) {
+        rising = rising && p.vh > 0.0 && std::abs(p.x - 2.0) < 1.0;
+    }
+    CHECK(rising);
+    const game::ParticleEmitter* drops = w.get<game::ParticleEmitter>(rain);
+    CHECK(drops->particles.size() == 60);
+    CHECK(drops->particles.front().vh < 0.0);
+
+    // Stopped, no new ones come and those flying end (fire lasts under a second).
+    flames->stop();
+    for (int i = 0; i < 60; ++i) {
+        game::update_particles(w, 1.0 / 60.0);
+    }
+    CHECK(w.get<game::ParticleEmitter>(fire)->particles.empty());
+    // A burst, at once; never more than 500 at a time.
+    w.get<game::ParticleEmitter>(fire)->burst(25);
+    game::update_particles(w, 1.0 / 60.0);
+    CHECK(w.get<game::ParticleEmitter>(fire)->particles.size() == 25);
+    w.get<game::ParticleEmitter>(fire)->burst(100000);
+    game::update_particles(w, 1.0 / 60.0);
+    CHECK(w.get<game::ParticleEmitter>(fire)->particles.size() <= 525);
+
+    // The same emitter, the same steps: the same particles.
+    world::World again(registry);
+    REQUIRE(scene2d::register_components(again));
+    REQUIRE(game::register_behaviour_components(again));
+    const world::Entity copy = again.create("fire");
+    again.add<scene2d::Transform2D>(copy)->x = 2.0;
+    game::ParticleEmitter* twin = again.add<game::ParticleEmitter>(copy);
+    twin->seed = 77;
+    game::ParticleEmitter* first = w.get<game::ParticleEmitter>(fire);
+    first->particles.clear();
+    first->seed = 77;
+    first->due = 0.0;
+    first->emitting = true;
+    first->pending_burst = 0;
+    for (int i = 0; i < 20; ++i) {
+        game::update_particles(w, 1.0 / 60.0);
+        game::update_particles(again, 1.0 / 60.0);
+    }
+    REQUIRE(first->particles.size() == twin->particles.size());
+    CHECK(first->particles.back().x == twin->particles.back().x);
+    CHECK(first->particles.back().h == twin->particles.back().h);
+}
+
+TEST_CASE("Particles are drawn over the scene, where their emitter is") {
+    const Project project;
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    // A fire at the hero's feet, in the middle of the view: its flames rise above.
+    world::World& w = runtime->world();
+    const world::Entity hero = w.find_named("hero").at(0);
+    game::ParticleEmitter* fire = w.add<game::ParticleEmitter>(hero);
+    REQUIRE(fire != nullptr);
+    fire->rate = 300.0;
+    fire->size = 2;
+    for (int i = 0; i < 20; ++i) {
+        runtime->step();
+    }
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    // Somewhere in the column above the hero (the target's centre), a warm colour shows.
+    bool warm = false;
+    for (std::uint32_t y = 0; y < 16; ++y) {
+        for (std::uint32_t x = 12; x < 20; ++x) {
+            const render::Color c = pixel(pixels, 32, x, y);
+            warm = warm || (c.r > 150 && c.r > c.b + 60);
+        }
+    }
+    CHECK(warm);
+}

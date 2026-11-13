@@ -273,6 +273,34 @@ or a scene fades, Walkers stand still with everyone. Turned off (`enabled`), its
 ordinary one again. Where it started, its rest and its place on the route are saved with
 games; its way is found again after loading.
 
+### Particles
+
+**Particles** (`particles`, [`particles.h`](../../engine/game/include/engine/game/particles.h))
+send out pixels of colour where the entity stands (`plan/02` D12). A creator picks a
+*Kind* and, if they like, *How many* a second, the *Area* they start in and their *Pixel
+size* (1 to 4); 0 keeps the kind's own:
+
+| Kind | What it does |
+|---|---|
+| **Fire** (30 a second) | Rises from a small area, drifting, yellow turning red and fading in under a second |
+| **Smoke** (8) | Rises slowly, drifting with the wind, grey fading over 2 to 3 s |
+| **Rain** (120) | Falls as two-pixel streaks from high above a wide area (20 × 12 tiles), slanting, and ends on the ground |
+| **Snow** (40) | Falls slowly from high above a wide area, swaying |
+| **Dust** (6) | Motes floating near the ground, glowing in and out |
+| **Magic** (20) | Rises, swirling, cyan turning violet |
+| **Sparks** (none on their own) | For *Send out {count} particles*: they fly out and fall back under gravity, yellow to orange |
+
+Logic turns them on and off (*Start the particles*, *Stop the particles*: those flying
+finish) and sends out bursts (*Send out {count} particles*, up to 500 at once). Each
+particle moves on the ground (across and down the map) and in **height** above it, so the
+same emitter reads the same in both styles: in Classic 2D height is up the screen, in the
+Diorama style up in the world, drawn where the camera sees that point. They are drawn over
+the world (not hidden behind walls) and before the Look, so bloom makes fire glow. At most
+2,000 fly from one emitter. They move in the fixed step (`update_particles()`, after
+animation) from a seed taken from the entity's GUID, so the same game replays the same
+particles; flying particles are not saved with games. The editor's scene view does not play
+them; Play does.
+
 ### The camera
 
 The view follows the player: the first Top-down Mover that is not a Walker. How it follows
