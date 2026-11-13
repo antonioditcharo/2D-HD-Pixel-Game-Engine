@@ -1327,10 +1327,10 @@ bool Document::fill_tiles(Guid tilemap, double x, double y, std::int32_t tile) {
         const std::array<std::uint32_t, 2> cell = open.back();
         open.pop_back();
         const auto visit = [&](std::uint32_t c, std::uint32_t r) {
-            const std::size_t at = (std::size_t{r} * grid.width) + c;
-            std::int32_t& next = grid.cells[at];
-            if (!done[at] && next != tile && alike(next, old)) {
-                done[at] = true;
+            const std::size_t index = (std::size_t{r} * grid.width) + c;
+            std::int32_t& next = grid.cells[index];
+            if (!done[index] && next != tile && alike(next, old)) {
+                done[index] = true;
                 next = pick(c, r);
                 open.push_back({c, r});
             }

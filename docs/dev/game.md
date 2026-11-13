@@ -428,6 +428,21 @@ ones do, and are saved with games. Copies and removals happen at the end of the 
 logic asked for them. A prefab that is not there, or a name nothing has, is reported in the
 game's problems in plain language and nothing changes.
 
+### Timers and messages
+
+Also on the **game** object, for parts of a game that wait for each other:
+
+| Block | What it does |
+|---|---|
+| *Start the timer {name} for {seconds} seconds* | A countdown; starting it again starts it over |
+| *Stop the timer {name}* | It ends without telling Rules |
+| *The timer {name} is running*, *The seconds left on the timer {name}* | A condition and a value |
+| *When a timer ends ({name})* | An event with the timer's name |
+| *Send the message {name}* | Every Rule on *When a message is sent* hears it, with its name, at the end of the step: one part of the game telling others (*door_opened*) |
+
+Timers count while the game plays, not while the title screen or pause menu is open, and
+are saved with games, with their seconds left.
+
 ### Quests and the journal
 
 The **quests** object (`QuestObject`, [`quests.h`](../../engine/game/include/engine/game/quests.h))

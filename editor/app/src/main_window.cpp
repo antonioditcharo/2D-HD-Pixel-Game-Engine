@@ -200,9 +200,9 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     connect(palette_, &TilePalette::tool_changed, this,
             [this](int tool) { view_->set_paint_tool(static_cast<SceneView::PaintTool>(tool)); });
     connect(palette_, &TilePalette::variants_changed, this,
-            [this](const std::vector<std::int32_t>& tiles) {
+            [this](const std::vector<std::int32_t>& variants) {
                 if (document_ != nullptr) {
-                    document_->set_tile_variants(tiles);
+                    document_->set_tile_variants(variants);
                 }
             });
     connect(palette_, &TilePalette::density_changed, this,

@@ -844,13 +844,13 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     // Saves go where asked, or else to the player's own folder for this game, found (and
     // created) only when a save is first used.
     r.save_object = SaveObject([folder = options.save_folder, name = r.settings.name,
-                                root = fs::path(root)]() -> fs::path {
+                                project_root = fs::path(root)]() -> fs::path {
         if (!folder.empty()) {
             return folder;
         }
         char* pref = SDL_GetPrefPath("Sparxel", name.c_str());
         if (pref == nullptr) {
-            return root / "saves";
+            return project_root / "saves";
         }
         fs::path path(std::u8string(reinterpret_cast<const char8_t*>(pref)));
         SDL_free(pref);
@@ -1502,6 +1502,18 @@ void Runtime::step() {
     ++r.steps;
 
     // 6. Saving and loading that logic asked for, now that no script is running.
+    // Timers count down while the game plays (not while a menu is open); messages sent this
+    // step reach Rules.
+    if (!r.menu.open()) {
+        for (const std::string& ended : r.save_object.tick_timers(dt)) {
+            const std::array<reflect::Value, 1> payload{reflect::Value{ended}};
+            r.vm->emit("game", "timer_ended", payload);
+        }
+    }
+    for (const std::string& message : r.save_object.take_messages()) {
+        const std::array<reflect::Value, 1> payload{reflect::Value{message}};
+        r.vm->emit("game", "message", payload);
+    }
     // Things created and removed by logic.
     for (const SaveObject::Spawn& spawn : r.save_object.take_spawns()) {
         if (spawn.remove) {
@@ -1889,6 +1901,11 @@ serialize::Json Runtime::save() const {
         carried[item] = count;
     }
     json["inventory"] = std::move(carried);
+    serialize::Json timers = serialize::Json::object();
+    for (const auto& [name, left] : r.save_object.timers()) {
+        timers[name] = left;
+    }
+    json["timers"] = std::move(timers);
     serialize::Json quests = serialize::Json::object();
     for (const auto& [name, quest] : r.quests.quests()) {
         const char* state = quest.state == QuestState::Done     ? "done"
@@ -2014,6 +2031,15 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
                     std::move(where),
                     "This variable no longer exists or holds another kind of value. It "
                     "keeps its current value."});
+            }
+        }
+    }
+    // Timers running when it was saved.
+    r.save_object.timers().clear();
+    if (const auto timers = json.find("timers"); timers != json.end() && timers->is_object()) {
+        for (const auto& [name, left] : timers->items()) {
+            if (left.is_number()) {
+                r.save_object.start_timer(name, left.get<double>());
             }
         }
     }

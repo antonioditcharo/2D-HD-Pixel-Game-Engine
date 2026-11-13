@@ -1,6 +1,8 @@
 #include "engine/game/save.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <system_error>
@@ -69,6 +71,31 @@ bool SaveObject::has_save(std::int64_t slot) const {
     return !file.empty() && fs::is_regular_file(file, ec);
 }
 
+void SaveObject::start_timer(const std::string& name, double seconds) {
+    if (!name.empty() && std::isfinite(seconds)) {
+        timers_[name] = std::max(seconds, 0.0);
+    }
+}
+
+double SaveObject::time_left(const std::string& name) const {
+    const auto found = timers_.find(name);
+    return found == timers_.end() ? 0.0 : found->second;
+}
+
+std::vector<std::string> SaveObject::tick_timers(double seconds) {
+    std::vector<std::string> ended;
+    for (auto it = timers_.begin(); it != timers_.end();) {
+        it->second -= seconds;
+        if (it->second <= 1e-9) {
+            ended.push_back(it->first);
+            it = timers_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return ended;
+}
+
 void register_save_types(reflect::Registry& registry) {
     auto game = registry.add_type<SaveObject>("game").display_name("Game").category("Game").tooltip(
         "Saving and loading the player's progress.");
@@ -107,6 +134,32 @@ void register_save_types(reflect::Registry& registry) {
         .text("Remove {name}")
         .tooltip("Takes something out of the scene, with what is under it: a coin picked "
                  "up, an enemy beaten.");
+    game.action<&SaveObject::start_timer>("start_timer", {"name", "seconds"})
+        .text("Start the timer {name} for {seconds} seconds")
+        .tooltip("Counts down while the game plays; when it ends, Rules on When a timer ends "
+                 "run. Starting it again starts it over.")
+        .param("seconds")
+        .range(0.0, 86400.0)
+        .default_value(reflect::Value{5.0});
+    game.action<&SaveObject::stop_timer>("stop_timer", {"name"})
+        .text("Stop the timer {name}")
+        .tooltip("It ends without telling Rules.");
+    game.condition<&SaveObject::timer_running>("timer_running", {"name"})
+        .text("The timer {name} is running")
+        .tooltip("Started, and not yet ended or stopped.");
+    game.getter<&SaveObject::time_left>("time_left", {"name"})
+        .text("The seconds left on the timer {name}")
+        .tooltip("0 for a timer not running.");
+    game.event<std::string>("timer_ended", {"name"})
+        .text("When a timer ends ({name})")
+        .tooltip("A timer started by logic counted down to 0.");
+    game.action<&SaveObject::send_message>("send_message", {"name"})
+        .text("Send the message {name}")
+        .tooltip("Every Rule on When a message is sent hears it, with its name: one part of the "
+                 "game telling others, as door_opened.");
+    game.event<std::string>("message", {"name"})
+        .text("When a message is sent ({name})")
+        .tooltip("Logic sent a message with Send the message.");
     game.getter<&SaveObject::last_created>("last_created")
         .text("The name of the last thing created")
         .tooltip("Such as coin_3: to remember it, or to remove it later.");

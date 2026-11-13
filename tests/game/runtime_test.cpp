@@ -3906,3 +3906,55 @@ TEST_CASE("Logic creates copies of prefabs while playing, and removes things") {
                "prefabs/nothing.dprefab in assets/."));
     CHECK(said("There is nothing called ghost to remove."));
 }
+
+TEST_CASE("Timers end and tell Rules; messages reach every Rule listening; saves keep timers") {
+    const Project project;
+    {
+        logic::LogicAsset rules;
+        rules.name = "bell";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "game", "start_timer",
+                                       {Project::text("bell"), ir::literal(reflect::Value{0.5})})},
+                        {}});
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{3},
+                        "game",
+                        "timer_ended",
+                        {},
+                        {ir::log(4, ir::event_value("name")),
+                         ir::do_action(5, "game", "send_message", {Project::text("rang")})},
+                        {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{6}, "game", "message", {}, {ir::log(7, ir::event_value("name"))}, {}});
+        write_json(project.folder.path / "assets/logic/bell.drules",
+                   serialize::logic_to_json(rules));
+    }
+    const auto runtime = project.open(no_graphics(nullptr));
+    for (int i = 0; i < 10; ++i) {
+        runtime->step();
+    }
+    const auto count = [&](const char* line) {
+        return std::count(runtime->log().begin(), runtime->log().end(), line);
+    };
+    CHECK(count("bell") == 0);
+    // Saved while it runs: its seconds left are kept.
+    const serialize::Json saved = runtime->save();
+    REQUIRE(saved.contains("timers"));
+    CHECK(saved["timers"]["bell"].get<double>() > 0.3);
+    for (int i = 0; i < 30; ++i) {
+        runtime->step();
+    }
+    CHECK(count("bell") == 1);
+    CHECK(count("rang") == 1);
+    // Loading the save runs the timer again from where it was.
+    std::vector<serialize::Issue> issues;
+    REQUIRE(runtime->load(saved, issues));
+    for (int i = 0; i < 30; ++i) {
+        runtime->step();
+    }
+    CHECK(count("bell") == 2);
+}

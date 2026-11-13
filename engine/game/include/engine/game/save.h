@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -104,6 +105,27 @@ public:
         bool remove = false;
     };
     [[nodiscard]] std::vector<Spawn> take_spawns() { return std::exchange(spawns_, {}); }
+    // ----- Timers and messages (plan/02 E9) -----
+    /// Starts (or starts again) a timer counting down `seconds`; when it ends, Rules on
+    /// "timer_ended" hear its name.
+    void start_timer(const std::string& name, double seconds);
+    void stop_timer(const std::string& name) { timers_.erase(name); }
+    [[nodiscard]] bool timer_running(const std::string& name) const {
+        return timers_.contains(name);
+    }
+    /// Seconds a timer still has; 0 for one not running.
+    [[nodiscard]] double time_left(const std::string& name) const;
+    /// Counts every timer down by `seconds`; returns the names of those that ended.
+    std::vector<std::string> tick_timers(double seconds);
+    [[nodiscard]] std::map<std::string, double, std::less<>>& timers() noexcept { return timers_; }
+    [[nodiscard]] const std::map<std::string, double, std::less<>>& timers() const noexcept {
+        return timers_;
+    }
+    /// Sends a message every Rule on "message" hears, with its name, at the end of the step:
+    /// one part of the game telling others ("door_opened").
+    void send_message(const std::string& name) { messages_.push_back(name); }
+    [[nodiscard]] std::vector<std::string> take_messages() { return std::exchange(messages_, {}); }
+
     /// The name of the last copy made, for Rules to act on it.
     [[nodiscard]] std::string last_created() const { return last_created_; }
     void set_last_created(std::string name) { last_created_ = std::move(name); }
@@ -116,6 +138,8 @@ private:
     mutable bool has_resolved_ = false;
     std::vector<Request> requests_;
     std::vector<Spawn> spawns_;
+    std::map<std::string, double, std::less<>> timers_;
+    std::vector<std::string> messages_;
     std::string last_created_;
     std::optional<SceneRequest> scene_request_;
     std::string scene_path_;
