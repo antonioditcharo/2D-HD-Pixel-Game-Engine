@@ -113,6 +113,25 @@ void SceneView::paint_at(QPoint widget_point) {
         return;
     }
     const std::optional<QPointF> at = map_point(widget_point);
+    if (paint_tool_ == PaintTool::Raise || paint_tool_ == PaintTool::Lower) {
+        if (!at) {
+            return;
+        }
+        // Each cell once a stroke, so holding the button over it does not run away.
+        const std::pair<std::int64_t, std::int64_t> tile{
+            static_cast<std::int64_t>(std::floor(at->x())),
+            static_cast<std::int64_t>(std::floor(at->y()))};
+        if (std::find(raised_.begin(), raised_.end(), tile) != raised_.end()) {
+            return;
+        }
+        raised_.push_back(tile);
+        const double up = paint_tool_ == PaintTool::Raise ? 0.5 : -0.5;
+        if (document_->raise_tile(paint_map_, at->x(), at->y(), stroke_tile_ < 0 ? -up : up)) {
+            Q_EMIT moved();
+            refresh();
+        }
+        return;
+    }
     if (at && document_->paint_tile(paint_map_, at->x(), at->y(), stroke_tile_)) {
         Q_EMIT moved();
         refresh();
@@ -386,6 +405,7 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
         drag_ = Drag::Paint;
         stroke_tile_ = event->button() == Qt::LeftButton ? *paint_tile_ : -1;
         document_->end_merge(); // each stroke is one undo step
+        raised_.clear();
         rect_to_ = drag_from_;
         if (paint_tool_ == PaintTool::Fill) {
             drag_ = Drag::None; // one click, no stroke
@@ -394,7 +414,8 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
                 Q_EMIT moved();
                 refresh();
             }
-        } else if (paint_tool_ == PaintTool::Pencil) {
+        } else if (paint_tool_ == PaintTool::Pencil || paint_tool_ == PaintTool::Raise ||
+                   paint_tool_ == PaintTool::Lower) {
             paint_at(drag_from_);
         }
         return;

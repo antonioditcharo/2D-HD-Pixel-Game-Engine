@@ -46,7 +46,9 @@ public:
     [[nodiscard]] bool painting() const noexcept { return paint_tile_.has_value(); }
     /// How paint mode paints: cell by cell along the stroke, the rectangle between where
     /// the button went down and where it came up, or the whole area joined to the cell.
-    enum class PaintTool : std::uint8_t { Pencil, Rectangle, Fill };
+    /// Raise and Lower build Diorama terrain: each cell the stroke passes rises (or sinks)
+    /// by half a tile; the right button does the opposite.
+    enum class PaintTool : std::uint8_t { Pencil, Rectangle, Fill, Raise, Lower };
     void set_paint_tool(PaintTool tool) { paint_tool_ = tool; }
     [[nodiscard]] PaintTool paint_tool() const noexcept { return paint_tool_; }
     /// Snapping: what is dragged lands on whole tiles (the entity grabbed; others
@@ -133,6 +135,8 @@ private:
     [[nodiscard]] QPoint origin() const;
 
     Document* document_ = nullptr;
+    /// The cells a Raise or Lower stroke has changed already: each once a stroke.
+    std::vector<std::pair<std::int64_t, std::int64_t>> raised_;
     std::unique_ptr<Preview> preview_;
     QImage image_;
     engine::Guid selection_;

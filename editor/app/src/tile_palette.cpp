@@ -28,14 +28,23 @@ TilePalette::TilePalette(QWidget* parent) : QWidget(parent) {
     column->addWidget(hint_);
     // The tools: one at a time.
     tools_ = new QWidget(this);
-    auto* row = new QHBoxLayout(tools_);
-    row->setContentsMargins(0, 0, 0, 0);
+    // Painting tools on the first row; the Diorama's terrain brushes on the second, so the
+    // panel stays as narrow as it was.
+    auto* rows = new QGridLayout(tools_);
+    rows->setContentsMargins(0, 0, 0, 0);
+    rows->setHorizontalSpacing(2);
     auto* group = new QButtonGroup(this);
-    const std::array<std::pair<QString, QString>, 3> tools{
+    const std::array<std::pair<QString, QString>, 5> tools{
         std::pair{tr("Pencil"), tr("Paint cell by cell along the stroke")},
         std::pair{tr("Rectangle"), tr("Drag out a rectangle: it is painted on release")},
-        std::pair{tr("Fill"), tr("Click a cell: every cell of the same tile joined to it")}};
-    for (int i = 0; i < 3; ++i) {
+        std::pair{tr("Fill"), tr("Click a cell: every cell of the same tile joined to it")},
+        std::pair{tr("Raise"),
+                  tr("Diorama: each tile the stroke passes rises half a tile (the right button "
+                     "lowers it)")},
+        std::pair{tr("Lower"),
+                  tr("Diorama: each tile the stroke passes sinks half a tile (the right button "
+                     "raises it)")}};
+    for (int i = 0; i < 5; ++i) {
         auto* button = new QToolButton(tools_);
         button->setText(tools.at(static_cast<std::size_t>(i)).first);
         button->setToolTip(tools.at(static_cast<std::size_t>(i)).second);
@@ -43,9 +52,9 @@ TilePalette::TilePalette(QWidget* parent) : QWidget(parent) {
         button->setChecked(i == 0);
         button->setObjectName(QStringLiteral("paint_tool:%1").arg(i));
         group->addButton(button, i);
-        row->addWidget(button);
+        rows->addWidget(button, i / 3, i % 3);
     }
-    row->addStretch();
+    rows->setColumnStretch(3, 1);
     connect(group, &QButtonGroup::idClicked, this, [this](int id) {
         tool_ = id;
         Q_EMIT tool_changed(id);

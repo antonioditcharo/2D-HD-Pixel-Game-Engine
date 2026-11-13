@@ -3071,3 +3071,38 @@ TEST_CASE("Project Doctor finds missing files, broken logic, unreachable scenes 
         return f.severity == Severity::Warning && f.scene == "maps/attic.dscene";
     }));
 }
+
+TEST_CASE("Raising and lowering tiles builds Diorama terrain, a stroke one undo step") {
+    const Sample sample;
+    const std::unique_ptr<editor::Document> doc = sample.open();
+    // The village's ground map: its first tilemap.
+    Guid ground;
+    for (const world::Entity e : doc->entities()) {
+        if (!ground.is_valid() && doc->world().get<scene2d::Tilemap>(e) != nullptr) {
+            ground = doc->world().guid(e);
+        }
+    }
+    REQUIRE(ground.is_valid());
+    scene2d::Tilemap* map = doc->world().get<scene2d::Tilemap>(doc->world().find(ground));
+    const auto* at = doc->world().get<scene2d::Transform2D>(doc->world().find(ground));
+    REQUIRE(map != nullptr);
+    const double x = at->x + 0.5;
+    const double y = at->y + 0.5;
+    const double was = map->height_at(0, 0);
+    CHECK(doc->raise_tile(ground, x, y, 0.5));
+    CHECK(doc->raise_tile(ground, x + 1.0, y, 0.5));
+    map = doc->world().get<scene2d::Tilemap>(doc->world().find(ground));
+    CHECK(map->height_at(0, 0) == was + 0.5);
+    CHECK(doc->undo_label().starts_with("Raise "));
+    doc->end_merge();
+    CHECK(doc->raise_tile(ground, x, y, -100.0)); // kept at 0
+    map = doc->world().get<scene2d::Tilemap>(doc->world().find(ground));
+    CHECK(map->height_at(0, 0) == 0.0);
+    CHECK(doc->undo_label().starts_with("Lower "));
+    CHECK_FALSE(doc->raise_tile(ground, at->x - 5.0, y, 1.0)); // off the map
+    REQUIRE(doc->undo());
+    REQUIRE(doc->undo()); // the stroke of two, at once
+    map = doc->world().get<scene2d::Tilemap>(doc->world().find(ground));
+    CHECK(map->height_at(0, 0) == was);
+    CHECK(map->height_at(1, 0) == was);
+}

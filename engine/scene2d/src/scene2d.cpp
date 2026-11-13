@@ -143,6 +143,11 @@ void register_types(reflect::Registry& registry) {
         .step(0.5)
         .unit(reflect::Unit::Tiles)
         .tooltip("In the Diorama style, how tall each tile stands: 0 is flat ground.");
+    tilemap.property<&Tilemap::heights>("heights")
+        .flags(reflect::property_flag::advanced)
+        .display_name("Tile heights")
+        .tooltip("Each tile's own height in the Diorama style, painted with the Raise and "
+                 "Lower brushes; empty cells stand at Height.");
     tilemap.property<&Tilemap::solid>("solid").tooltip(
         "Every tile of this map blocks movement. Paint walls on their own map.");
     tilemap.property<&Tilemap::animation_frames>("animation_frames")
@@ -320,6 +325,90 @@ const TileGrid* Tilemap::grid(std::string& error) const {
         return nullptr;
     }
     return &*parsed_;
+}
+
+std::vector<std::vector<double>> parse_heights(std::string_view text) {
+    std::vector<std::vector<double>> rows(1);
+    std::string cell;
+    const auto finish = [&] {
+        double value = std::numeric_limits<double>::quiet_NaN();
+        const std::size_t a = cell.find_first_not_of(" \t\r");
+        if (a != std::string::npos) {
+            const std::size_t b = cell.find_last_not_of(" \t\r");
+            const std::string_view number(cell.data() + a, b - a + 1);
+            double parsed = 0.0;
+            const auto [end, error] =
+                std::from_chars(number.data(), number.data() + number.size(), parsed);
+            if (error == std::errc{} && end == number.data() + number.size() &&
+                std::isfinite(parsed)) {
+                value = std::clamp(parsed, 0.0, 16.0);
+            }
+        }
+        rows.back().push_back(value);
+        cell.clear();
+    };
+    for (const char c : text) {
+        if (c == ',') {
+            finish();
+        } else if (c == '\n') {
+            finish();
+            rows.emplace_back();
+        } else {
+            cell += c;
+        }
+    }
+    finish();
+    // Rows of nothing at the end are no rows.
+    while (!rows.empty() && std::all_of(rows.back().begin(), rows.back().end(),
+                                        [](double v) { return std::isnan(v); })) {
+        rows.pop_back();
+    }
+    return rows;
+}
+
+std::string format_heights(const std::vector<std::vector<double>>& heights) {
+    std::string out;
+    for (std::size_t r = 0; r < heights.size(); ++r) {
+        if (r > 0) {
+            out += '\n';
+        }
+        // Empty cells at the end of a row are left off.
+        std::size_t used = heights[r].size();
+        while (used > 0 && std::isnan(heights[r][used - 1])) {
+            --used;
+        }
+        for (std::size_t c = 0; c < used; ++c) {
+            if (c > 0) {
+                out += ',';
+            }
+            const double v = heights[r][c];
+            if (std::isnan(v)) {
+                continue;
+            }
+            if (v == std::floor(v)) {
+                out += std::to_string(static_cast<std::int64_t>(v));
+            } else {
+                std::array<char, 32> buffer{};
+                const auto [end, error] =
+                    std::to_chars(buffer.data(), buffer.data() + buffer.size(), v);
+                out.append(buffer.data(), error == std::errc{} ? end : buffer.data());
+            }
+        }
+    }
+    return out;
+}
+
+double Tilemap::height_at(std::uint32_t x, std::uint32_t y) const {
+    if (!heights_once_ || heights_text_ != heights) {
+        heights_ = heights.empty() ? std::vector<std::vector<double>>{} : parse_heights(heights);
+        heights_text_ = heights;
+        heights_once_ = true;
+    }
+    const double fallback = std::isfinite(height) ? std::clamp(height, 0.0, 16.0) : 0.0;
+    if (y >= heights_.size() || x >= heights_[y].size() || std::isnan(heights_[y][x])) {
+        return fallback;
+    }
+    return heights_[y][x];
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1367,8 +1456,8 @@ std::optional<float> ground_top(const world::World& world, double x, double y, s
             return;
         }
         // As draw_diorama() places it: the block's height, plus its layer's lift.
-        const float height =
-            std::isfinite(map->height) ? static_cast<float>(std::max(map->height, 0.0)) : 0.0F;
+        const auto height = static_cast<float>(
+            map->height_at(static_cast<std::uint32_t>(column), static_cast<std::uint32_t>(row)));
         const float here = height + (static_cast<float>(t->layer) * 0.002F);
         top = top ? std::max(*top, here) : here;
     });
@@ -1390,6 +1479,13 @@ std::optional<render::SunShadow> diorama_sun_shadow(const world::World& world,
         const Tilemap* map = ref.as<Tilemap>();
         if (map != nullptr && map->visible && std::isfinite(map->height)) {
             tallest = std::max(tallest, static_cast<float>(std::min(map->height, 16.0)));
+            for (const std::vector<double>& row : parse_heights(map->heights)) {
+                for (const double v : row) {
+                    if (!std::isnan(v)) {
+                        tallest = std::max(tallest, static_cast<float>(v));
+                    }
+                }
+            }
         }
     });
     // What it covers: the maps, or around the camera on a large one.
@@ -1507,9 +1603,6 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                 const std::uint32_t columns = texture->width() / size;
                 const std::uint64_t tiles = std::uint64_t{columns} * (texture->height() / size);
                 const auto tile = static_cast<float>(static_cast<double>(size) / ppu);
-                const float height = std::isfinite(tilemap->height)
-                                         ? static_cast<float>(std::max(tilemap->height, 0.0))
-                                         : 0.0F;
                 const render::Color tint{255, 255, 255, tilemap->alpha()};
                 const auto x0 = static_cast<float>(transform->x);
                 const auto z0 = static_cast<float>(transform->y);
@@ -1535,6 +1628,7 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                         const float right = left + tile;
                         const float north = z0 + (static_cast<float>(y) * tile);
                         const float south = north + tile;
+                        const auto height = static_cast<float>(tilemap->height_at(x, y));
                         const float top = height + lift;
                         // The top face: the tile as seen from above, north edge at the top.
                         renderer.draw(
@@ -1546,29 +1640,40 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
                         if (height <= 0.0F) {
                             continue;
                         }
-                        // Side faces, only where no neighbouring block hides them.
+                        // Side faces, where no neighbouring block hides them: down to the
+                        // ground beside an empty cell, or to a lower neighbour's top.
                         const auto side = [&](render::Vec3 a, render::Vec3 b, float light_level,
-                                              render::Vec3 normal) {
+                                              render::Vec3 normal, float bottom) {
                             renderer.draw(*texture,
                                           {render::Vec3{a.x, top, a.z}, render::Vec3{b.x, top, b.z},
-                                           render::Vec3{b.x, lift, b.z},
-                                           render::Vec3{a.x, lift, a.z}},
+                                           render::Vec3{b.x, bottom, b.z},
+                                           render::Vec3{a.x, bottom, a.z}},
                                           source, lit(light_level, tint), surface(normal, 0.0F));
                             ++stats.drawn;
                         };
                         const auto gx = static_cast<std::int64_t>(x);
                         const auto gy = static_cast<std::int64_t>(y);
-                        if (!filled(gx, gy + 1)) {
-                            side({left, 0, south}, {right, 0, south}, south_light, {0, 0, 1});
+                        // The neighbour's top, or the ground where there is none.
+                        const auto below = [&](std::int64_t nx, std::int64_t ny) {
+                            if (!filled(nx, ny)) {
+                                return lift;
+                            }
+                            return static_cast<float>(
+                                       tilemap->height_at(static_cast<std::uint32_t>(nx),
+                                                          static_cast<std::uint32_t>(ny))) +
+                                   lift;
+                        };
+                        if (const float b = below(gx, gy + 1); b < top) {
+                            side({left, 0, south}, {right, 0, south}, south_light, {0, 0, 1}, b);
                         }
-                        if (!filled(gx, gy - 1)) {
-                            side({right, 0, north}, {left, 0, north}, north_light, {0, 0, -1});
+                        if (const float b = below(gx, gy - 1); b < top) {
+                            side({right, 0, north}, {left, 0, north}, north_light, {0, 0, -1}, b);
                         }
-                        if (!filled(gx - 1, gy)) {
-                            side({left, 0, north}, {left, 0, south}, west_light, {-1, 0, 0});
+                        if (const float b = below(gx - 1, gy); b < top) {
+                            side({left, 0, north}, {left, 0, south}, west_light, {-1, 0, 0}, b);
                         }
-                        if (!filled(gx + 1, gy)) {
-                            side({right, 0, south}, {right, 0, north}, east_light, {1, 0, 0});
+                        if (const float b = below(gx + 1, gy); b < top) {
+                            side({right, 0, south}, {right, 0, north}, east_light, {1, 0, 0}, b);
                         }
                     }
                 }

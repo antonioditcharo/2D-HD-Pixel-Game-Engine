@@ -187,6 +187,11 @@ public:
     /// it by its sides through cells of the same tile, as one undo step. Only inside the
     /// map as it is: returns false outside it.
     bool fill_tiles(engine::Guid tilemap, double x, double y, std::int32_t tile);
+    /// Raises (or with `by` below 0, lowers) the tile of `tilemap` under map point (x, y), as
+    /// tall as it stands now plus `by`, kept within 0 to 16: Diorama terrain built tile by
+    /// tile (its Tile heights). A stroke of raising on one map is one undo step, as painting
+    /// is. False outside the map's tiles.
+    bool raise_tile(engine::Guid tilemap, double x, double y, double by);
     /// Creates an entity with a Position at (x, y). Returns its GUID.
     engine::Guid create_entity(std::string_view name, double x, double y);
     /// Places an asset (its path in assets/, such as "chars/hero.png") at map point

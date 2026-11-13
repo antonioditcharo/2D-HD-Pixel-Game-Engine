@@ -118,6 +118,16 @@ nothing extra to write ([reflection.md](reflection.md)).
   What is behind shows through, blended (in 3D, farthest first: [rendering.md](rendering.md)
   §7). A sprite's `tint_a` does the same for a character, such as a ghost fading in.
 
+- **Tile heights** (`heights`, *Tile heights*, advanced): in the Diorama style each tile
+  can stand at its own height, for terrain built tile by tile, as Crocotile-style tools
+  build it: text like `tiles`, a number per cell from 0 to 16 (halves and quarters allowed;
+  `parse_heights()`, `format_heights()`), an empty cell standing at the map's `height`
+  (`Tilemap::height_at()`). A block's sides show down to the ground beside an empty cell,
+  and down to a lower neighbour's top beside a lower one, so steps and cliffs read as such.
+  Sprites' shadows lie on the tile's own top (`ground_top()`), and the sun's shadow map
+  reaches the tallest tile. The editor's **Raise** and **Lower** brushes paint them
+  ([editor.md](editor.md)).
+
 ### Solid tiles
 
 - With `solid` on, every tile of a map blocks movement. Walls go on their own map; hide it

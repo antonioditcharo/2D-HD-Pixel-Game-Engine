@@ -1623,3 +1623,70 @@ TEST_CASE("Diorama rays go through the image to the ground") {
     CHECK_FALSE(scene2d::ground_hit(scene2d::diorama_ray(camera, aspect, 0.0, 0.0), 100.0));
     CHECK_FALSE(scene2d::ground_hit(scene2d::Ray{render::Vec3{0, 1, 0}, render::Vec3{1, 0, 0}}));
 }
+
+TEST_CASE("Tile heights: read and written, each tile's own, the ground under sprites") {
+    const std::vector<std::vector<double>> h = scene2d::parse_heights("1,,2.5\n\n0.25,x,99\n\n");
+    REQUIRE(h.size() == 3);
+    CHECK(h[0][0] == 1.0);
+    CHECK(std::isnan(h[0][1]));
+    CHECK(h[0][2] == 2.5);
+    CHECK(h[1].size() == 1);    // an empty row
+    CHECK(std::isnan(h[2][1])); // not a number: empty
+    CHECK(h[2][2] == 16.0);     // kept within 16
+    CHECK(scene2d::format_heights(h) == "1,,2.5\n\n0.25,,16");
+    CHECK(scene2d::parse_heights(scene2d::format_heights(h)).size() == 3);
+
+    scene2d::Tilemap map;
+    map.tiles = "0,0,0\n0,0,0";
+    map.height = 1.0;
+    map.heights = "2,,0.5";
+    CHECK(map.height_at(0, 0) == 2.0);
+    CHECK(map.height_at(1, 0) == 1.0); // empty: the map's
+    CHECK(map.height_at(2, 0) == 0.5);
+    CHECK(map.height_at(0, 1) == 1.0); // past the text
+    map.heights = "4";
+    CHECK(map.height_at(0, 0) == 4.0); // read again when the text changes
+
+    // Sprites' shadows lie on the tile's own top.
+    const Fixture f;
+    const auto w = f.make_world();
+    const world::Entity hill = w->create("hill");
+    w->add<scene2d::Transform2D>(hill);
+    scene2d::Tilemap* tiles = w->add<scene2d::Tilemap>(hill);
+    tiles->tileset = f.red_image.to_string();
+    tiles->tiles = "0,0";
+    tiles->heights = "3,1";
+    // 2 pixels per tile with 2 x 2 images: a tile is one unit.
+    CHECK(scene2d::ground_top(*w, 0.5, 0.5, 2).value_or(-1.0F) == doctest::Approx(3.0));
+    CHECK(scene2d::ground_top(*w, 1.5, 0.5, 2).value_or(-1.0F) == doctest::Approx(1.0));
+}
+
+TEST_CASE("Diorama blocks of different heights show sides down to their lower neighbours") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const Fixture f;
+    const auto w = f.make_world();
+    const world::Entity hill = w->create("hill");
+    w->add<scene2d::Transform2D>(hill);
+    scene2d::Tilemap* map = w->add<scene2d::Tilemap>(hill);
+    map->tileset = f.red_image.to_string();
+    map->tiles = "0,0";
+    map->height = 1.0;
+    const auto target = device->create_render_target(17, 17);
+    const auto renderer = render::WorldRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(renderer != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    scene2d::DioramaCamera camera;
+    camera.ppu = 2;
+    const scene2d::DioramaLight light;
+    // Two blocks of one height: 2 tops and the 6 outer sides.
+    CHECK(scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light)
+              .drawn == 8);
+    // The second one taller: its side over the first shows too.
+    w->get<scene2d::Tilemap>(hill)->heights = "1,2";
+    CHECK(scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light)
+              .drawn == 9);
+}

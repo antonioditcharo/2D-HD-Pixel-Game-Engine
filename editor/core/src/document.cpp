@@ -820,6 +820,51 @@ bool Document::shape_sprites(const std::vector<SpriteShape>& to, bool turning) {
     return true;
 }
 
+bool Document::raise_tile(Guid tilemap, double x, double y, double by) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(tilemap);
+    auto* map = e.is_valid() ? d.world->get<scene2d::Tilemap>(e) : nullptr;
+    const auto* transform = e.is_valid() ? d.world->get<scene2d::Transform2D>(e) : nullptr;
+    if (map == nullptr || transform == nullptr || !std::isfinite(x) || !std::isfinite(y) ||
+        !std::isfinite(by)) {
+        return false;
+    }
+    std::string error;
+    const scene2d::TileGrid* parsed = map->grid(error);
+    if (parsed == nullptr) {
+        return false;
+    }
+    const double units = static_cast<double>(std::max<std::uint32_t>(d.settings.ppu, 1));
+    const double tile_size =
+        (map->tile_size == 0 ? units : static_cast<double>(map->tile_size)) / units;
+    const double column = std::floor((x - transform->x) / tile_size);
+    const double row = std::floor((y - transform->y) / tile_size);
+    if (column < 0.0 || row < 0.0 || column >= static_cast<double>(parsed->width) ||
+        row >= static_cast<double>(parsed->height)) {
+        return false;
+    }
+    const auto cx = static_cast<std::uint32_t>(column);
+    const auto cy = static_cast<std::uint32_t>(row);
+    const double now = map->height_at(cx, cy);
+    const double next = std::clamp(now + by, 0.0, 16.0);
+    if (next == now) {
+        return true; // already as high (or low) as it goes
+    }
+    std::vector<std::vector<double>> heights = scene2d::parse_heights(map->heights);
+    if (heights.size() <= cy) {
+        heights.resize(cy + 1);
+    }
+    if (heights[cy].size() <= cx) {
+        heights[cy].resize(cx + 1, std::numeric_limits<double>::quiet_NaN());
+    }
+    heights[cy][cx] = next;
+    serialize::Json before = d.snapshot();
+    map->heights = scene2d::format_heights(heights);
+    d.record((by > 0 ? "Raise " : "Lower ") + d.name_of(tilemap), std::move(before), tilemap,
+             "tilemap/height");
+    return true;
+}
+
 bool Document::paint_tile(Guid tilemap, double x, double y, std::int32_t tile) {
     Impl& d = *impl_;
     const world::Entity e = d.find(tilemap);

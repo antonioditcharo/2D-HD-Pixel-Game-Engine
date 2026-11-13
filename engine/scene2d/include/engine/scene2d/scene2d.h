@@ -190,6 +190,10 @@ struct Tilemap {
     /// In the Diorama style, how tall each tile stands, in tiles: 0 is flat ground; above,
     /// every tile is a block with the tile's picture on its top and sides.
     double height = 0.0;
+    /// Each tile's own height, for terrain built tile by tile: text like `tiles`, a number
+    /// per cell (0 to 16, halves and quarters allowed); an empty cell, or a cell past the
+    /// text, stands at `height`.
+    std::string heights;
     /// How solid the tiles look, 0 (invisible) to 1: below 1 they are see-through, for
     /// water over a riverbed or glass blocks; what is behind shows through, blended.
     double opacity = 1.0;
@@ -212,6 +216,9 @@ struct Tilemap {
     /// The parsed tiles, kept until `tiles` changes. Null, with `error` set, if the text
     /// is not valid.
     [[nodiscard]] const TileGrid* grid(std::string& error) const;
+    /// How tall the tile in column `x`, row `y` stands: its own height, else `height`;
+    /// kept within 0 to 16.
+    [[nodiscard]] double height_at(std::uint32_t x, std::uint32_t y) const;
 
 private:
     // A cache only: not reflected, so never saved.
@@ -219,7 +226,17 @@ private:
     mutable std::optional<TileGrid> parsed_;
     mutable std::string parse_error_;
     mutable bool parsed_once_ = false;
+    mutable std::string heights_text_;
+    mutable std::vector<std::vector<double>> heights_; ///< By row; NaN for the map's height.
+    mutable bool heights_once_ = false;
 };
+
+/// Reads a heights grid: rows by line, cells by comma, each a number from 0 to 16 or empty.
+/// Cells that are not numbers count as empty.
+[[nodiscard]] std::vector<std::vector<double>> parse_heights(std::string_view text);
+/// The text of a heights grid, as parse_heights() reads it: empty cells stay empty, and
+/// whole numbers have no decimals.
+[[nodiscard]] std::string format_heights(const std::vector<std::vector<double>>& heights);
 
 /// "Light": a point light for the Diorama style, such as a torch, a lamp or a glowing
 /// window. It lights the ground, walls and characters around it, fading smoothly to
