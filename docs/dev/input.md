@@ -25,7 +25,9 @@ and the same game works with keyboard and gamepad without any extra logic.
 | `menu` | Escape | Start |
 
 Keys are named by position on a US layout, so WASD stays under the same fingers on other
-layouts. Gamepad buttons are named by position (South, East, ...), not by label.
+layouts. `binding_name()` names a control as players read it (*Z*, *Enter*, *Up*, *Pad A*),
+and `InputState::pressed_bindings()` lists the controls that went down this step, for
+"press a key" while the player rebinds one on the game's Options page ([menus.md](menus.md)). Gamepad buttons are named by position (South, East, ...), not by label.
 
 ## 2. State per step
 

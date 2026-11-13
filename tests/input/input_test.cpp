@@ -158,3 +158,20 @@ TEST_CASE("No-code logic can ask about actions") {
     CHECK(reflect::call(object, *was_pressed, cancel).value ==
           std::optional<reflect::Value>(false));
 }
+
+TEST_CASE("Controls that went down this step are listed in order, and named for players") {
+    input::InputState state(input::InputMap::rpg_preset());
+    state.begin_step();
+    state.set(input::Binding::key(input::Key::C), true);
+    state.set(input::Binding::key(input::Key::Enter), true);
+    state.set(input::Binding::key(input::Key::C), true); // a repeat is not new
+    REQUIRE(state.pressed_bindings().size() == 2);
+    CHECK(state.pressed_bindings()[0] == input::Binding::key(input::Key::C));
+    state.begin_step();
+    CHECK(state.pressed_bindings().empty()); // still held, not new
+    CHECK(input::binding_name(input::Binding::key(input::Key::C)) == "C");
+    CHECK(input::binding_name(input::Binding::key(input::Key::Num7)) == "7");
+    CHECK(input::binding_name(input::Binding::key(input::Key::F10)) == "F10");
+    CHECK(input::binding_name(input::Binding::key(input::Key::Escape)) == "Esc");
+    CHECK(input::binding_name(input::Binding::button(input::Button::South)) == "Pad A");
+}

@@ -168,15 +168,24 @@ public:
     [[nodiscard]] const InputMap& map() const noexcept { return map_; }
     /// Replaces the bindings (for rebinding). Controls held now stay held.
     void set_map(InputMap map);
+    /// Controls that went down during this step, in order: for "press a key" while
+    /// rebinding.
+    [[nodiscard]] const std::vector<Binding>& pressed_bindings() const noexcept {
+        return newly_down_;
+    }
 
 private:
     [[nodiscard]] bool held_by_controls(std::string_view action) const;
 
     InputMap map_;
     std::set<Binding> down_;
+    std::vector<Binding> newly_down_;
     std::set<std::string, std::less<>> pressed_;
     std::set<std::string, std::less<>> released_;
 };
+
+/// A control's name, as players read it: "Z", "Enter", "Up", "Pad A", "Pad Start".
+[[nodiscard]] std::string binding_name(Binding binding);
 
 /// Input recorded per fixed step, for deterministic replays and tests.
 class Recording {

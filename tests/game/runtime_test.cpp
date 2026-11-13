@@ -2837,11 +2837,11 @@ TEST_CASE("The title screen starts the game; the pause menu saves, loads and sho
     };
     press(5, input::Key::Z);
     press(10, input::Key::Escape);
-    for (std::uint64_t s = 0; s < 4; ++s) {
+    for (std::uint64_t s = 0; s < 5; ++s) {
         press(14 + (s * 3), input::Key::Down);
     }
-    press(30, input::Key::Z); // Save page
-    press(34, input::Key::Z); // slot 1
+    press(32, input::Key::Z); // Save page
+    press(36, input::Key::Z); // slot 1
     const auto runtime = project.open(no_graphics(&replay));
     runtime->step();
     CHECK(runtime->menu().page() == game::GameMenu::Page::Title);
@@ -2851,7 +2851,7 @@ TEST_CASE("The title screen starts the game; the pause menu saves, loads and sho
     }
     CHECK_FALSE(runtime->menu().open());
     CHECK(std::count(runtime->log().begin(), runtime->log().end(), "started") == 1);
-    for (int i = 0; i < 30; ++i) {
+    for (int i = 0; i < 32; ++i) {
         runtime->step();
     }
     CHECK(runtime->menu().page() == game::GameMenu::Page::Save);
@@ -2879,6 +2879,14 @@ TEST_CASE("The title screen and the pause menu are drawn over the game") {
     replay.record(10, key(input::Key::Down), false);
     replay.record(12, key(input::Key::Z), true);
     replay.record(13, key(input::Key::Z), false);
+    replay.record(16, key(input::Key::X), true); // back to the pause menu
+    replay.record(17, key(input::Key::X), false);
+    for (std::uint64_t s = 0; s < 3; ++s) { // to Options
+        replay.record(19 + (s * 3), key(input::Key::Down), true);
+        replay.record(20 + (s * 3), key(input::Key::Down), false);
+    }
+    replay.record(28, key(input::Key::Z), true);
+    replay.record(29, key(input::Key::Z), false);
     game::RuntimeOptions options;
     options.headless = true;
     options.replay = &replay;
@@ -2905,6 +2913,11 @@ TEST_CASE("The title screen and the pause menu are drawn over the game") {
     }
     CHECK(runtime->menu().page() == game::GameMenu::Page::Items);
     shot("sparxel-pause.png");
+    for (int i = 0; i < 16; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->menu().page() == game::GameMenu::Page::Options);
+    shot("sparxel-options.png");
 }
 
 TEST_CASE("Messages are typed out at the text speed, waiting at pauses; Interact finishes them") {
@@ -2949,4 +2962,118 @@ TEST_CASE("Messages are typed out at the text speed, waiting at pauses; Interact
     // Interact showed the rest rather than closing it; the second press closed it.
     CHECK_FALSE(runtime->dialogue().is_open());
     CHECK(runtime->dialogue().said().front() == "Hello[pause=1] [wave]you[/wave]");
+}
+
+TEST_CASE("The Options page sets volumes and text speed, rebinds keys, and keeps them") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["pause_menu"] = true;
+        write_json(project.folder.path / game::project_file, settings);
+    }
+    input::Recording replay;
+    std::uint64_t at = 2;
+    const auto press = [&replay, &at](input::Key k) {
+        replay.record(at, key(k), true);
+        replay.record(at + 1, key(k), false);
+        at += 3;
+    };
+    press(input::Key::Escape); // the pause menu
+    for (int i = 0; i < 4; ++i) {
+        press(input::Key::Down); // to Options
+    }
+    press(input::Key::Z);
+    press(input::Key::Left); // Music 90%
+    press(input::Key::Down);
+    press(input::Key::Down);
+    press(input::Key::Right); // Text speed: Instant
+    for (int i = 0; i < 5; ++i) {
+        press(input::Key::Down); // to Interact
+    }
+    press(input::Key::Z);
+    press(input::Key::C); // Interact is now C
+    const std::uint64_t steps = at + 2;
+    const auto runtime = project.open(no_graphics(&replay));
+    for (std::uint64_t i = 0; i < steps; ++i) {
+        runtime->step();
+    }
+    REQUIRE(runtime->menu().page() == game::GameMenu::Page::Options);
+    const game::GameMenu::Options& options = runtime->menu().options();
+    CHECK(options.music == doctest::Approx(0.9));
+    CHECK(options.sounds == doctest::Approx(1.0));
+    CHECK(options.text_speed == doctest::Approx(0.0));
+    REQUIRE(options.keys.size() == 7);
+    CHECK(options.keys[4].first == "interact");
+    CHECK(options.keys[4].second == "C");
+    CHECK_FALSE(runtime->menu().waiting_for_key());
+    REQUIRE(runtime->audio() != nullptr);
+    CHECK(runtime->audio()->player_volume(audio::Bus::Music) == doctest::Approx(0.9));
+    CHECK(fs::exists(runtime->save_folder() / game::Runtime::options_file));
+
+    // A new run reads them back, and C interacts: it picks Resume.
+    input::Recording again;
+    again.record(2, key(input::Key::Escape), true);
+    again.record(3, key(input::Key::Escape), false);
+    again.record(5, key(input::Key::C), true);
+    again.record(6, key(input::Key::C), false);
+    const auto second = project.open(no_graphics(&again));
+    CHECK(second->menu().options().music == doctest::Approx(0.9));
+    CHECK(second->menu().options().keys[4].second == "C");
+    for (int i = 0; i < 4; ++i) {
+        second->step();
+    }
+    CHECK(second->menu().open());
+    for (int i = 0; i < 4; ++i) {
+        second->step();
+    }
+    CHECK_FALSE(second->menu().open());
+}
+
+TEST_CASE("Rebinding a key another action has takes it; an action left with none swaps") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["pause_menu"] = true;
+        write_json(project.folder.path / game::project_file, settings);
+    }
+    input::Recording replay;
+    std::uint64_t at = 2;
+    const auto press = [&replay, &at](input::Key k) {
+        replay.record(at, key(k), true);
+        replay.record(at + 1, key(k), false);
+        at += 3;
+    };
+    press(input::Key::Escape);
+    for (int i = 0; i < 4; ++i) {
+        press(input::Key::Down);
+    }
+    press(input::Key::Z); // Options
+    for (int i = 0; i < 7; ++i) {
+        press(input::Key::Down); // to Interact
+    }
+    press(input::Key::Z);
+    press(input::Key::C);    // Interact: C alone
+    press(input::Key::Down); // to Cancel
+    press(input::Key::C);    // C now interacts
+    press(input::Key::C);    // Cancel: C, so Interact takes X and Backspace
+    const std::uint64_t steps = at + 2;
+    const auto runtime = project.open(no_graphics(&replay));
+    for (std::uint64_t i = 0; i < steps; ++i) {
+        runtime->step();
+    }
+    const game::GameMenu::Options& options = runtime->menu().options();
+    REQUIRE(options.keys.size() == 7);
+    CHECK(options.keys[5].first == "cancel");
+    CHECK(options.keys[5].second == "C");
+    const bool swapped = options.keys[4].second.find('X') != std::string::npos &&
+                         options.keys[4].second.find("Backspace") != std::string::npos;
+    CHECK(swapped);
 }

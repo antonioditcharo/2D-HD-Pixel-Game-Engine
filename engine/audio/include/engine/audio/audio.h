@@ -69,6 +69,10 @@ public:
     /// Volumes from 0 (silent) to 1 (full); values outside are clamped.
     void set_volume(Bus bus, double volume);
     [[nodiscard]] double volume(Bus bus) const noexcept;
+    /// The player's own volume for a bus (from the game's Options), 0 to 1: it scales the
+    /// game's, so logic changing the music volume does not undo the player's choice.
+    void set_player_volume(Bus bus, double volume);
+    [[nodiscard]] double player_volume(Bus bus) const noexcept;
     void set_master_volume(double volume);
     [[nodiscard]] double master_volume() const noexcept;
 

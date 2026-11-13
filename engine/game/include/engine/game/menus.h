@@ -11,6 +11,7 @@
 #include "engine/game/inventory.h"
 #include "engine/game/quests.h"
 #include "engine/game/save.h"
+#include "engine/input/input.h"
 #include "engine/render/render.h"
 #include "engine/ui/text.h"
 
@@ -25,12 +26,34 @@ inline constexpr std::int64_t menu_slots = 3;
 
 class GameMenu {
 public:
-    enum class Page : std::uint8_t { None, Title, Pause, Items, Quests, Party, Save, Load };
+    enum class Page : std::uint8_t {
+        None,
+        Title,
+        Pause,
+        Items,
+        Quests,
+        Party,
+        Options,
+        Save,
+        Load
+    };
+    /// What the player chose on the Options page.
+    struct Options {
+        double music = 1.0;  ///< 0 to 1.
+        double sounds = 1.0; ///< 0 to 1.
+        /// Letters a second messages are typed at; -1 keeps the game's own, 0 shows them
+        /// whole.
+        double text_speed = -1.0;
+        /// Each action the player can rebind, with the names of its keys now.
+        std::vector<std::pair<std::string, std::string>> keys;
+    };
     /// What a choice asks the game to do.
     struct Result {
-        enum class Kind : std::uint8_t { None, NewGame, Load, Save, Quit, Resume };
+        enum class Kind : std::uint8_t { None, NewGame, Load, Save, Quit, Resume, Options, Rebind };
         Kind kind = Kind::None;
         std::int64_t slot = 0;
+        std::string action;       ///< Rebind: the action...
+        input::Binding binding{}; ///< ...and its new key.
     };
 
     void open_title();
@@ -46,6 +69,12 @@ public:
     Result press(std::string_view action, const SaveObject& saves);
     /// A line to show for a moment, such as "Saved in slot 2."
     void say(std::string line) { note_ = std::move(line); }
+    [[nodiscard]] Options& options() noexcept { return options_; }
+    [[nodiscard]] const Options& options() const noexcept { return options_; }
+    /// Whether the Options page waits for a key to bind.
+    [[nodiscard]] bool waiting_for_key() const noexcept { return !waiting_.empty(); }
+    /// The key pressed while waiting: the action waited for gets it.
+    Result capture(input::Binding binding);
 
     /// Draws the page over `surface`. `title` is the game's name.
     void draw(render::SpriteRenderer& sprites, render::RenderTarget& surface,
@@ -58,6 +87,8 @@ private:
     bool from_title_ = false; ///< Loading from the title screen, not the pause menu.
     std::size_t cursor_ = 0;
     std::string note_;
+    Options options_;
+    std::string waiting_; ///< The action waiting for a key.
 };
 
 } // namespace engine::game

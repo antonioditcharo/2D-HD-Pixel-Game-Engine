@@ -1,7 +1,8 @@
 # Menus
 
 > **Status: v0.1.** A ready-made title screen and pause menu, as RPG Maker games come
-> with them, turned on in the Project view. Tested driven by the keys, and drawn.
+> with them, turned on in the Project view, with an Options page for the player's volumes,
+> text speed and keys. Tested driven by the keys, and drawn.
 >
 > Code: [`engine/game/include/engine/game/menus.h`](../../engine/game/include/engine/game/menus.h)
 > and [`src/menus.cpp`](../../engine/game/src/menus.cpp); the runtime opens them.
@@ -25,13 +26,26 @@ saved; an empty one says so); choosing one loads it; Cancel goes back to the tit
 **The pause menu** opens on the Menu key (Escape, or Start on a gamepad) while nothing else
 is open (not during a message or a battle): **Resume**, **Items** (what the inventory holds),
 **Quests** (the journal: [game.md](game.md)), **Party** (members and HP, and the experience
-won: [battle.md](battle.md)), **Save** and **Load** (slots 1 to 3; saving says *Saved in slot
+won: [battle.md](battle.md)), **Options** (below), **Save** and **Load** (slots 1 to 3; saving says *Saved in slot
 2.*) and **Quit**. Up and Down choose, Interact picks, Cancel (or Menu) goes back, and from
 the menu itself resumes. While a menu is open, nobody moves and Rules hear no keys.
+
+**Options** are the player's, not the creator's:
+
+| Line | What it does |
+|---|---|
+| **Music**, **Sounds** | Left and Right change it by 10%, from 0% to 100%. It scales the game's own volume for that bus, so Rules changing the music volume keep the player's choice |
+| **Text speed** | Left and Right go through *The game's own* (the project's `text_speed`), *Instant*, *Slow* (20 letters a second), *Normal* (40) and *Fast* (80) |
+| **Move up** … **Menu** | Each action's keys. Interact on one waits for a key (*press a key...*); the first key pressed becomes that action's only key (gamepad buttons stay as they were). An action that had that key loses it, and one left with no key takes the old keys of the action changed: the two swap |
+
+They are kept at once in `options.json` beside the save slots (volumes, text speed and
+each action's key codes), and read back when the game starts; a broken or missing file
+keeps the defaults.
 
 ## 3. Next increments
 
 1. **The UI designer** (`plan/02` K1): these screens as templates to restyle and rearrange,
    with a title picture, music and more slots.
-2. **Options**: volume, text speed and key bindings for the player (U2).
+2. **More options**: window size and full screen, gamepad buttons, and a reset to the
+   defaults (U2).
 3. **Equipment and skills pages** in the pause menu, with the RPG kit's growth.

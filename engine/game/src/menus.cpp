@@ -9,8 +9,34 @@ namespace engine::game {
 namespace {
 
 constexpr std::array<const char*, 3> title_choices{"New game", "Continue", "Quit"};
-constexpr std::array<const char*, 7> pause_choices{"Resume", "Items", "Quests", "Party",
-                                                   "Save",   "Load",  "Quit"};
+constexpr std::array<const char*, 8> pause_choices{"Resume",  "Items", "Quests", "Party",
+                                                   "Options", "Save",  "Load",   "Quit"};
+
+/// Text speeds the Options page cycles through (-1: the game's own).
+constexpr std::array<double, 5> text_speeds{-1.0, 0.0, 20.0, 40.0, 80.0};
+
+std::string percent(double v) {
+    return std::to_string(static_cast<int>(std::lround(std::clamp(v, 0.0, 1.0) * 100.0))) + "%";
+}
+
+/// "move_up" as players read it: "Move up".
+std::string action_label(std::string label) {
+    std::ranges::replace(label, '_', ' ');
+    if (!label.empty() && label[0] >= 'a' && label[0] <= 'z') {
+        label[0] = static_cast<char>(label[0] - 'a' + 'A');
+    }
+    return label;
+}
+
+std::string speed_name(double speed) {
+    if (speed < 0.0) {
+        return "The game's own";
+    }
+    if (speed == 0.0) {
+        return "Instant";
+    }
+    return speed <= 20.0 ? "Slow" : speed <= 40.0 ? "Normal" : "Fast";
+}
 
 } // namespace
 
@@ -37,6 +63,15 @@ std::vector<std::string> GameMenu::choices(const SaveObject& saves) const {
     case Page::Pause:
         out.assign(pause_choices.begin(), pause_choices.end());
         break;
+    case Page::Options:
+        out.push_back("Music  " + percent(options_.music));
+        out.push_back("Sounds  " + percent(options_.sounds));
+        out.push_back("Text speed  " + speed_name(options_.text_speed));
+        for (const auto& [action, keys] : options_.keys) {
+            out.push_back(action_label(action) + "  " +
+                          (waiting_ == action ? std::string("press a key...") : keys));
+        }
+        break;
     case Page::Save:
     case Page::Load:
         for (std::int64_t slot = 1; slot <= menu_slots; ++slot) {
@@ -50,8 +85,42 @@ std::vector<std::string> GameMenu::choices(const SaveObject& saves) const {
     return out;
 }
 
+GameMenu::Result GameMenu::capture(input::Binding binding) {
+    if (waiting_.empty()) {
+        return {};
+    }
+    Result result{Result::Kind::Rebind, 0, waiting_, binding};
+    waiting_.clear();
+    return result;
+}
+
 GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& saves) {
     note_.clear();
+    if (!waiting_.empty()) {
+        return {}; // the key pressed is taken by capture()
+    }
+    // Options: Left and Right change the value the cursor is on.
+    if (page_ == Page::Options && (action == "move_left" || action == "move_right") &&
+        cursor_ < 3) {
+        const double step = action == "move_right" ? 0.1 : -0.1;
+        if (cursor_ == 0) {
+            options_.music =
+                std::clamp(std::round((options_.music + step) * 10.0) / 10.0, 0.0, 1.0);
+        } else if (cursor_ == 1) {
+            options_.sounds =
+                std::clamp(std::round((options_.sounds + step) * 10.0) / 10.0, 0.0, 1.0);
+        } else {
+            std::size_t at = 0;
+            for (std::size_t i = 0; i < text_speeds.size(); ++i) {
+                if (text_speeds.at(i) == options_.text_speed) {
+                    at = i;
+                }
+            }
+            at = (at + (action == "move_right" ? 1 : text_speeds.size() - 1)) % text_speeds.size();
+            options_.text_speed = text_speeds.at(at);
+        }
+        return {Result::Kind::Options, 0};
+    }
     const std::size_t count = choices(saves).size();
     if (action == "move_up" && count > 0) {
         cursor_ = (cursor_ + count - 1) % count;
@@ -69,13 +138,14 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
         case Page::Items:
         case Page::Quests:
         case Page::Party:
+        case Page::Options:
         case Page::Save:
             cursor_ = static_cast<std::size_t>(page_) - static_cast<std::size_t>(Page::Pause);
             page_ = Page::Pause;
             return {};
         case Page::Load:
             // From the title, back to it; from the pause menu, back to that.
-            cursor_ = from_title_ ? 1 : 5;
+            cursor_ = from_title_ ? 1 : 6;
             page_ = from_title_ ? Page::Title : Page::Pause;
             return {};
         default:
@@ -112,16 +182,26 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
             page_ = Page::Party;
             return {};
         case 4:
-            page_ = Page::Save;
+            page_ = Page::Options;
             cursor_ = 0;
             return {};
         case 5:
+            page_ = Page::Save;
+            cursor_ = 0;
+            return {};
+        case 6:
             page_ = Page::Load;
             cursor_ = 0;
             return {};
         default:
             return {Result::Kind::Quit, 0};
         }
+    case Page::Options:
+        // On a key: wait for the next key pressed, to bind to it.
+        if (cursor_ >= 3 && cursor_ - 3 < options_.keys.size()) {
+            waiting_ = options_.keys[cursor_ - 3].first;
+        }
+        return {};
     case Page::Save:
         return {Result::Kind::Save, static_cast<std::int64_t>(cursor_) + 1};
     case Page::Load: {
@@ -242,7 +322,12 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
         default:
             break;
         }
-        if (page_ == Page::Save || page_ == Page::Load) {
+        if (page_ == Page::Options) {
+            const float bh = list(items, x, pad, bw);
+            write(waiting_.empty() ? "Left/Right: change. Interact: new key."
+                                   : "Press the new key.",
+                  x + pad, pad + bh + 2, dim);
+        } else if (page_ == Page::Save || page_ == Page::Load) {
             const float bh = list(items, x, pad, bw);
             write(page_ == Page::Save ? "Save in which slot?" : "Load which slot?", x + pad,
                   pad + bh + 2, dim);

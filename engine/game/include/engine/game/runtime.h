@@ -222,6 +222,8 @@ public:
     [[nodiscard]] double fade() const noexcept;
     /// Where save slots go (see RuntimeOptions::save_folder).
     [[nodiscard]] std::filesystem::path save_folder() const;
+    /// The player's options (volumes, text speed, keys) file, in the save folder.
+    static constexpr const char* options_file = "options.json";
     /// Problems with what logic asked for (saving, loading, playing sounds), oldest first.
     [[nodiscard]] const std::vector<std::string>& problems() const noexcept;
     /// What logic said with the dialogue object, and whether a message is showing.
@@ -244,6 +246,10 @@ public:
 
 private:
     explicit Runtime(std::unique_ptr<Impl> impl);
+    /// The player's options: read at start, kept after each change, put into effect.
+    void load_options();
+    void save_options();
+    void apply_options();
     std::unique_ptr<Impl> impl_;
 };
 

@@ -535,6 +535,115 @@ void register_types(reflect::Registry& registry) {
 // Runtime
 // ---------------------------------------------------------------------------------------
 
+/// The actions the player may rebind on the Options page.
+constexpr std::array<std::string_view, 7> rebindable{
+    "move_up", "move_down", "move_left", "move_right", "interact", "cancel", "menu"};
+
+std::vector<input::Binding> keyboard_bindings(const input::InputMap& map, std::string_view action) {
+    std::vector<input::Binding> out;
+    for (const input::Binding binding : map.bindings(action)) {
+        if (binding.device == input::Binding::Device::Keyboard) {
+            out.push_back(binding);
+        }
+    }
+    return out;
+}
+
+/// The Options page's list of keys, from the bindings now.
+void refresh_option_keys(GameMenu::Options& options, const input::InputMap& map) {
+    options.keys.clear();
+    for (const std::string_view action : rebindable) {
+        std::string names;
+        for (const input::Binding binding : keyboard_bindings(map, action)) {
+            names += (names.empty() ? "" : ", ") + input::binding_name(binding);
+        }
+        options.keys.emplace_back(std::string(action), names.empty() ? "none" : names);
+    }
+}
+
+/// `action`'s keys become `key` alone. Another action that had `key` loses it, and if it
+/// is left with no key it takes `action`'s old ones: the two swap.
+input::InputMap rebind(input::InputMap map, std::string_view action, input::Binding key) {
+    const std::vector<input::Binding> old = keyboard_bindings(map, action);
+    for (const input::Binding binding : old) {
+        map.unbind(action, binding);
+    }
+    for (const std::string_view other : rebindable) {
+        if (other == action || !map.unbind(other, key)) {
+            continue;
+        }
+        if (keyboard_bindings(map, other).empty()) {
+            for (const input::Binding binding : old) {
+                if (binding != key) {
+                    map.bind(other, binding);
+                }
+            }
+        }
+    }
+    map.bind(action, key);
+    return map;
+}
+
+serialize::Json options_to_json(const GameMenu::Options& options, const input::InputMap& map) {
+    serialize::Json json = serialize::Json::object();
+    json["music"] = options.music;
+    json["sounds"] = options.sounds;
+    json["text_speed"] = options.text_speed;
+    serialize::Json keys = serialize::Json::object();
+    for (const std::string_view action : rebindable) {
+        serialize::Json codes = serialize::Json::array();
+        for (const input::Binding binding : keyboard_bindings(map, action)) {
+            codes.push_back(binding.code);
+        }
+        keys[std::string(action)] = std::move(codes);
+    }
+    json["keys"] = std::move(keys);
+    return json;
+}
+
+/// Reads the player's options; anything missing or wrong keeps what it was.
+void options_from_json(const serialize::Json& json, GameMenu::Options& options,
+                       input::InputMap& map) {
+    if (!json.is_object()) {
+        return;
+    }
+    const auto number = [&json](const char* key, double& out, double min, double max) {
+        if (const auto found = json.find(key); found != json.end() && found->is_number()) {
+            out = std::clamp(found->get<double>(), min, max);
+        }
+    };
+    number("music", options.music, 0.0, 1.0);
+    number("sounds", options.sounds, 0.0, 1.0);
+    number("text_speed", options.text_speed, -1.0, 1000.0);
+    const auto keys = json.find("keys");
+    if (keys == json.end() || !keys->is_object()) {
+        return;
+    }
+    for (const std::string_view action : rebindable) {
+        const auto codes = keys->find(std::string(action));
+        if (codes == keys->end() || !codes->is_array() || codes->empty()) {
+            continue;
+        }
+        std::vector<input::Binding> chosen;
+        for (const serialize::Json& code : *codes) {
+            if (code.is_number_unsigned() && code.get<std::uint64_t>() <= 0xFFFFU) {
+                chosen.push_back(
+                    input::Binding{input::Binding::Device::Keyboard,
+                                   static_cast<std::uint16_t>(code.get<std::uint64_t>())});
+            }
+        }
+        if (chosen.empty()) {
+            continue;
+        }
+        for (const input::Binding binding : keyboard_bindings(map, action)) {
+            map.unbind(action, binding);
+        }
+        for (const input::Binding binding : chosen) {
+            map.bind(action, binding);
+        }
+    }
+}
+
 struct Runtime::Impl {
     explicit Impl(ProjectSettings project, const fs::path& root)
         : settings(std::move(project)), assets(root / "assets"),
@@ -852,13 +961,16 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         }
     }
 
+    // The player's options, kept beside the saves.
+    std::unique_ptr<Runtime> runtime(new Runtime(std::move(impl)));
+    runtime->load_options();
     // With a title screen, the game starts when New game is chosen.
     if (r.settings.title_screen) {
         r.menu.open_title();
     } else {
         r.vm->emit("", "game_start");
     }
-    return std::unique_ptr<Runtime>(new Runtime(std::move(impl)));
+    return runtime;
 }
 
 void Runtime::step() {
@@ -885,7 +997,9 @@ void Runtime::step() {
         const double step_seconds = r.clock.step_seconds();
         r.message_seconds += step_seconds;
         const auto size = static_cast<double>(r.rich.plain.size());
-        if (!(r.settings.text_speed > 0.0)) {
+        const double text_speed = r.menu.options().text_speed >= 0.0 ? r.menu.options().text_speed
+                                                                     : r.settings.text_speed;
+        if (!(text_speed > 0.0)) {
             r.typed = size;
         } else if (r.typed < size) {
             if (r.typing_wait > 0.0) {
@@ -893,7 +1007,7 @@ void Runtime::step() {
             } else {
                 const auto at = static_cast<std::size_t>(r.typed);
                 const float speed = at < r.rich.styles.size() ? r.rich.styles[at].speed : 1.0F;
-                double next = r.typed + (r.settings.text_speed * speed * step_seconds);
+                double next = r.typed + (text_speed * speed * step_seconds);
                 // A pause reached: typing stops there and waits.
                 if (r.pauses_done < r.rich.pauses.size() &&
                     static_cast<double>(r.rich.pauses[r.pauses_done].first) <= next) {
@@ -954,9 +1068,26 @@ void Runtime::step() {
         emit(*r.vm, *r.world, event.trigger, event.entered ? "entered" : "exited", payload);
     }
 
+    // The Options page waiting for a key: the first key pressed is bound, and this step's
+    // presses go no further.
+    bool rebound = false;
+    if (r.menu.waiting_for_key()) {
+        for (const input::Binding binding : r.state.pressed_bindings()) {
+            if (binding.device == input::Binding::Device::Keyboard) {
+                const GameMenu::Result result = r.menu.capture(binding);
+                r.state.set_map(rebind(r.state.map(), result.action, result.binding));
+                refresh_option_keys(r.menu.options(), r.state.map());
+                save_options();
+                rebound = true;
+                break;
+            }
+        }
+    }
+
     // 3. Events: each pressed action runs the Rules listening for it. Interact also
     //    reaches what each mover faces, in mover GUID order.
-    for (const std::string& action : r.state.pressed_actions()) {
+    for (const std::string& action :
+         rebound ? std::vector<std::string>{} : r.state.pressed_actions()) {
         // The title screen or the pause menu takes every press while open.
         if (r.menu.open()) {
             const GameMenu::Result result = r.menu.press(action, r.save_object);
@@ -982,6 +1113,10 @@ void Runtime::step() {
             case GameMenu::Result::Kind::Quit:
                 r.keep_running = false;
                 break;
+            case GameMenu::Result::Kind::Options:
+                apply_options();
+                save_options();
+                break;
             default:
                 break;
             }
@@ -989,6 +1124,7 @@ void Runtime::step() {
         }
         // The pause menu opens on the Menu key, when the project has it.
         if (action == "menu" && r.settings.pause_menu && !talking && !r.battle_screen) {
+            refresh_option_keys(r.menu.options(), r.state.map());
             r.menu.open_pause();
             continue;
         }
@@ -1006,7 +1142,7 @@ void Runtime::step() {
                                            : (r.choice + 1) % choices.size();
             continue;
         }
-        if (talking && action == "interact" && r.settings.text_speed > 0.0) {
+        if (talking && action == "interact" && r.typed < static_cast<double>(r.rich.plain.size())) {
             // Still typing: the page shows whole first.
             const MessageLayout box = message_layout(r.settings.width, r.settings.height);
             const std::vector<std::string> lines =
@@ -1782,6 +1918,46 @@ bool Runtime::load_from_slot(std::int64_t slot, std::vector<serialize::Issue>& i
 
 std::filesystem::path Runtime::save_folder() const {
     return impl_->save_object.folder();
+}
+
+void Runtime::load_options() {
+    Impl& r = *impl_;
+    const fs::path folder = r.save_object.folder();
+    if (!folder.empty()) {
+        std::ifstream in(folder / options_file, std::ios::binary);
+        if (in) {
+            const std::string text((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            std::vector<serialize::Issue> ignored; // a broken file keeps the defaults
+            if (const std::optional<serialize::Json> json = serialize::parse(text, ignored)) {
+                input::InputMap map = r.state.map();
+                options_from_json(*json, r.menu.options(), map);
+                r.state.set_map(std::move(map));
+            }
+        }
+    }
+    refresh_option_keys(r.menu.options(), r.state.map());
+    apply_options();
+}
+
+void Runtime::save_options() {
+    Impl& r = *impl_;
+    const fs::path folder = r.save_object.folder();
+    std::string error;
+    if (folder.empty() ||
+        !write_file_atomically(folder / options_file,
+                               serialize::to_text(options_to_json(r.menu.options(), r.state.map())),
+                               error)) {
+        r.menu.say("Options not kept: " + (error.empty() ? std::string("no save folder") : error));
+    }
+}
+
+void Runtime::apply_options() {
+    Impl& r = *impl_;
+    if (r.audio_engine != nullptr) {
+        r.audio_engine->set_player_volume(audio::Bus::Music, r.menu.options().music);
+        r.audio_engine->set_player_volume(audio::Bus::Sounds, r.menu.options().sounds);
+    }
 }
 
 bool Runtime::change_scene(std::string_view scene, std::string_view where,
