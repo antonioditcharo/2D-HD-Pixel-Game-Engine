@@ -700,7 +700,7 @@ QWidget* SpriteStudio::build_layers() {
     layers_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
     column->addWidget(layers_);
     // The list shows the top layer first, as it is drawn.
-    const auto layer_of = [this](const QTreeWidgetItem* item) {
+    const auto layer_of = [](const QTreeWidgetItem* item) {
         return static_cast<std::size_t>(item->data(0, Qt::UserRole).toInt());
     };
     connect(layers_, &QTreeWidget::currentItemChanged, this,

@@ -362,7 +362,9 @@ std::vector<Color> default_palette() {
         "#3a1f4d", "#6e3a8a", "#b06ad1", "#e8a8f0"};
     std::vector<Color> out;
     for (const std::string_view text : colors) {
-        out.push_back(*from_hex(text));
+        if (const std::optional<Color> color = from_hex(text)) {
+            out.push_back(*color);
+        }
     }
     return out;
 }
@@ -719,7 +721,8 @@ std::optional<Sprite> import_sheet(const Image& image, int frame_width, int fram
     const int width = static_cast<int>(image.width);
     const int height = static_cast<int>(image.height);
     if (width < 1 || height < 1 ||
-        image.rgba.size() != static_cast<std::size_t>(width) * height * 4) {
+        image.rgba.size() !=
+            static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4) {
         error = "The picture is empty.";
         return std::nullopt;
     }
@@ -944,6 +947,9 @@ void Editor::drag(int x, int y) {
 }
 
 void Editor::redraw_drag() {
+    if (!drag_) {
+        return;
+    }
     Drag& d = *drag_;
     if (d.tool == Tool::Select) {
         const Rect r = rect_between(d.x0, d.y0, d.last_x, d.last_y);
