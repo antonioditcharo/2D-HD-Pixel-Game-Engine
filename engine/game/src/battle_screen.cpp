@@ -86,6 +86,64 @@ std::map<std::string, std::int64_t, std::less<>> PartyObject::levels() const {
     return out;
 }
 
+void PartyObject::equip(const std::string& id, const std::string& item) {
+    const std::string member = trimmed(id);
+    const std::string what = trimmed(item);
+    const Table* items = tables_ != nullptr ? tables_->find("data/items") : nullptr;
+    const std::string slot = slot_of(items, what);
+    if (!in_party(member) || slot.empty() || inventory_ == nullptr || !inventory_->has(what)) {
+        return;
+    }
+    inventory_->take(what, 1);
+    std::string& worn = equipment_[member][slot];
+    if (!worn.empty()) {
+        inventory_->give(worn, 1);
+    }
+    worn = what;
+}
+
+void PartyObject::unequip(const std::string& id, const std::string& slot) {
+    const auto member = equipment_.find(trimmed(id));
+    if (member == equipment_.end()) {
+        return;
+    }
+    const auto worn = member->second.find(trimmed(slot));
+    if (worn == member->second.end()) {
+        return;
+    }
+    if (inventory_ != nullptr && !worn->second.empty()) {
+        inventory_->give(worn->second, 1);
+    }
+    member->second.erase(worn);
+}
+
+std::string PartyObject::equipped(const std::string& id, const std::string& slot) const {
+    const auto member = equipment_.find(trimmed(id));
+    if (member == equipment_.end()) {
+        return {};
+    }
+    const auto worn = member->second.find(trimmed(slot));
+    return worn == member->second.end() ? std::string() : worn->second;
+}
+
+std::vector<std::string> PartyObject::equipment_of(const std::string& id) const {
+    std::vector<std::string> out;
+    for (const std::string_view slot : equip_slots) {
+        if (std::string worn = equipped(id, std::string(slot)); !worn.empty()) {
+            out.push_back(std::move(worn));
+        }
+    }
+    return out;
+}
+
+std::map<std::string, std::vector<std::string>, std::less<>> PartyObject::all_equipment() const {
+    std::map<std::string, std::vector<std::string>, std::less<>> out;
+    for (const auto& [member, worn] : equipment_) {
+        out[member] = equipment_of(member);
+    }
+    return out;
+}
+
 void BattleObject::start(const std::string& enemies) {
     request_ = enemies;
 }
@@ -133,6 +191,17 @@ void register_battle_types(reflect::Registry& registry) {
     party.getter<&PartyObject::xp_to_next>("xp_to_next", {"name"})
         .text("The experience {name} needs for the next level")
         .tooltip("0 at the highest level.");
+    party.action<&PartyObject::equip>("equip", {"name", "item"})
+        .text("Equip {item} on {name}")
+        .tooltip("Takes it from what the player carries (a row of data/items with a slot: "
+                 "weapon, shield, head, body or accessory); what was worn there goes back.");
+    party.action<&PartyObject::unequip>("unequip", {"name", "slot"})
+        .text("Take off the {slot} of {name}")
+        .tooltip("Back to what the player carries. Slots: weapon, shield, head, body, "
+                 "accessory.");
+    party.getter<&PartyObject::equipped>("equipped", {"name", "slot"})
+        .text("The {slot} {name} wears")
+        .tooltip("The item's name; empty for nothing.");
     party.event<std::string>("level_up", {"name"})
         .text("When {name} reaches a new level")
         .tooltip("After a battle won, or experience given.");

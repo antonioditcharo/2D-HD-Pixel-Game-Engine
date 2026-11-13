@@ -871,7 +871,9 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         }
     }
     r.audio_object = AudioObject(r.audio_engine.get(), &r.assets, r.world.get());
-    r.party.set_tables(&r.tables); // levels come from data/levels
+    r.party.set_tables(&r.tables);       // levels come from data/levels
+    r.party.set_inventory(&r.inventory); // equipment comes from what the player carries
+    r.menu.attach(&r.party, &r.tables, &r.inventory);
     if (!r.vm->bind("audio", reflect::ObjectRef::of(r.audio_object))) {
         issues.push_back(
             serialize::Issue{"", "The audio object could not be made available to logic."});
@@ -1319,6 +1321,7 @@ void Runtime::step() {
                         r.tables.find("data/skills"), r.tables.find("data/items")};
         data.levels = r.tables.find("data/levels");
         data.member_levels = r.party.levels();
+        data.member_equipment = r.party.all_equipment();
         std::vector<std::string> members = r.party.members();
         if (members.empty() && data.party != nullptr && !data.party->rows.empty()) {
             members.push_back(data.party->rows.front().id); // the first of data/party
@@ -1812,7 +1815,8 @@ serialize::Json Runtime::save() const {
     json["party"] = serialize::Json{{"members", r.party.members()},
                                     {"condition", std::move(condition)},
                                     {"xp", r.party.xp()},
-                                    {"member_xp", r.party.member_xp()}};
+                                    {"member_xp", r.party.member_xp()},
+                                    {"equipment", r.party.equipment()}};
     return json;
 }
 
@@ -1951,6 +1955,18 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
                     hp_mp[1].is_number_integer()) {
                     r.party.condition()[member] = {hp_mp[0].get<std::int64_t>(),
                                                    hp_mp[1].get<std::int64_t>()};
+                }
+            }
+        }
+        if (party->contains("equipment") && (*party)["equipment"].is_object()) {
+            for (const auto& [member, slots] : (*party)["equipment"].items()) {
+                if (!slots.is_object()) {
+                    continue;
+                }
+                for (const auto& [slot, item] : slots.items()) {
+                    if (item.is_string() && !item.get<std::string>().empty()) {
+                        r.party.equipment()[member][slot] = item.get<std::string>();
+                    }
                 }
             }
         }

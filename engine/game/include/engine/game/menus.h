@@ -33,6 +33,7 @@ public:
         Items,
         Quests,
         Party,
+        Equip,
         Options,
         Save,
         Load
@@ -55,6 +56,18 @@ public:
         std::string action;       ///< Rebind: the action...
         input::Binding binding{}; ///< ...and its new key.
     };
+
+    /// What the Equip page works on: the party (changed), the tables for names and numbers,
+    /// and what the player carries. Set once by the runtime.
+    void attach(PartyObject* party, const TablesObject* tables,
+                const InventoryObject* inventory) noexcept {
+        party_ = party;
+        tables_ = tables;
+        inventory_ = inventory;
+    }
+    /// The Equip page's step: choosing a member, one of their slots, or what to wear there.
+    enum class EquipStep : std::uint8_t { Member, Slot, Item };
+    [[nodiscard]] EquipStep equip_step() const noexcept { return equip_step_; }
 
     void open_title();
     void open_pause();
@@ -89,6 +102,19 @@ private:
     std::string note_;
     Options options_;
     std::string waiting_; ///< The action waiting for a key.
+
+    // The Equip page.
+    [[nodiscard]] std::vector<std::string> equip_choices() const;
+    /// What the chosen slot can take: "" (nothing) and the items carried for it.
+    [[nodiscard]] std::vector<std::string> equip_candidates() const;
+    [[nodiscard]] BattleData equip_data() const;
+    [[nodiscard]] std::string member_name(const std::string& id) const;
+    EquipStep equip_step_ = EquipStep::Member;
+    std::size_t equip_member_ = 0;
+    std::size_t equip_slot_ = 0;
+    PartyObject* party_ = nullptr;
+    const TablesObject* tables_ = nullptr;
+    const InventoryObject* inventory_ = nullptr;
 };
 
 } // namespace engine::game

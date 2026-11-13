@@ -2868,7 +2868,7 @@ TEST_CASE("The title screen starts the game; the pause menu saves, loads and sho
     };
     press(5, input::Key::Z);
     press(10, input::Key::Escape);
-    for (std::uint64_t s = 0; s < 5; ++s) {
+    for (std::uint64_t s = 0; s < 6; ++s) {
         press(14 + (s * 3), input::Key::Down);
     }
     press(32, input::Key::Z); // Save page
@@ -2912,12 +2912,12 @@ TEST_CASE("The title screen and the pause menu are drawn over the game") {
     replay.record(13, key(input::Key::Z), false);
     replay.record(16, key(input::Key::X), true); // back to the pause menu
     replay.record(17, key(input::Key::X), false);
-    for (std::uint64_t s = 0; s < 3; ++s) { // to Options
+    for (std::uint64_t s = 0; s < 4; ++s) { // to Options
         replay.record(19 + (s * 3), key(input::Key::Down), true);
         replay.record(20 + (s * 3), key(input::Key::Down), false);
     }
-    replay.record(28, key(input::Key::Z), true);
-    replay.record(29, key(input::Key::Z), false);
+    replay.record(31, key(input::Key::Z), true);
+    replay.record(32, key(input::Key::Z), false);
     game::RuntimeOptions options;
     options.headless = true;
     options.replay = &replay;
@@ -2944,7 +2944,7 @@ TEST_CASE("The title screen and the pause menu are drawn over the game") {
     }
     CHECK(runtime->menu().page() == game::GameMenu::Page::Items);
     shot("sparxel-pause.png");
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < 19; ++i) {
         runtime->step();
     }
     CHECK(runtime->menu().page() == game::GameMenu::Page::Options);
@@ -3014,7 +3014,7 @@ TEST_CASE("The Options page sets volumes and text speed, rebinds keys, and keeps
         at += 3;
     };
     press(input::Key::Escape); // the pause menu
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         press(input::Key::Down); // to Options
     }
     press(input::Key::Z);
@@ -3083,7 +3083,7 @@ TEST_CASE("Rebinding a key another action has takes it; an action left with none
         at += 3;
     };
     press(input::Key::Escape);
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         press(input::Key::Down);
     }
     press(input::Key::Z); // Options
@@ -3394,4 +3394,134 @@ TEST_CASE("Levels: the experience curve, growth by level, and skills learned at 
     CHECK(ups[0].from == 1);
     CHECK(ups[0].to == 3);
     CHECK(party.xp_to_next("hero") == 26);
+}
+
+TEST_CASE("Equipment: slots, numbers with what is worn, and not an item to use in battle") {
+    BattleTables tables;
+    tables.items.columns.push_back({"slot", game::ColumnKind::Text});
+    tables.items.columns.push_back({"attack", game::ColumnKind::Whole});
+    tables.items.columns.push_back({"defense", game::ColumnKind::Whole});
+    tables.items.rows.push_back({"sword", {{"slot", "Weapon"}, {"attack", "4"}}});
+    tables.items.rows.push_back({"cap", {{"slot", "head"}, {"defense", "2"}}});
+    tables.items.rows.push_back({"rock", {{"slot", "pocket"}}});
+    CHECK(game::slot_of(&tables.items, "sword") == "weapon");
+    CHECK(game::slot_of(&tables.items, "cap") == "head");
+    CHECK(game::slot_of(&tables.items, "rock").empty()); // not a slot
+    CHECK(game::slot_of(&tables.items, "nothing").empty());
+    game::BattleData data = tables.data();
+    data.member_equipment["hero"] = {"sword", "cap", "rock"};
+    std::string error;
+    const std::optional<game::Fighter> hero = game::make_fighter(data, "hero", false, error);
+    REQUIRE(hero.has_value());
+    if (hero) {
+        CHECK(hero->attack == 10); // 6 + 4
+        CHECK(hero->defense == 5); // 3 + 2
+    }
+    const std::optional<game::Battle> b =
+        game::Battle::start(data, {"hero"}, {}, {"slime"}, 1, error);
+    REQUIRE(b.has_value());
+    if (b) {
+        CHECK(b->fighters().front().attack == 10);
+        CHECK_FALSE(b->is_item("sword"));
+    }
+}
+
+TEST_CASE("Equipment is worn from logic and from the pause menu's Equip page, and saved") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["pause_menu"] = true;
+        settings["width"] = 320;
+        settings["height"] = 180;
+        write_json(project.folder.path / game::project_file, settings);
+        std::filesystem::create_directories(project.folder.path / "assets/data");
+        const BattleTables tables;
+        game::Table items = tables.items;
+        items.columns.push_back({"slot", game::ColumnKind::Text});
+        items.columns.push_back({"attack", game::ColumnKind::Whole});
+        items.columns.push_back({"defense", game::ColumnKind::Whole});
+        items.columns.push_back({"name", game::ColumnKind::Text});
+        items.rows.push_back({"sword", {{"slot", "weapon"}, {"attack", "4"}, {"name", "Sword"}}});
+        items.rows.push_back({"club", {{"slot", "weapon"}, {"attack", "1"}}});
+        items.rows.push_back({"cap", {{"slot", "head"}, {"defense", "2"}}});
+        std::ofstream(project.folder.path / "assets/data/items.dtable", std::ios::binary)
+            << game::table_to_text(items);
+        std::ofstream(project.folder.path / "assets/data/party.dtable", std::ios::binary)
+            << game::table_to_text(tables.party);
+        logic::LogicAsset rules;
+        rules.name = "gear";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "",
+            "game_start",
+            {},
+            {ir::do_action(2, "party", "add_member", {Project::text("hero")}),
+             ir::do_action(3, "inventory", "give", {Project::text("sword"), Project::whole(1)}),
+             ir::do_action(4, "inventory", "give", {Project::text("club"), Project::whole(1)}),
+             ir::do_action(5, "inventory", "give", {Project::text("cap"), Project::whole(1)}),
+             ir::do_action(6, "party", "equip", {Project::text("hero"), Project::text("club")}),
+             ir::do_action(7, "party", "equip", {Project::text("hero"), Project::text("cap")})},
+            {}});
+        write_json(project.folder.path / "assets/logic/gear.drules",
+                   serialize::logic_to_json(rules));
+    }
+    input::Recording replay;
+    std::uint64_t at = 3;
+    const auto press = [&replay, &at](input::Key k) {
+        replay.record(at, key(k), true);
+        replay.record(at + 1, key(k), false);
+        at += 3;
+    };
+    press(input::Key::Escape);
+    for (int i = 0; i < 4; ++i) {
+        press(input::Key::Down); // to Equip
+    }
+    press(input::Key::Z);    // the Equip page
+    press(input::Key::Z);    // the hero
+    press(input::Key::Z);    // Weapon
+    press(input::Key::Down); // (nothing), then the sword: carried; the club is worn
+    const std::uint64_t choosing = at;
+    press(input::Key::Z); // wear the sword; the club goes back
+    game::RuntimeOptions options;
+    options.headless = true;
+    options.replay = &replay;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    runtime->step();
+    CHECK(runtime->party().equipped("hero", "weapon") == "club");
+    CHECK(runtime->party().equipped("hero", "head") == "cap");
+    CHECK_FALSE(runtime->inventory().has("cap"));
+    for (std::uint64_t i = 1; i < choosing; ++i) {
+        runtime->step();
+    }
+    REQUIRE(runtime->menu().page() == game::GameMenu::Page::Equip);
+    CHECK(runtime->menu().equip_step() == game::GameMenu::EquipStep::Item);
+    REQUIRE(runtime->draw());
+    {
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        const assets::Image image{320, 180, pixels};
+        const std::vector<std::uint8_t> png = assets::encode_png(image);
+        std::ofstream(std::filesystem::temp_directory_path() / "sparxel-equip.png",
+                      std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+    }
+    for (std::uint64_t i = choosing; i < at + 2; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->party().equipped("hero", "weapon") == "sword");
+    CHECK(runtime->inventory().has("club"));
+    CHECK_FALSE(runtime->inventory().has("sword"));
+    CHECK(runtime->menu().equip_step() == game::GameMenu::EquipStep::Slot);
+    // Saved with the game.
+    const serialize::Json saved = runtime->save();
+    const auto other = project.open(no_graphics(nullptr));
+    std::vector<serialize::Issue> issues;
+    REQUIRE(other->load(saved, issues));
+    CHECK(other->party().equipped("hero", "weapon") == "sword");
+    CHECK(other->party().equipped("hero", "head") == "cap");
 }

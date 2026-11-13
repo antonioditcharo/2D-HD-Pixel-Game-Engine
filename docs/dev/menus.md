@@ -26,9 +26,18 @@ saved; an empty one says so); choosing one loads it; Cancel goes back to the tit
 **The pause menu** opens on the Menu key (Escape, or Start on a gamepad) while nothing else
 is open (not during a message or a battle): **Resume**, **Items** (what the inventory holds),
 **Quests** (the journal: [game.md](game.md)), **Party** (members and HP, and the experience
-won: [battle.md](battle.md)), **Options** (below), **Save** and **Load** (slots 1 to 3; saving says *Saved in slot
+won: [battle.md](battle.md)), **Equip** (below), **Options** (below), **Save** and **Load** (slots 1 to 3; saving says *Saved in slot
 2.*) and **Quit**. Up and Down choose, Interact picks, Cancel (or Menu) goes back, and from
 the menu itself resumes. While a menu is open, nobody moves and Rules hear no keys.
+
+**Equip** dresses the party, as RPG Maker's Equipment screen does: choose a member (with
+their level), then a slot (*Weapon*, *Shield*, *Head*, *Body*, *Accessory*, each with what
+is worn there), then *(nothing)* or one of the pieces the player carries for that slot.
+Below the list, the member's Max HP, Max MP, Attack, Defense and Speed; while choosing a
+piece, each shows what it would become (*Attack 7 > 10*), in gold where it rises and grey
+where it falls. Wearing a piece takes it from the inventory and puts back what it
+replaces. Cancel goes back a step. Pieces are rows of `data/items` with a `slot`
+([battle.md](battle.md)), so shops sell them like anything else ([shop.md](shop.md)).
 
 **Options** are the player's, not the creator's:
 
@@ -48,4 +57,4 @@ keeps the defaults.
    with a title picture, music and more slots.
 2. **More options**: window size and full screen, gamepad buttons, and a reset to the
    defaults (U2).
-3. **Equipment and skills pages** in the pause menu, with the RPG kit's growth.
+3. **A Skills page** in the pause menu, to use healing skills outside battle.

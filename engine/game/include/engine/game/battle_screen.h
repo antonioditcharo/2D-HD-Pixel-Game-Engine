@@ -54,8 +54,30 @@ public:
     void set_xp(std::int64_t xp) noexcept { xp_ = std::max<std::int64_t>(xp, 0); }
 
     // ----- Levels -----
-    /// Where data/levels and data/party are read from (the runtime's tables).
+    /// Where data/levels and data/items are read from (the runtime's tables).
     void set_tables(const TablesObject* tables) noexcept { tables_ = tables; }
+    /// Where equipment comes from and goes back to (the runtime's inventory).
+    void set_inventory(InventoryObject* inventory) noexcept { inventory_ = inventory; }
+
+    // ----- Equipment -----
+    /// Puts `item` (a row of data/items with a slot) on a member of the party, from the
+    /// inventory; what they wore in that slot goes back to it. Nothing if the member is not
+    /// in the party, the player does not carry it, or it is not equipment.
+    void equip(const std::string& id, const std::string& item);
+    /// Takes off what a member wears in `slot` ("weapon"), back to the inventory.
+    void unequip(const std::string& id, const std::string& slot);
+    /// What a member wears in `slot`; empty for nothing.
+    [[nodiscard]] std::string equipped(const std::string& id, const std::string& slot) const;
+    /// Everything a member wears.
+    [[nodiscard]] std::vector<std::string> equipment_of(const std::string& id) const;
+    /// What everyone wears, by member and slot, for saves.
+    using Equipment =
+        std::map<std::string, std::map<std::string, std::string, std::less<>>, std::less<>>;
+    [[nodiscard]] Equipment& equipment() noexcept { return equipment_; }
+    [[nodiscard]] const Equipment& equipment() const noexcept { return equipment_; }
+    /// Every member's equipment, for battles.
+    [[nodiscard]] std::map<std::string, std::vector<std::string>, std::less<>>
+    all_equipment() const;
     /// Gives a member experience; reaching a level is remembered for take_level_ups().
     void give_xp(const std::string& id, std::int64_t xp);
     /// A member's experience, and their level from it.
@@ -86,6 +108,7 @@ public:
         condition_.clear();
         member_xp_.clear();
         level_ups_.clear();
+        equipment_.clear();
         xp_ = 0;
     }
 
@@ -95,7 +118,9 @@ private:
     std::int64_t xp_ = 0;
     std::map<std::string, std::int64_t, std::less<>> member_xp_;
     std::vector<LevelUp> level_ups_;
+    Equipment equipment_;
     const TablesObject* tables_ = nullptr;
+    InventoryObject* inventory_ = nullptr;
 };
 
 class BattleObject {

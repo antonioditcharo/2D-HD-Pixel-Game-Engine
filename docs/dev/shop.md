@@ -56,7 +56,7 @@ and Rules hear no keys. Loading a game closes it.
 
 ## 4. Next increments
 
-1. **Equipment** in shops, showing whether each piece is better for each party member.
+1. **Equipment compared** in shops: whether each piece is better for each party member.
 2. **Shop stock**: items a shop has only so many of, and prices that change (a sale, a
    better price for a friend).
 3. **The UI designer** (`plan/02` K1): the shop screen as a template to restyle.

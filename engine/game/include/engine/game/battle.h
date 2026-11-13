@@ -10,10 +10,12 @@
 
 #include "engine/game/tables.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::game {
@@ -66,7 +68,21 @@ struct BattleData {
     const Table* levels = nullptr;  ///< xp: the experience each level needs (optional)
     /// Party members' levels, by row; those missing are at level 1.
     std::map<std::string, std::int64_t, std::less<>> member_levels;
+    /// What party members wear, by row: rows of `items` with a slot.
+    std::map<std::string, std::vector<std::string>, std::less<>> member_equipment;
 };
+
+/// The places equipment is worn, as data/items' `slot` column names them.
+inline constexpr std::array<std::string_view, 5> equip_slots{"weapon", "shield", "head", "body",
+                                                             "accessory"};
+/// The slot `item` of data/items (`items`) is worn in; empty if it is not equipment.
+[[nodiscard]] std::string slot_of(const Table* items, std::string_view item);
+
+/// A fighter from the tables, at full HP and MP: an enemy as its row says; a party member
+/// at their level (member_levels), with their growth and what they wear (member_equipment).
+/// Nothing, with `error`, for a row the table lacks.
+[[nodiscard]] std::optional<Fighter> make_fighter(const BattleData& data, const std::string& id,
+                                                  bool enemy, std::string& error);
 
 /// The highest level: data/levels' rows, else 99.
 [[nodiscard]] std::int64_t top_level(const Table* levels);
@@ -113,9 +129,10 @@ public:
     [[nodiscard]] std::int64_t xp() const noexcept;
     [[nodiscard]] std::int64_t gold() const noexcept;
     [[nodiscard]] const BattleSkill* skill(std::string_view id) const noexcept;
-    /// Whether `name` is a row of the items table: something usable in battle.
-    [[nodiscard]] bool is_item(std::string_view name) const noexcept {
-        return data_.items != nullptr && data_.items->row(name) != nullptr;
+    /// Whether `name` is a row of the items table, and not equipment: usable in battle.
+    [[nodiscard]] bool is_item(std::string_view name) const {
+        return data_.items != nullptr && data_.items->row(name) != nullptr &&
+               slot_of(data_.items, name).empty();
     }
     /// The damage `attacker` does to `target` with `power`, before the random spread: power
     /// plus attack times two, minus defence, at least 1; halved if the target defends.

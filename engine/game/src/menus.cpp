@@ -9,7 +9,7 @@ namespace engine::game {
 namespace {
 
 constexpr std::array<const char*, 3> title_choices{"New game", "Continue", "Quit"};
-constexpr std::array<const char*, 8> pause_choices{"Resume",  "Items", "Quests", "Party",
+constexpr std::array<const char*, 9> pause_choices{"Resume",  "Items", "Quests", "Party", "Equip",
                                                    "Options", "Save",  "Load",   "Quit"};
 
 /// Text speeds the Options page cycles through (-1: the game's own).
@@ -62,6 +62,9 @@ std::vector<std::string> GameMenu::choices(const SaveObject& saves) const {
         break;
     case Page::Pause:
         out.assign(pause_choices.begin(), pause_choices.end());
+        break;
+    case Page::Equip:
+        out = equip_choices();
         break;
     case Page::Options:
         out.push_back("Music  " + percent(options_.music));
@@ -130,6 +133,17 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
         cursor_ = (cursor_ + 1) % count;
         return {};
     }
+    if ((action == "cancel" || action == "menu") && page_ == Page::Equip &&
+        equip_step_ != EquipStep::Member) {
+        if (equip_step_ == EquipStep::Item) {
+            equip_step_ = EquipStep::Slot;
+            cursor_ = equip_slot_;
+        } else {
+            equip_step_ = EquipStep::Member;
+            cursor_ = equip_member_;
+        }
+        return {};
+    }
     if (action == "cancel" || action == "menu") {
         switch (page_) {
         case Page::Pause:
@@ -138,6 +152,7 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
         case Page::Items:
         case Page::Quests:
         case Page::Party:
+        case Page::Equip:
         case Page::Options:
         case Page::Save:
             cursor_ = static_cast<std::size_t>(page_) - static_cast<std::size_t>(Page::Pause);
@@ -145,7 +160,7 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
             return {};
         case Page::Load:
             // From the title, back to it; from the pause menu, back to that.
-            cursor_ = from_title_ ? 1 : 6;
+            cursor_ = from_title_ ? 1 : 7;
             page_ = from_title_ ? Page::Title : Page::Pause;
             return {};
         default:
@@ -182,20 +197,54 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
             page_ = Page::Party;
             return {};
         case 4:
-            page_ = Page::Options;
+            page_ = Page::Equip;
+            equip_step_ = EquipStep::Member;
+            equip_member_ = 0;
             cursor_ = 0;
             return {};
         case 5:
-            page_ = Page::Save;
+            page_ = Page::Options;
             cursor_ = 0;
             return {};
         case 6:
+            page_ = Page::Save;
+            cursor_ = 0;
+            return {};
+        case 7:
             page_ = Page::Load;
             cursor_ = 0;
             return {};
         default:
             return {Result::Kind::Quit, 0};
         }
+    case Page::Equip: {
+        if (party_ == nullptr || party_->members().empty()) {
+            return {};
+        }
+        if (equip_step_ == EquipStep::Member) {
+            equip_member_ = std::min(cursor_, party_->members().size() - 1);
+            equip_step_ = EquipStep::Slot;
+            cursor_ = 0;
+        } else if (equip_step_ == EquipStep::Slot) {
+            equip_slot_ = std::min(cursor_, equip_slots.size() - 1);
+            equip_step_ = EquipStep::Item;
+            cursor_ = 0;
+        } else {
+            const std::vector<std::string> candidates = equip_candidates();
+            const std::string& member = party_->members().at(equip_member_);
+            const std::string slot(equip_slots.at(equip_slot_));
+            if (cursor_ < candidates.size()) {
+                if (candidates[cursor_].empty()) {
+                    party_->unequip(member, slot);
+                } else {
+                    party_->equip(member, candidates[cursor_]);
+                }
+            }
+            equip_step_ = EquipStep::Slot;
+            cursor_ = equip_slot_;
+        }
+        return {};
+    }
     case Page::Options:
         // On a key: wait for the next key pressed, to bind to it.
         if (cursor_ >= 3 && cursor_ - 3 < options_.keys.size()) {
@@ -216,6 +265,79 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
     default:
         return {};
     }
+}
+
+BattleData GameMenu::equip_data() const {
+    BattleData data;
+    if (tables_ != nullptr) {
+        data.party = tables_->find("data/party");
+        data.items = tables_->find("data/items");
+        data.levels = tables_->find("data/levels");
+    }
+    if (party_ != nullptr) {
+        data.member_levels = party_->levels();
+        data.member_equipment = party_->all_equipment();
+    }
+    return data;
+}
+
+std::string GameMenu::member_name(const std::string& id) const {
+    const Table* table = tables_ != nullptr ? tables_->find("data/party") : nullptr;
+    const std::optional<std::string> name =
+        table != nullptr ? table->text(id, "name") : std::nullopt;
+    return name && !name->empty() ? *name : id;
+}
+
+std::vector<std::string> GameMenu::equip_candidates() const {
+    std::vector<std::string> out{std::string()};
+    const Table* items = tables_ != nullptr ? tables_->find("data/items") : nullptr;
+    if (inventory_ == nullptr || equip_slot_ >= equip_slots.size()) {
+        return out;
+    }
+    for (const auto& [item, count] : inventory_->items()) {
+        if (count > 0 && slot_of(items, item) == equip_slots.at(equip_slot_)) {
+            out.push_back(item);
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> GameMenu::equip_choices() const {
+    std::vector<std::string> out;
+    if (party_ == nullptr) {
+        return out;
+    }
+    const Table* items = tables_ != nullptr ? tables_->find("data/items") : nullptr;
+    const auto item_name = [items](const std::string& item) {
+        const std::optional<std::string> name =
+            items != nullptr ? items->text(item, "name") : std::nullopt;
+        return name && !name->empty() ? *name : item;
+    };
+    switch (equip_step_) {
+    case EquipStep::Member:
+        for (const std::string& member : party_->members()) {
+            out.push_back(member_name(member) + "  Lv " + std::to_string(party_->level_of(member)));
+        }
+        break;
+    case EquipStep::Slot: {
+        const std::string& member = party_->members().at(equip_member_);
+        for (const std::string_view slot : equip_slots) {
+            const std::string worn = party_->equipped(member, std::string(slot));
+            std::string label(slot);
+            label[0] = static_cast<char>(label[0] - 'a' + 'A');
+            out.push_back(label + "  " + (worn.empty() ? std::string("-") : item_name(worn)));
+        }
+        break;
+    }
+    case EquipStep::Item:
+        for (const std::string& item : equip_candidates()) {
+            out.push_back(item.empty() ? std::string("(nothing)")
+                                       : item_name(item) + "  x" +
+                                             std::to_string(inventory_->count_of(item)));
+        }
+        break;
+    }
+    return out;
 }
 
 void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surface,
@@ -324,7 +446,57 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
         default:
             break;
         }
-        if (page_ == Page::Options) {
+        if (page_ == Page::Equip) {
+            const std::vector<std::string> empty{"No one has joined the party."};
+            const float bh = list(items.empty() ? empty : items, x, pad, bw);
+            // The member's numbers now, and with the piece the cursor is on.
+            if (party_ != nullptr && equip_step_ != EquipStep::Member &&
+                equip_member_ < party_->members().size()) {
+                const std::string& member = party_->members().at(equip_member_);
+                BattleData data = equip_data();
+                std::string error;
+                const std::optional<Fighter> now = make_fighter(data, member, false, error);
+                std::optional<Fighter> then;
+                if (equip_step_ == EquipStep::Item) {
+                    const std::vector<std::string> candidates = equip_candidates();
+                    const std::string slot(equip_slots.at(equip_slot_));
+                    std::vector<std::string> worn;
+                    for (const std::string_view other : equip_slots) {
+                        const std::string piece =
+                            other == slot ? (cursor_ < candidates.size() ? candidates[cursor_]
+                                                                         : std::string())
+                                          : party_->equipped(member, std::string(other));
+                        if (!piece.empty()) {
+                            worn.push_back(piece);
+                        }
+                    }
+                    data.member_equipment[member] = worn;
+                    then = make_fighter(data, member, false, error);
+                }
+                if (now) {
+                    const std::array<std::pair<const char*, std::int64_t Fighter::*>, 5> numbers{
+                        {{"Max HP", &Fighter::max_hp},
+                         {"Max MP", &Fighter::max_mp},
+                         {"Attack", &Fighter::attack},
+                         {"Defense", &Fighter::defense},
+                         {"Speed", &Fighter::speed}}};
+                    const float ny = pad + bh + pad;
+                    box(x, ny, bw, (line * 5.0F) + (2 * pad));
+                    for (std::size_t k = 0; k < numbers.size(); ++k) {
+                        const auto& [label, field] = numbers.at(k);
+                        const std::int64_t before = (*now).*field;
+                        std::string words = std::string(label) + "  " + std::to_string(before);
+                        render::Color colour = text;
+                        if (then) {
+                            const std::int64_t after = (*then).*field;
+                            words += " > " + std::to_string(after);
+                            colour = after > before ? gold : after < before ? dim : text;
+                        }
+                        write(words, x + pad, ny + pad + (line * static_cast<float>(k)), colour);
+                    }
+                }
+            }
+        } else if (page_ == Page::Options) {
             const float bh = list(items, x, pad, bw);
             write(waiting_.empty() ? "Left/Right: change. Interact: new key."
                                    : "Press the new key.",
