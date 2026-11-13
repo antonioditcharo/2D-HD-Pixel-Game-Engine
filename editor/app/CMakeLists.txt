@@ -1,9 +1,23 @@
 # The editor application (ADR-005: Qt 6 Widgets). Qt is used here only: the engine and
 # exported games never link it.
 
+# The Sparxel guide: docs/dev, built into the editor as a Qt resource, so it works offline.
+file(GLOB sparxel_guide CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/docs/dev/*.md" "${PROJECT_SOURCE_DIR}/docs/dev/*.png")
+set(sparxel_guide_entries "")
+foreach(page IN LISTS sparxel_guide)
+    get_filename_component(page_name "${page}" NAME)
+    string(APPEND sparxel_guide_entries "    <file alias=\"${page_name}\">${page}</file>\n")
+endforeach()
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/guide.qrc"
+    CONTENT "<RCC>\n  <qresource prefix=\"/guide\">\n${sparxel_guide_entries}  </qresource>\n</RCC>\n")
+
 add_library(editor_app STATIC
+    "${CMAKE_CURRENT_BINARY_DIR}/guide.qrc"
     src/doctor_panel.cpp
     src/doctor_panel.h
+    src/help_window.cpp
+    src/help_window.h
     src/inspector.cpp
     src/inspector.h
     src/logic_panel.cpp
@@ -30,7 +44,7 @@ add_library(editor_app STATIC
     src/tile_palette.h
 )
 add_library(editor::app ALIAS editor_app)
-set_target_properties(editor_app PROPERTIES AUTOMOC ON)
+set_target_properties(editor_app PROPERTIES AUTOMOC ON AUTORCC ON)
 target_include_directories(editor_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(editor_app PUBLIC editor::core editor::exporter Qt6::Widgets)
 # Qt's lower-case keywords (emit, signals, slots) clash with the engine's names: use

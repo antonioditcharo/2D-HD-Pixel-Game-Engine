@@ -261,6 +261,7 @@ if(TARGET editor_app)
     add_executable(editor_app_tests
         editor_app/main.cpp
         editor_app/app_test.cpp
+        editor_app/help_test.cpp
         editor_app/sprite_studio_test.cpp
         editor_app/story_test.cpp
         editor_app/table_test.cpp

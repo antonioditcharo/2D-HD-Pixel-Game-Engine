@@ -34,7 +34,7 @@ struct DebugTargets {
 
 class DebugMenu {
 public:
-    enum class Page : std::uint8_t { None, Main, Items, Flags, Quests, GoTo };
+    enum class Page : std::uint8_t { None, Main, Items, StoryFlags, Quests, GoTo };
 
     void attach(const DebugTargets& targets) noexcept { targets_ = targets; }
     void open();

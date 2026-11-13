@@ -98,7 +98,7 @@ std::vector<std::string> DebugMenu::lines() const {
                                              : 0));
         }
         break;
-    case Page::Flags:
+    case Page::StoryFlags:
         for (const std::string& flag : flag_names()) {
             out.push_back(flag + "  " +
                           (targets_.dialogue->flag(flag) ? std::string("on") : std::string("off")));
@@ -203,7 +203,7 @@ void DebugMenu::press(std::string_view action) {
             cursor_ = 0;
         }
         break;
-    case Page::Flags: {
+    case Page::StoryFlags: {
         const std::vector<std::string> flags = flag_names();
         if (cursor_ < flags.size()) {
             if (targets_.dialogue->flag(flags[cursor_])) {

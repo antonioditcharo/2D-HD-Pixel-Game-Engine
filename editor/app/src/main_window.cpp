@@ -41,6 +41,7 @@
 #include "doctor_panel.h"
 #include "editor/core/new_project.h"
 #include "editor/exporter/exporter.h"
+#include "help_window.h"
 #include "inspector.h"
 #include "logic_panel.h"
 #include "project_panel.h"
@@ -310,6 +311,12 @@ std::vector<SearchItem> MainWindow::search_items() {
             commands(menu, name + QStringLiteral(" ▸ "));
         }
     }
+    // The guide's pages.
+    for (const HelpPage& page : help_pages()) {
+        const QString file = page.file;
+        items.push_back(SearchItem{tr("Guide ▸ %1").arg(page.title), tr("Guide"),
+                                   [this, file] { show_guide(file); }});
+    }
     if (document_ == nullptr) {
         return items;
     }
@@ -421,6 +428,20 @@ TableWindow* MainWindow::new_table(const QString& name) {
     }
     reload_assets();
     return open_table(relative);
+}
+
+HelpWindow* MainWindow::show_guide(const QString& page) {
+    if (guide_ == nullptr) {
+        guide_ = new HelpWindow(this);
+        guide_->setWindowFlag(Qt::Window);
+    }
+    if (!page.isEmpty()) {
+        guide_->show_page(page);
+    }
+    guide_->show();
+    guide_->raise();
+    guide_->activateWindow();
+    return guide_;
 }
 
 TableWindow* MainWindow::collect_translations() {
@@ -687,6 +708,11 @@ void MainWindow::build_actions() {
     view->addSeparator();
     QAction* reset = view->addAction(tr("&Reset layout"), this, [this] { reset_layout(); });
     reset->setObjectName(QStringLiteral("reset_layout"));
+    // The guide, built in: every page searchable, offline.
+    QMenu* help = menuBar()->addMenu(tr("&Help"));
+    QAction* guide = help->addAction(tr("Sparxel &guide"), this, [this] { show_guide({}); });
+    guide->setShortcut(QKeySequence::HelpContents);
+    guide->setObjectName(QStringLiteral("guide"));
     QToolBar* tools = addToolBar(tr("Commands"));
     tools->setObjectName(QStringLiteral("commands"));
 

@@ -28,6 +28,8 @@ class QFileSystemModel;
 
 namespace editor {
 
+class HelpWindow;
+
 class LogicPanel;
 class ProjectPanel;
 
@@ -129,6 +131,8 @@ public:
     /// Collects the texts to translate into data/translations
     /// (Document::collect_translations()) and opens it; null if it cannot.
     TableWindow* collect_translations();
+    /// Opens the Sparxel guide (Help, F1), at `page` ("shop.md") if given.
+    HelpWindow* show_guide(const QString& page);
     /// Makes a conversation as assets/talk/<name>.dtalk, with one node, and opens it.
     StoryWindow* new_story(const QString& name);
     /// Opens a data table of the project (its path in assets/, a .dtable), or brings its
@@ -211,6 +215,7 @@ private:
     QTimer* autosave_timer_ = nullptr;
     QStackedWidget* stack_ = nullptr; ///< The start page, or the scene.
     SearchBox* search_ = nullptr;
+    HelpWindow* guide_ = nullptr;
     DoctorPanel* doctor_ = nullptr;
     StartPage* start_ = nullptr;
     QSettings* settings_ = nullptr;
