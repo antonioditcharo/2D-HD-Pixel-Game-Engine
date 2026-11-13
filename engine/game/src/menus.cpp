@@ -9,8 +9,8 @@ namespace engine::game {
 namespace {
 
 constexpr std::array<const char*, 3> title_choices{"New game", "Continue", "Quit"};
-constexpr std::array<const char*, 9> pause_choices{"Resume",  "Items", "Quests", "Party", "Equip",
-                                                   "Options", "Save",  "Load",   "Quit"};
+constexpr std::array<const char*, 10> pause_choices{
+    "Resume", "Items", "Skills", "Quests", "Party", "Equip", "Options", "Save", "Load", "Quit"};
 
 /// Text speeds the Options page cycles through (-1: the game's own).
 constexpr std::array<double, 5> text_speeds{-1.0, 0.0, 20.0, 40.0, 80.0};
@@ -75,6 +75,10 @@ std::vector<std::string> GameMenu::choices(const SaveObject& saves) const {
         break;
     case Page::Equip:
         out = equip_choices();
+        break;
+    case Page::Items:
+    case Page::Skills:
+        out = use_choices();
         break;
     case Page::Options:
         out.push_back("Music  " + percent(options_.music));
@@ -157,6 +161,20 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
         cursor_ = (cursor_ + 1) % count;
         return {};
     }
+    if ((action == "cancel" || action == "menu") &&
+        ((page_ == Page::Items && use_step_ == UseStep::Target) ||
+         (page_ == Page::Skills && use_step_ != UseStep::User))) {
+        if (use_step_ == UseStep::Target) {
+            use_step_ = UseStep::List;
+            const std::vector<std::string> list = usable();
+            const auto at = std::find(list.begin(), list.end(), use_what_);
+            cursor_ = at == list.end() ? 0 : static_cast<std::size_t>(at - list.begin());
+        } else {
+            use_step_ = UseStep::User;
+            cursor_ = use_user_;
+        }
+        return {};
+    }
     if ((action == "cancel" || action == "menu") && page_ == Page::Equip &&
         equip_step_ != EquipStep::Member) {
         if (equip_step_ == EquipStep::Item) {
@@ -174,6 +192,7 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
             page_ = Page::None;
             return {Result::Kind::Resume, 0};
         case Page::Items:
+        case Page::Skills:
         case Page::Quests:
         case Page::Party:
         case Page::Equip:
@@ -184,7 +203,7 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
             return {};
         case Page::Load:
             // From the title, back to it; from the pause menu, back to that.
-            cursor_ = from_title_ ? 1 : 7;
+            cursor_ = from_title_ ? 1 : 8;
             page_ = from_title_ ? Page::Title : Page::Pause;
             return {};
         default:
@@ -206,41 +225,48 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
             return {};
         }
         return {Result::Kind::Quit, 0};
-    case Page::Pause:
-        switch (cursor_) {
-        case 0:
+    case Page::Pause: {
+        // The page each choice opens, in pause_choices' order; Resume and Quit close it.
+        constexpr std::array<Page, 10> opens{Page::None,  Page::Items, Page::Skills,  Page::Quests,
+                                             Page::Party, Page::Equip, Page::Options, Page::Save,
+                                             Page::Load,  Page::None};
+        if (cursor_ == 0) {
             page_ = Page::None;
             return {Result::Kind::Resume, 0};
-        case 1:
-            page_ = Page::Items;
-            return {};
-        case 2:
-            page_ = Page::Quests;
-            return {};
-        case 3:
-            page_ = Page::Party;
-            return {};
-        case 4:
-            page_ = Page::Equip;
-            equip_step_ = EquipStep::Member;
-            equip_member_ = 0;
-            cursor_ = 0;
-            return {};
-        case 5:
-            page_ = Page::Options;
-            cursor_ = 0;
-            return {};
-        case 6:
-            page_ = Page::Save;
-            cursor_ = 0;
-            return {};
-        case 7:
-            page_ = Page::Load;
-            cursor_ = 0;
-            return {};
-        default:
+        }
+        if (cursor_ + 1 >= opens.size()) {
             return {Result::Kind::Quit, 0};
         }
+        page_ = opens.at(cursor_);
+        cursor_ = 0;
+        equip_step_ = EquipStep::Member;
+        equip_member_ = 0;
+        use_step_ = page_ == Page::Skills ? UseStep::User : UseStep::List;
+        use_user_ = 0;
+        return {};
+    }
+    case Page::Items:
+    case Page::Skills: {
+        if (party_ == nullptr || party_->members().empty()) {
+            return {};
+        }
+        if (use_step_ == UseStep::User) {
+            use_user_ = std::min(cursor_, party_->members().size() - 1);
+            use_step_ = UseStep::List;
+            cursor_ = 0;
+        } else if (use_step_ == UseStep::List) {
+            const std::vector<std::string> list = usable();
+            if (cursor_ >= list.size()) {
+                return {};
+            }
+            use_what_ = list[cursor_];
+            use_step_ = UseStep::Target;
+            cursor_ = 0;
+        } else if (cursor_ < party_->members().size()) {
+            use_on(party_->members()[cursor_]);
+        }
+        return {};
+    }
     case Page::Equip: {
         if (party_ == nullptr || party_->members().empty()) {
             return {};
@@ -293,6 +319,146 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
 
 std::string GameMenu::tr(std::string_view words) const {
     return translations_ != nullptr ? translations_->translate(words) : std::string(words);
+}
+
+std::optional<Fighter> GameMenu::member_now(const std::string& id) const {
+    std::string error;
+    std::optional<Fighter> f = make_fighter(equip_data(), id, false, error);
+    if (f && party_ != nullptr) {
+        if (const auto known = party_->condition().find(id); known != party_->condition().end()) {
+            f->hp = std::clamp<std::int64_t>(known->second.first, 0, f->max_hp);
+            f->mp = std::clamp<std::int64_t>(known->second.second, 0, f->max_mp);
+        }
+    }
+    return f;
+}
+
+std::vector<std::string> GameMenu::usable() const {
+    std::vector<std::string> out;
+    const Table* items = tables_ != nullptr ? tables_->find("data/items") : nullptr;
+    if (page_ == Page::Items) {
+        for (const auto& [item, count] : inventory_ != nullptr
+                                             ? inventory_->items()
+                                             : std::map<std::string, std::int64_t, std::less<>>{}) {
+            const std::optional<double> heal =
+                items != nullptr ? items->number(item, "heal") : std::nullopt;
+            if (count > 0 && heal && *heal > 0.0 && slot_of(items, item).empty()) {
+                out.push_back(item);
+            }
+        }
+        return out;
+    }
+    // Skills: the user's that heal.
+    const Table* skills = tables_ != nullptr ? tables_->find("data/skills") : nullptr;
+    if (party_ == nullptr || skills == nullptr || use_user_ >= party_->members().size()) {
+        return out;
+    }
+    const std::string& user = party_->members()[use_user_];
+    for (const std::string& skill :
+         skills_at(tables_->find("data/party"), user, party_->level_of(user))) {
+        const std::optional<double> heals = skills->number(skill, "heals");
+        const std::optional<double> power = skills->number(skill, "power");
+        if (heals && *heals != 0.0 && (!power || *power > 0.0)) {
+            out.push_back(skill);
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> GameMenu::use_choices() const {
+    std::vector<std::string> out;
+    if (party_ == nullptr) {
+        return out;
+    }
+    const auto named = [this](const char* table, const std::string& row) {
+        const Table* t = tables_ != nullptr ? tables_->find(table) : nullptr;
+        const std::optional<std::string> name = t != nullptr ? t->text(row, "name") : std::nullopt;
+        return name && !name->empty() ? *name : row;
+    };
+    const Table* skills = tables_ != nullptr ? tables_->find("data/skills") : nullptr;
+    switch (use_step_) {
+    case UseStep::User:
+    case UseStep::Target:
+        for (const std::string& member : party_->members()) {
+            const std::optional<Fighter> f = member_now(member);
+            std::string line = member_name(member);
+            if (f) {
+                line += "  HP " + std::to_string(f->hp) + "/" + std::to_string(f->max_hp);
+                if (f->max_mp > 0) {
+                    line += "  MP " + std::to_string(f->mp) + "/" + std::to_string(f->max_mp);
+                }
+            }
+            out.push_back(line);
+        }
+        break;
+    case UseStep::List:
+        for (const std::string& what : usable()) {
+            if (page_ == Page::Items) {
+                out.push_back(named("data/items", what) + "  x" +
+                              std::to_string(inventory_->count_of(what)));
+            } else {
+                const std::optional<double> cost =
+                    skills != nullptr ? skills->number(what, "mp_cost") : std::nullopt;
+                out.push_back(named("data/skills", what) + "  " +
+                              std::to_string(cost ? static_cast<std::int64_t>(*cost) : 0) + " MP");
+            }
+        }
+        if (out.empty()) {
+            out.emplace_back(page_ == Page::Items ? "Nothing to use." : "No healing skills.");
+        }
+        break;
+    }
+    return out;
+}
+
+void GameMenu::use_on(const std::string& target) {
+    std::optional<Fighter> f = member_now(target);
+    if (!f || party_ == nullptr || inventory_ == nullptr) {
+        return;
+    }
+    if (f->hp <= 0) {
+        note_ = member_name(target) + " is down: only an inn helps.";
+        return;
+    }
+    std::int64_t amount = 0;
+    if (page_ == Page::Items) {
+        const Table* items = tables_->find("data/items");
+        const std::optional<double> heal =
+            items != nullptr ? items->number(use_what_, "heal") : std::nullopt;
+        if (!inventory_->has(use_what_) || !heal) {
+            use_step_ = UseStep::List;
+            return;
+        }
+        amount = static_cast<std::int64_t>(*heal);
+        inventory_->take(use_what_, 1);
+    } else {
+        const Table* skills = tables_->find("data/skills");
+        const std::string& user = party_->members().at(use_user_);
+        std::optional<Fighter> caster = user == target ? f : member_now(user);
+        const std::optional<double> cost =
+            skills != nullptr ? skills->number(use_what_, "mp_cost") : std::nullopt;
+        const std::optional<double> power =
+            skills != nullptr ? skills->number(use_what_, "power") : std::nullopt;
+        const auto mp = static_cast<std::int64_t>(cost ? *cost : 0.0);
+        if (!caster || caster->mp < mp) {
+            note_ = member_name(user) + " has too little MP.";
+            return;
+        }
+        caster->mp -= mp;
+        party_->condition()[user] = {caster->hp, caster->mp};
+        if (user == target) {
+            f->mp = caster->mp;
+        }
+        amount = static_cast<std::int64_t>(power ? *power : 10.0);
+    }
+    const std::int64_t before = f->hp;
+    f->hp = std::min(f->max_hp, f->hp + std::max<std::int64_t>(amount, 0));
+    party_->condition()[target] = {f->hp, f->mp};
+    note_ = member_name(target) + " recovers " + std::to_string(f->hp - before) + " HP.";
+    if (page_ == Page::Items && !inventory_->has(use_what_)) {
+        use_step_ = UseStep::List;
+        cursor_ = 0;
+    }
 }
 
 BattleData GameMenu::equip_data() const {
@@ -371,8 +537,8 @@ std::vector<std::string> GameMenu::equip_choices() const {
 void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surface,
                     const render::Texture& white, const render::Texture& atlas,
                     const ui::PixelFont& font, const std::string& title, const SaveObject& saves,
-                    const InventoryObject& inventory, const QuestObject& quests,
-                    const PartyObject& party) const {
+                    const InventoryObject& /*inventory: the Items page reads it as attached*/,
+                    const QuestObject& quests, const PartyObject& party) const {
     if (page_ == Page::None) {
         return;
     }
@@ -437,14 +603,6 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
         const float bw = w - x - pad;
         std::vector<std::string> lines;
         switch (page_) {
-        case Page::Items:
-            for (const auto& [item, count] : inventory.items()) {
-                lines.push_back(item + "  x" + std::to_string(count));
-            }
-            if (lines.empty()) {
-                lines.emplace_back("Nothing carried.");
-            }
-            break;
         case Page::Quests: {
             const std::string journal = quests.journal();
             std::size_t start = 0;
@@ -474,7 +632,15 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
         default:
             break;
         }
-        if (page_ == Page::Equip) {
+        if (page_ == Page::Items || page_ == Page::Skills) {
+            const float bh = list(items, x, pad, bw);
+            const char* hint = use_step_ == UseStep::Target ? "On whom?"
+                               : use_step_ == UseStep::User ? "Who uses a skill?"
+                                                            : nullptr;
+            if (hint != nullptr) {
+                write(tr(hint), x + pad, pad + bh + 2, dim);
+            }
+        } else if (page_ == Page::Equip) {
             const std::vector<std::string> empty{"No one has joined the party."};
             const float bh = list(items.empty() ? empty : items, x, pad, bw);
             // The member's numbers now, and with the piece the cursor is on.

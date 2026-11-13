@@ -2869,11 +2869,11 @@ TEST_CASE("The title screen starts the game; the pause menu saves, loads and sho
     };
     press(5, input::Key::Z);
     press(10, input::Key::Escape);
-    for (std::uint64_t s = 0; s < 6; ++s) {
+    for (std::uint64_t s = 0; s < 7; ++s) {
         press(14 + (s * 3), input::Key::Down);
     }
-    press(32, input::Key::Z); // Save page
-    press(36, input::Key::Z); // slot 1
+    press(35, input::Key::Z); // Save page
+    press(39, input::Key::Z); // slot 1
     const auto runtime = project.open(no_graphics(&replay));
     runtime->step();
     CHECK(runtime->menu().page() == game::GameMenu::Page::Title);
@@ -2883,7 +2883,7 @@ TEST_CASE("The title screen starts the game; the pause menu saves, loads and sho
     }
     CHECK_FALSE(runtime->menu().open());
     CHECK(std::count(runtime->log().begin(), runtime->log().end(), "started") == 1);
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < 35; ++i) {
         runtime->step();
     }
     CHECK(runtime->menu().page() == game::GameMenu::Page::Save);
@@ -2913,12 +2913,12 @@ TEST_CASE("The title screen and the pause menu are drawn over the game") {
     replay.record(13, key(input::Key::Z), false);
     replay.record(16, key(input::Key::X), true); // back to the pause menu
     replay.record(17, key(input::Key::X), false);
-    for (std::uint64_t s = 0; s < 4; ++s) { // to Options
+    for (std::uint64_t s = 0; s < 5; ++s) { // to Options
         replay.record(19 + (s * 3), key(input::Key::Down), true);
         replay.record(20 + (s * 3), key(input::Key::Down), false);
     }
-    replay.record(31, key(input::Key::Z), true);
-    replay.record(32, key(input::Key::Z), false);
+    replay.record(34, key(input::Key::Z), true);
+    replay.record(35, key(input::Key::Z), false);
     game::RuntimeOptions options;
     options.headless = true;
     options.replay = &replay;
@@ -2945,7 +2945,7 @@ TEST_CASE("The title screen and the pause menu are drawn over the game") {
     }
     CHECK(runtime->menu().page() == game::GameMenu::Page::Items);
     shot("sparxel-pause.png");
-    for (int i = 0; i < 19; ++i) {
+    for (int i = 0; i < 22; ++i) {
         runtime->step();
     }
     CHECK(runtime->menu().page() == game::GameMenu::Page::Options);
@@ -3015,7 +3015,7 @@ TEST_CASE("The Options page sets volumes and text speed, rebinds keys, and keeps
         at += 3;
     };
     press(input::Key::Escape); // the pause menu
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         press(input::Key::Down); // to Options
     }
     press(input::Key::Z);
@@ -3084,7 +3084,7 @@ TEST_CASE("Rebinding a key another action has takes it; an action left with none
         at += 3;
     };
     press(input::Key::Escape);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         press(input::Key::Down);
     }
     press(input::Key::Z); // Options
@@ -3478,7 +3478,7 @@ TEST_CASE("Equipment is worn from logic and from the pause menu's Equip page, an
         at += 3;
     };
     press(input::Key::Escape);
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         press(input::Key::Down); // to Equip
     }
     press(input::Key::Z);    // the Equip page
@@ -3798,4 +3798,56 @@ TEST_CASE("An Enemy on the Map: walked into, fought in front of its background, 
     CHECK(runtime->world().get<game::EnemyOnMap>(bat)->beaten);
     CHECK_FALSE(runtime->world().get<scene2d::Sprite>(bat)->visible);
     CHECK(std::count(runtime->log().begin(), runtime->log().end(), "the bat is gone") == 1);
+}
+
+TEST_CASE("The pause menu's Items and Skills pages heal the party between battles") {
+    const Project project;
+    const BattleTables tables;
+    std::filesystem::create_directories(project.folder.path / "assets/data");
+    for (const auto& [name, table] :
+         {std::pair{"party", &tables.party}, std::pair{"skills", &tables.skills},
+          std::pair{"items", &tables.items}}) {
+        std::ofstream(project.folder.path / "assets/data" / (std::string(name) + ".dtable"),
+                      std::ios::binary)
+            << game::table_to_text(*table);
+    }
+    assets::AssetDatabase db(project.folder.path / "assets");
+    db.refresh();
+    const game::TablesObject data(&db);
+    game::PartyObject party;
+    game::InventoryObject bag;
+    party.set_tables(&data);
+    party.set_inventory(&bag);
+    party.add_member("hero");
+    party.add_member("mage");
+    party.condition()["hero"] = {10, 0}; // hurt
+    bag.give("potion", 2);
+    game::GameMenu menu;
+    menu.attach(&party, &data, &bag);
+    const game::SaveObject saves([] { return std::filesystem::path{}; });
+    menu.open_pause();
+    // Items: the potion, on the hero.
+    static_cast<void>(menu.press("move_down", saves));
+    static_cast<void>(menu.press("interact", saves));
+    REQUIRE(menu.page() == game::GameMenu::Page::Items);
+    CHECK(menu.choices(saves) == std::vector<std::string>{"Potion  x2"});
+    static_cast<void>(menu.press("interact", saves));
+    CHECK(menu.choosing_target());
+    static_cast<void>(menu.press("interact", saves)); // the hero
+    CHECK(party.condition().at("hero").first == 30);
+    CHECK(bag.count_of("potion") == 1);
+    // Back to the pause menu, then Skills: the mage's Heal (Fire does not heal), on the hero.
+    static_cast<void>(menu.press("cancel", saves));
+    static_cast<void>(menu.press("cancel", saves));
+    REQUIRE(menu.page() == game::GameMenu::Page::Pause);
+    static_cast<void>(menu.press("move_down", saves));
+    static_cast<void>(menu.press("interact", saves));
+    REQUIRE(menu.page() == game::GameMenu::Page::Skills);
+    static_cast<void>(menu.press("move_down", saves)); // the mage casts
+    static_cast<void>(menu.press("interact", saves));
+    CHECK(menu.choices(saves) == std::vector<std::string>{"Heal  3 MP"});
+    static_cast<void>(menu.press("interact", saves));
+    static_cast<void>(menu.press("interact", saves)); // on the hero
+    CHECK(party.condition().at("hero").first == 40);  // 30 + 15, up to 40
+    CHECK(party.condition().at("mage").second == 9);  // 12 - 3
 }

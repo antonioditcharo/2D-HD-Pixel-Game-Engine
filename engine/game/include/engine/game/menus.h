@@ -1,9 +1,9 @@
 #pragma once
 
 // Ready-made menus (plan/02 F1, K3), as RPG Maker games come with them: a title screen
-// (New game, Continue, Quit) and a pause menu on the Menu key (Resume, Items, Quests, Party,
-// Save, Load, Quit), with pages for what the player carries, the journal, the party's
-// status and the save slots. A project turns each on in its settings.
+// (New game, Continue, Quit) and a pause menu on the Menu key (Resume, Items, Skills, Quests,
+// Party, Save, Load, Quit), with pages for what the player carries, the journal, the party's status
+// and the save slots. A project turns each on in its settings.
 //
 // See docs/dev/menus.md.
 
@@ -17,6 +17,7 @@
 #include "engine/ui/text.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,6 +37,7 @@ public:
         Title,
         Pause,
         Items,
+        Skills,
         Quests,
         Party,
         Equip,
@@ -69,7 +71,7 @@ public:
     /// What the Equip page works on: the party (changed), the tables for names and numbers,
     /// and what the player carries. Set once by the runtime.
     void attach(PartyObject* party, const TablesObject* tables,
-                const InventoryObject* inventory) noexcept {
+                InventoryObject* inventory) noexcept {
         party_ = party;
         tables_ = tables;
         inventory_ = inventory;
@@ -78,6 +80,8 @@ public:
     void set_translations(const Translations* translations) noexcept {
         translations_ = translations;
     }
+    /// The Items and Skills pages' step: who uses a skill, what, or on whom.
+    [[nodiscard]] bool choosing_target() const noexcept { return use_step_ == UseStep::Target; }
     /// The Equip page's step: choosing a member, one of their slots, or what to wear there.
     enum class EquipStep : std::uint8_t { Member, Slot, Item };
     [[nodiscard]] EquipStep equip_step() const noexcept { return equip_step_; }
@@ -130,7 +134,19 @@ private:
     const Translations* translations_ = nullptr;
     PartyObject* party_ = nullptr;
     const TablesObject* tables_ = nullptr;
-    const InventoryObject* inventory_ = nullptr;
+    InventoryObject* inventory_ = nullptr;
+
+    // The Items and Skills pages: using a potion or a healing skill on someone.
+    enum class UseStep : std::uint8_t { User, List, Target };
+    /// What can be used now: the items carried that heal, or the user's healing skills.
+    [[nodiscard]] std::vector<std::string> usable() const;
+    [[nodiscard]] std::vector<std::string> use_choices() const;
+    /// A member's numbers now: their HP and MP as battles left them.
+    [[nodiscard]] std::optional<Fighter> member_now(const std::string& id) const;
+    void use_on(const std::string& target);
+    UseStep use_step_ = UseStep::List;
+    std::size_t use_user_ = 0;
+    std::string use_what_;
 };
 
 } // namespace engine::game

@@ -24,11 +24,20 @@ Rules run only on New game. Continue lists save slots 1 to 3 (*(empty)* where no
 saved; an empty one says so); choosing one loads it; Cancel goes back to the title.
 
 **The pause menu** opens on the Menu key (Escape, or Start on a gamepad) while nothing else
-is open (not during a message or a battle): **Resume**, **Items** (what the inventory holds),
+is open (not during a message or a battle): **Resume**, **Items** and **Skills** (below),
 **Quests** (the journal: [game.md](game.md)), **Party** (members and HP, and the experience
 won: [battle.md](battle.md)), **Equip** (below), **Options** (below), **Save** and **Load** (slots 1 to 3; saving says *Saved in slot
 2.*) and **Quit**. Up and Down choose, Interact picks, Cancel (or Menu) goes back, and from
 the menu itself resumes. While a menu is open, nobody moves and Rules hear no keys.
+
+**Items** lists what the player carries that heals (rows of `data/items` with a `heal`
+above 0, not equipment), with how many: picking one asks *On whom?*, and each Interact on
+a party member uses one (*Hero recovers 20 HP.*), until none are left. **Skills** asks
+*Who uses a skill?*, then lists that member's healing skills at their level, with their
+MP cost: picking one asks *On whom?*, and each use spends the caster's MP, until too
+little is left (*Mira has too little MP.*). Members who are down can only be helped at an
+inn (*Heal the party*). Cancel goes back a step. HP and MP changed here are those the next
+battle starts with ([battle.md](battle.md)).
 
 **Equip** dresses the party, as RPG Maker's Equipment screen does: choose a member (with
 their level), then a slot (*Weapon*, *Shield*, *Head*, *Body*, *Accessory*, each with what
@@ -58,4 +67,4 @@ keeps the defaults.
    with a title picture, music and more slots.
 2. **More options**: window size and full screen, gamepad buttons, and a reset to the
    defaults (U2).
-3. **A Skills page** in the pause menu, to use healing skills outside battle.
+3. **A Status page**: each member's numbers, equipment, skills and experience at a glance.
