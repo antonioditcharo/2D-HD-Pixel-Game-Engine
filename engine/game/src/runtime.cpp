@@ -1,6 +1,7 @@
 #include "engine/game/runtime.h"
 
 #include "engine/foundation/text.h"
+#include "engine/game/localization.h"
 #include "engine/game/logic_world.h"
 #include "engine/game/shop.h"
 #include "engine/logic/compiler.h"
@@ -41,7 +42,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 31> known_project_keys{"format",
+constexpr std::array<std::string_view, 33> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -71,7 +72,9 @@ constexpr std::array<std::string_view, 31> known_project_keys{"format",
                                                               "start_hour",
                                                               "title_screen",
                                                               "pause_menu",
-                                                              "text_speed"};
+                                                              "text_speed",
+                                                              "language",
+                                                              "languages"};
 
 } // namespace
 
@@ -309,6 +312,8 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     };
     text("name", settings.name, true);
     text("start_scene", settings.start_scene, true);
+    text("language", settings.language, false);
+    text("languages", settings.languages, false);
     whole("ppu", settings.ppu, 8, 64);
     whole("width", settings.width, 16, 7680);
     whole("height", settings.height, 16, 4320);
@@ -476,6 +481,12 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["version"] = project_version;
     json["name"] = settings.name;
     json["start_scene"] = settings.start_scene;
+    if (!settings.language.empty()) {
+        json["language"] = settings.language;
+    }
+    if (!settings.languages.empty()) {
+        json["languages"] = settings.languages;
+    }
     json["render_style"] = settings.style == RenderStyle::Diorama ? "diorama" : "classic_2d";
     json["camera_pitch"] = settings.camera_pitch;
     json["camera_distance"] = settings.camera_distance;
@@ -615,6 +626,7 @@ serialize::Json options_to_json(const GameMenu::Options& options, const input::I
     json["music"] = options.music;
     json["sounds"] = options.sounds;
     json["text_speed"] = options.text_speed;
+    json["language"] = options.language;
     serialize::Json keys = serialize::Json::object();
     for (const std::string_view action : rebindable) {
         serialize::Json codes = serialize::Json::array();
@@ -641,6 +653,10 @@ void options_from_json(const serialize::Json& json, GameMenu::Options& options,
     number("music", options.music, 0.0, 1.0);
     number("sounds", options.sounds, 0.0, 1.0);
     number("text_speed", options.text_speed, -1.0, 1000.0);
+    if (const auto language = json.find("language");
+        language != json.end() && language->is_string()) {
+        options.language = language->get<std::string>();
+    }
     const auto keys = json.find("keys");
     if (keys == json.end() || !keys->is_object()) {
         return;
@@ -706,6 +722,7 @@ struct Runtime::Impl {
     BattleObject battle;
     std::optional<BattleScreen> battle_screen;
     std::optional<ShopScreen> shop_screen;
+    Translations translations; ///< From data/translations, in the language chosen.
     GameMenu menu;
     std::optional<std::array<double, 2>> player_was; ///< For encounters: where the player stood.
     ConversationPlayer conversation;
@@ -891,6 +908,11 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
             serialize::Issue{"", "The lighting object could not be made available to logic."});
     }
     r.tables = TablesObject(&r.assets);
+    // Words in the language chosen: messages, answers, names and the menus.
+    r.translations = Translations(r.tables.find(translations_table));
+    r.translations.set_language(r.settings.language);
+    r.dialogue.set_translations(&r.translations);
+    r.menu.set_translations(&r.translations);
     if (!r.vm->bind("tables", reflect::ObjectRef::of(r.tables))) {
         issues.push_back(
             serialize::Issue{"", "The tables object could not be made available to logic."});
@@ -1640,7 +1662,8 @@ bool Runtime::draw() {
             }
         }
         // Who speaks, on a plate above the box's left end.
-        if (const std::string& speaker = r.dialogue.current_speaker(); !speaker.empty()) {
+        if (const std::string speaker = r.translations.translate(r.dialogue.current_speaker());
+            !speaker.empty()) {
             const float plate_width =
                 static_cast<float>(ui::measure(font, speaker)) + (2.0F * message_padding);
             const float plate_height =
@@ -2139,6 +2162,9 @@ void Runtime::save_options() {
 
 void Runtime::apply_options() {
     Impl& r = *impl_;
+    // The player's language, else the game's own.
+    r.translations.set_language(r.menu.options().language.empty() ? r.settings.language
+                                                                  : r.menu.options().language);
     if (r.audio_engine != nullptr) {
         r.audio_engine->set_player_volume(audio::Bus::Music, r.menu.options().music);
         r.audio_engine->set_player_volume(audio::Bus::Sounds, r.menu.options().sounds);

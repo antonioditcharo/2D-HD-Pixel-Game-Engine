@@ -4,6 +4,7 @@
 
 #include "engine/game/battle.h"
 #include "engine/game/conversation.h"
+#include "engine/game/localization.h"
 #include "engine/game/logic_world.h"
 #include "engine/game/runtime.h"
 #include "engine/game/shop.h"
@@ -3022,7 +3023,7 @@ TEST_CASE("The Options page sets volumes and text speed, rebinds keys, and keeps
     press(input::Key::Down);
     press(input::Key::Down);
     press(input::Key::Right); // Text speed: Instant
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         press(input::Key::Down); // to Interact
     }
     press(input::Key::Z);
@@ -3087,7 +3088,7 @@ TEST_CASE("Rebinding a key another action has takes it; an action left with none
         press(input::Key::Down);
     }
     press(input::Key::Z); // Options
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         press(input::Key::Down); // to Interact
     }
     press(input::Key::Z);
@@ -3571,8 +3572,7 @@ TEST_CASE("Status effects: given by skills and attacks, hurting each round, held
     REQUIRE(b.choose({game::BattleCommand::Kind::Skill, "venom", 1}, none, error));
     const std::vector<std::string> first = b.take_messages();
     CHECK(std::find(first.begin(), first.end(), "Slime is poisoned!") != first.end());
-    CHECK(std::find(first.begin(), first.end(), "Slime takes 2 damage (poisoned).") !=
-          first.end());
+    CHECK(std::find(first.begin(), first.end(), "Slime takes 2 damage (poisoned).") != first.end());
     CHECK(b.fighters()[1].hp == hp - 2);
     REQUIRE(b.choose({game::BattleCommand::Kind::Defend, {}, 0}, none, error));
     CHECK(said("Slime is no longer poisoned."));
@@ -3630,4 +3630,83 @@ TEST_CASE("Status effects: equipment resists them; an asleep party fights on by 
         CHECK(std::find(lines.begin(), lines.end(), "Hero is asleep and cannot act.") !=
               lines.end());
     }
+}
+
+TEST_CASE("Localization: keys, the pseudo language, translations and new rows") {
+    CHECK(game::translation_key("Hello") == game::translation_key("Hello"));
+    CHECK(game::translation_key("Hello") != game::translation_key("Hello!"));
+    CHECK(game::translation_key("Hello").size() == 10);
+    CHECK(game::pseudo_localize("Hello [wave]you[/wave] {name}") ==
+          "[Heelloo [wave]yoouu[/wave] {name}]");
+    game::Table table;
+    table.columns = {{"source", game::ColumnKind::Text},
+                     {"fr", game::ColumnKind::Text},
+                     {"notes", game::ColumnKind::Text}};
+    table.rows.push_back(
+        {game::translation_key("Hello"), {{"source", "Hello"}, {"fr", "Bonjour"}}});
+    table.rows.push_back({game::translation_key("Yes"), {{"source", "Yes"}, {"fr", "Oui"}}});
+    table.rows.push_back({game::translation_key("No"), {{"source", "No"}, {"fr", "Non"}}});
+    game::Translations words(&table);
+    CHECK(words.languages() == std::vector<std::string>{"fr"});
+    CHECK(words.translate("Hello") == "Hello"); // no language chosen
+    words.set_language("fr");
+    CHECK(words.translate("Hello") == "Bonjour");
+    CHECK(words.translate("Goodbye") == "Goodbye"); // not translated: as written
+    CHECK(words.translate_answers("Yes | No|Maybe") == "Oui|Non|Maybe");
+    words.set_language(std::string(game::pseudo_language));
+    CHECK(words.translate("No") == "[Noo]");
+    // New texts are added once, with columns for new languages; translations stay.
+    CHECK(game::add_translation_rows(table, {"Hello", "Goodbye", "Goodbye", ""}, {"de"}) == 1);
+    CHECK(table.rows.size() == 4);
+    CHECK(table.column("de") != nullptr);
+    CHECK(table.text(game::translation_key("Hello"), "fr") == "Bonjour");
+}
+
+TEST_CASE("A game in another language: messages and answers shown translated, Rules unchanged") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["language"] = "fr";
+        settings["width"] = 320; // one page for the question
+        settings["height"] = 180;
+        write_json(project.folder.path / game::project_file, settings);
+        game::Table table;
+        table.columns = {{"source", game::ColumnKind::Text}, {"fr", game::ColumnKind::Text}};
+        for (const auto& [source, fr] :
+             {std::pair{"Ready?", "Prêt ?"}, std::pair{"Yes", "Oui"}, std::pair{"No", "Non"}}) {
+            table.rows.push_back({game::translation_key(source), {{"source", source}, {"fr", fr}}});
+        }
+        std::filesystem::create_directories(project.folder.path / "assets/data");
+        std::ofstream(project.folder.path / "assets/data/translations.dtable", std::ios::binary)
+            << game::table_to_text(table);
+        logic::LogicAsset rules;
+        rules.name = "ask";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "dialogue", "ask",
+                                       {Project::text("Ready?"), Project::text("Yes|No")})},
+                        {}});
+        write_json(project.folder.path / "assets/logic/ask.drules",
+                   serialize::logic_to_json(rules));
+    }
+    input::Recording replay;
+    replay.record(3, key(input::Key::Z), true); // Yes
+    replay.record(4, key(input::Key::Z), false);
+    const auto runtime = project.open(no_graphics(&replay));
+    runtime->step();
+    REQUIRE(runtime->dialogue().current() != nullptr);
+    CHECK(*runtime->dialogue().current() == "Prêt ?");
+    CHECK(runtime->dialogue().choices() == std::vector<std::string>{"Oui", "Non"});
+    for (int i = 0; i < 6; ++i) {
+        runtime->step();
+    }
+    // Rules hear the answer as written (the project's own Rules log it).
+    CHECK(std::count(runtime->log().begin(), runtime->log().end(), "Yes") == 1);
 }

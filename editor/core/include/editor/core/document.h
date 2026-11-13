@@ -148,6 +148,14 @@ public:
     /// replacing one there), at the project's pixels per unit. Returns its path; empty, with
     /// `error`, if it cannot.
     std::string make_autotiles(std::string_view path, std::string& error);
+    /// Every text the game shows that can be translated: the conversations' lines, choices
+    /// and speakers, what Rules, Sequences and Brains say and ask (and the answers), and the
+    /// menus' words. In the order found, each once.
+    [[nodiscard]] std::vector<std::string> texts_to_translate() const;
+    /// Adds the texts_to_translate() that data/translations lacks to it (made if missing),
+    /// with a column for each of the project's `languages`; translations already there
+    /// stay. Returns how many were added; -1, with `error`, if it cannot be written.
+    std::int64_t collect_translations(std::string& error);
     /// Makes `path` the scene the game starts in: a project setting, as one undo step.
     bool set_start_scene(std::string_view path, std::string& error);
     /// What an entity of one of the project's other scenes is made of, by a name logic

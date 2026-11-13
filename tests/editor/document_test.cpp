@@ -5,7 +5,9 @@
 #include "engine/audio/audio.h"
 #include "engine/foundation/guid.h"
 #include "engine/game/behaviours.h"
+#include "engine/game/localization.h"
 #include "engine/game/runtime.h"
+#include "engine/game/tables.h"
 #include "engine/input/input.h"
 #include "engine/logic/ir.h"
 #include "engine/scene2d/scene2d.h"
@@ -20,6 +22,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -3225,4 +3228,33 @@ TEST_CASE("Auto-tiles: made from a picture's blocks, and painted by their neighb
     CHECK(cell(4, 4) == -1);
     CHECK(cell(4, 3) ==
           static_cast<std::int32_t>(autotile_shape(engine::assets::east | engine::assets::west)));
+}
+
+TEST_CASE("Collecting texts to translate: Rules' words, the menus', once each, kept on again") {
+    const Sample sample;
+    const auto d = sample.open();
+    const std::vector<std::string> texts = d->texts_to_translate();
+    CHECK(std::find(texts.begin(), texts.end(), "Resume") != texts.end());
+    CHECK(std::find(texts.begin(), texts.end(), "New game") != texts.end());
+    CHECK(std::set<std::string>(texts.begin(), texts.end()).size() == texts.size());
+    // The project translates into French and German.
+    engine::game::ProjectSettings settings = d->settings();
+    settings.languages = "fr, de";
+    std::string error;
+    REQUIRE(d->set_settings(settings, error));
+    const std::int64_t added = d->collect_translations(error);
+    CHECK(added == static_cast<std::int64_t>(texts.size()));
+    const engine::assets::AssetRecord* record = d->assets().find("data/translations.dtable");
+    REQUIRE(record != nullptr);
+    const std::optional<std::vector<std::uint8_t>> bytes = d->assets().read(record->guid);
+    REQUIRE(bytes.has_value());
+    const std::optional<engine::game::Table> table = engine::game::parse_table(
+        std::string_view(reinterpret_cast<const char*>(bytes->data()), bytes->size()), // NOLINT
+        error);
+    REQUIRE(table.has_value());
+    CHECK(table->column("fr") != nullptr);
+    CHECK(table->column("de") != nullptr);
+    CHECK(table->text(engine::game::translation_key("Resume"), "source") == "Resume");
+    // Collecting again adds nothing new.
+    CHECK(d->collect_translations(error) == 0);
 }

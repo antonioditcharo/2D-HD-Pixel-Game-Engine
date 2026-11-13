@@ -202,6 +202,30 @@ void ProjectPanel::build() {
     channel(tr("Background green"), "background_g", &engine::render::Color::g);
     channel(tr("Background blue"), "background_b", &engine::render::Color::b);
 
+    QFormLayout* words = group(tr("Languages"));
+    const auto text_field = [&](const QString& label, const char* key, const QString& tip,
+                                const std::string& value, std::string Settings::*field) {
+        auto* line = new QLineEdit(text_of(value), content_);
+        line->setObjectName(QStringLiteral("setting:%1").arg(QLatin1String(key)));
+        line->setToolTip(tip);
+        connect(line, &QLineEdit::textEdited, this, [this, field](const QString& text) {
+            const QByteArray bytes = text.trimmed().toUtf8();
+            apply([&bytes, field](Settings& s) {
+                (s.*field).assign(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+            });
+        });
+        connect(line, &QLineEdit::editingFinished, this, end);
+        words->addRow(label, line);
+    };
+    text_field(tr("Shown in"), "language",
+               tr("A column of data/translations (fr), pseudo to check what is not translated, "
+                  "or empty for the words as written"),
+               now.language, &Settings::language);
+    text_field(tr("Translate into"), "languages",
+               tr("Language codes, separated by commas (fr, de): Game > Collect texts to "
+                  "translate makes a column for each"),
+               now.languages, &Settings::languages);
+
     QFormLayout* menus = group(tr("Menus and messages"));
     number(
         menus, tr("Text speed (letters a second, 0: at once)"), "text_speed", 0, 1000, 5, 0,

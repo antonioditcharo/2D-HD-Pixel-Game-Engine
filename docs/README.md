@@ -140,6 +140,7 @@ Details and the questions that remain open are in
 | [Audio](dev/audio.md) | Sound effects and music: buses, fades, decoding, sound in no-code logic |
 | [Menus](dev/menus.md) | The ready-made title screen and pause menu: items, quests, party, saving and loading |
 | [Battles](dev/battle.md) | Turn-based battles from the data tables: the party, commands, speed order, rewards, the battle screen |
+| [Localization](dev/localization.md) | Games in other languages: texts collected into a translations table, the language chosen by the project or the player, a pseudo language |
 | [Shops](dev/shop.md) | The ready-made shop screen: buying and selling the items of `data/items` for gold, by quantity |
 | [Data tables](dev/tables.md) | Items, enemies, skills and levels as tables: typed columns, formulas, CSV, the grid editor, logic reading cells |
 | [Story: conversations](dev/story.md) | Conversations as graphs: the Story editor, speakers and name plates, choices, conditions, effects and flags, played by the game |

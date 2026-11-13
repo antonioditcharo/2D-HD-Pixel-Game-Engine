@@ -62,6 +62,11 @@ struct ProjectSettings {
     std::uint32_t width = 320; ///< The internal resolution, upscaled pixel-perfect.
     std::uint32_t height = 180;
     std::string start_scene; ///< The scene asset to start in, a path in assets/.
+    /// The language the game shows its words in: a column of data/translations ("fr"),
+    /// "pseudo" to check translations, or empty for the words as written.
+    std::string language;
+    /// The languages "Collect texts to translate" makes columns for: "fr, de".
+    std::string languages;
     render::Color background{20, 24, 40, 255};
     /// The Diorama camera: how far it looks down (5 to 85 degrees), how far it stands from
     /// the player (1 to 200 tiles), and its vertical field of view (5 to 90 degrees).

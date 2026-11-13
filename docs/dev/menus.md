@@ -45,6 +45,7 @@ replaces. Cancel goes back a step. Pieces are rows of `data/items` with a `slot`
 |---|---|
 | **Music**, **Sounds** | Left and Right change it by 10%, from 0% to 100%. It scales the game's own volume for that bus, so Rules changing the music volume keep the player's choice |
 | **Text speed** | Left and Right go through *The game's own* (the project's `text_speed`), *Instant*, *Slow* (20 letters a second), *Normal* (40) and *Fast* (80) |
+| **Language** | Left and Right go through *The game's own* and each language of `data/translations` ([localization.md](localization.md)) |
 | **Move up** … **Menu** | Each action's keys. Interact on one waits for a key (*press a key...*); the first key pressed becomes that action's only key (gamepad buttons stay as they were). An action that had that key loses it, and one left with no key takes the old keys of the action changed: the two swap |
 
 They are kept at once in `options.json` beside the save slots (volumes, text speed and

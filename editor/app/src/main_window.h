@@ -126,6 +126,9 @@ public:
     /// Makes auto-tiles from the picture at `asset_path` in assets/ (Document::
     /// make_autotiles()); returns the tileset made, or empty, saying why in the status bar.
     QString make_autotiles(const QString& asset_path);
+    /// Collects the texts to translate into data/translations
+    /// (Document::collect_translations()) and opens it; null if it cannot.
+    TableWindow* collect_translations();
     /// Makes a conversation as assets/talk/<name>.dtalk, with one node, and opens it.
     StoryWindow* new_story(const QString& name);
     /// Opens a data table of the project (its path in assets/, a .dtable), or brings its

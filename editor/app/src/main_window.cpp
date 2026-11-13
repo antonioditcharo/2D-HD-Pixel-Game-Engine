@@ -415,6 +415,25 @@ TableWindow* MainWindow::new_table(const QString& name) {
     return open_table(relative);
 }
 
+TableWindow* MainWindow::collect_translations() {
+    if (document_ == nullptr) {
+        return nullptr;
+    }
+    std::string error;
+    const std::int64_t added = document_->collect_translations(error);
+    if (added < 0) {
+        statusBar()->showMessage(tr("Texts not collected: %1").arg(text_of(error)), 8000);
+        return nullptr;
+    }
+    reload_assets();
+    statusBar()->showMessage(
+        tr("%n new text(s) to translate in data/translations: fill in a column per language, "
+           "or export it as CSV for translators",
+           nullptr, static_cast<int>(added)),
+        10000);
+    return open_table(QStringLiteral("data/translations.dtable"));
+}
+
 QString MainWindow::make_autotiles(const QString& asset_path) {
     if (document_ == nullptr) {
         return {};
@@ -753,6 +772,10 @@ void MainWindow::build_actions() {
     sound_action->setObjectName(QStringLiteral("new_sound"));
     sprite_action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+N")));
     QAction* doctor = game->addAction(tr("Check the &project"), this, [this] { check_project(); });
+    QAction* translate = game->addAction(tr("Collect texts to &translate"), this,
+                                         [this] { collect_translations(); });
+    translate->setToolTip(tr("Puts every text the game shows in data/translations, with a "
+                             "column for each language to translate into"));
     doctor->setObjectName(QStringLiteral("check_project"));
     doctor->setShortcut(QKeySequence(QStringLiteral("F7")));
     QAction* start =

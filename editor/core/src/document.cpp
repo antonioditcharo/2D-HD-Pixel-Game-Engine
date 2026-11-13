@@ -2,8 +2,12 @@
 
 #include "engine/assets/autotile.h"
 #include "engine/game/behaviours.h"
+#include "engine/game/conversation.h"
+#include "engine/game/localization.h"
 #include "engine/game/logic_world.h"
+#include "engine/game/menus.h"
 #include "engine/game/save.h"
+#include "engine/game/tables.h"
 #include "engine/scene2d/scene2d.h"
 
 #include <algorithm>
@@ -11,9 +15,11 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <variant>
@@ -356,6 +362,143 @@ std::string Document::make_autotiles(std::string_view path, std::string& error) 
     }
     static_cast<void>(d.assets->refresh()); // its .meta, and so its GUID
     return made.generic_string();
+}
+
+std::vector<std::string> Document::texts_to_translate() const {
+    const Impl& d = *impl_;
+    std::vector<std::string> out;
+    std::set<std::string, std::less<>> seen;
+    const auto add = [&](std::string text) {
+        const std::size_t a = text.find_first_not_of(' ');
+        if (a == std::string::npos) {
+            return;
+        }
+        text = text.substr(a, text.find_last_not_of(' ') - a + 1);
+        if (seen.insert(text).second) {
+            out.push_back(std::move(text));
+        }
+    };
+    const auto answers = [&](const std::string& list) {
+        std::size_t start = 0;
+        while (start <= list.size()) {
+            const std::size_t bar = std::min(list.find('|', start), list.size());
+            add(list.substr(start, bar - start));
+            start = bar + 1;
+        }
+    };
+    // The conversations, in the order of their files.
+    for (const engine::assets::AssetRecord& record : d.assets->assets()) {
+        if (!record.path.ends_with(".dtalk")) {
+            continue;
+        }
+        const std::optional<std::vector<std::uint8_t>> bytes = d.assets->read(record.guid);
+        std::string ignored;
+        const std::optional<game::Conversation> talk =
+            bytes ? game::parse_conversation(
+                        std::string_view(reinterpret_cast<const char*>(bytes->data()), // NOLINT
+                                         bytes->size()),
+                        ignored)
+                  : std::nullopt;
+        if (!talk) {
+            continue;
+        }
+        for (const game::Speaker& speaker : talk->speakers) {
+            add(speaker.name);
+        }
+        for (const game::TalkNode& node : talk->nodes) {
+            add(node.text);
+            for (const game::TalkChoice& choice : node.choices) {
+                add(choice.text);
+            }
+        }
+    }
+    // What logic says and asks, written as text in its steps.
+    const auto literal = [](const std::vector<logic::Expr>& arguments, std::size_t i) {
+        if (i >= arguments.size() || arguments[i].kind != logic::ExprKind::Literal) {
+            return std::string();
+        }
+        const std::string* words = std::get_if<std::string>(&arguments[i].literal);
+        return words != nullptr ? *words : std::string();
+    };
+    std::function<void(const std::vector<logic::Stmt>&)> steps =
+        [&](const std::vector<logic::Stmt>& list) {
+            for (const logic::Stmt& step : list) {
+                if (step.kind == logic::StmtKind::Do && step.object == "dialogue") {
+                    const bool speaker = step.member.ends_with("_as");
+                    const std::size_t first = speaker ? 1 : 0;
+                    if (speaker) {
+                        add(literal(step.arguments, 0));
+                    }
+                    if (step.member.starts_with("say") || step.member.starts_with("ask")) {
+                        add(literal(step.arguments, first));
+                    }
+                    if (step.member.starts_with("ask")) {
+                        answers(literal(step.arguments, first + 1));
+                    }
+                }
+                steps(step.body);
+                steps(step.otherwise);
+            }
+        };
+    for (const LogicFile& file : d.logic) {
+        for (const logic::Rule& rule : file.asset.rules) {
+            steps(rule.actions);
+            steps(rule.otherwise);
+        }
+        for (const logic::Sequence& sequence : file.asset.sequences) {
+            steps(sequence.steps);
+        }
+        for (const logic::Brain& brain : file.asset.brains) {
+            for (const logic::BrainState& state : brain.states) {
+                steps(state.on_enter);
+                steps(state.while_in);
+                steps(state.on_exit);
+            }
+        }
+    }
+    for (std::string& word : game::menu_words()) {
+        add(std::move(word));
+    }
+    return out;
+}
+
+std::int64_t Document::collect_translations(std::string& error) {
+    const Impl& d = *impl_;
+    const std::string path = std::string(game::translations_table) + ".dtable";
+    game::Table table;
+    if (const engine::assets::AssetRecord* record = d.assets->find(path)) {
+        const std::optional<std::vector<std::uint8_t>> bytes = d.assets->read(record->guid);
+        std::optional<game::Table> read =
+            bytes ? game::parse_table(
+                        std::string_view(reinterpret_cast<const char*>(bytes->data()), // NOLINT
+                                         bytes->size()),
+                        error)
+                  : std::nullopt;
+        if (!read) {
+            error = path + " cannot be read" + (error.empty() ? "." : ": " + error);
+            return -1;
+        }
+        table = std::move(*read);
+    }
+    std::vector<std::string> languages;
+    std::string language;
+    for (const char c : d.settings.languages + ",") {
+        if (c == ',' || c == ' ') {
+            if (!language.empty()) {
+                languages.push_back(std::move(language));
+                language.clear();
+            }
+        } else {
+            language += c;
+        }
+    }
+    const std::size_t added = game::add_translation_rows(table, texts_to_translate(), languages);
+    if (!game::write_file_atomically(d.folder / "assets" / path, game::table_to_text(table),
+                                     error)) {
+        return -1;
+    }
+    static_cast<void>(d.assets->refresh());
+    return static_cast<std::int64_t>(added);
 }
 
 bool Document::create_scene(std::string_view path, std::string& error) {

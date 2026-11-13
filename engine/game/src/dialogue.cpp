@@ -1,6 +1,7 @@
 #include "engine/game/dialogue.h"
 
 #include "engine/game/lighting.h"
+#include "engine/game/localization.h"
 
 #include <algorithm>
 #include <array>
@@ -23,19 +24,24 @@ std::string trimmed(std::string_view text) {
 
 } // namespace
 
+std::string DialogueObject::shown(const std::string& text) const {
+    return translations_ != nullptr ? translations_->translate(text) : text;
+}
+
 void DialogueObject::say(const std::string& text) {
-    queue_.push_back(Message{text, {}});
+    queue_.push_back(Message{shown(text), {}});
     said_.push_back(text);
 }
 
 void DialogueObject::ask(const std::string& question, const std::string& answers) {
-    Message message{question, {}};
+    Message message{shown(question), {}};
     std::size_t start = 0;
     while (start <= answers.size()) {
         const std::size_t bar = std::min(answers.find('|', start), answers.size());
         std::string answer = trimmed(std::string_view(answers).substr(start, bar - start));
         if (!answer.empty()) {
-            message.choices.push_back(std::move(answer));
+            message.choices.push_back(shown(answer));
+            message.written.push_back(std::move(answer));
         }
         start = bar + 1;
     }
@@ -118,7 +124,8 @@ bool DialogueObject::choose(std::size_t index) {
         return false;
     }
     answer_ = static_cast<std::int64_t>(index) + 1;
-    answer_text_ = queue_.front().choices[index];
+    answer_text_ = index < queue_.front().written.size() ? queue_.front().written[index]
+                                                         : queue_.front().choices[index];
     return true;
 }
 

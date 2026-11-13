@@ -40,6 +40,12 @@ std::string speed_name(double speed) {
 
 } // namespace
 
+std::vector<std::string> menu_words() {
+    std::vector<std::string> out(title_choices.begin(), title_choices.end());
+    out.insert(out.end(), pause_choices.begin(), pause_choices.end());
+    return out;
+}
+
 void GameMenu::open_title() {
     page_ = Page::Title;
     from_title_ = true;
@@ -58,10 +64,14 @@ std::vector<std::string> GameMenu::choices(const SaveObject& saves) const {
     std::vector<std::string> out;
     switch (page_) {
     case Page::Title:
-        out.assign(title_choices.begin(), title_choices.end());
+        for (const char* choice : title_choices) {
+            out.push_back(tr(choice));
+        }
         break;
     case Page::Pause:
-        out.assign(pause_choices.begin(), pause_choices.end());
+        for (const char* choice : pause_choices) {
+            out.push_back(tr(choice));
+        }
         break;
     case Page::Equip:
         out = equip_choices();
@@ -70,6 +80,8 @@ std::vector<std::string> GameMenu::choices(const SaveObject& saves) const {
         out.push_back("Music  " + percent(options_.music));
         out.push_back("Sounds  " + percent(options_.sounds));
         out.push_back("Text speed  " + speed_name(options_.text_speed));
+        out.push_back("Language  " + (options_.language.empty() ? std::string("The game's own")
+                                                                : options_.language));
         for (const auto& [action, keys] : options_.keys) {
             out.push_back(action_label(action) + "  " +
                           (waiting_ == action ? std::string("press a key...") : keys));
@@ -104,7 +116,7 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
     }
     // Options: Left and Right change the value the cursor is on.
     if (page_ == Page::Options && (action == "move_left" || action == "move_right") &&
-        cursor_ < 3) {
+        cursor_ < first_key_line) {
         const double step = action == "move_right" ? 0.1 : -0.1;
         if (cursor_ == 0) {
             options_.music =
@@ -112,6 +124,18 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
         } else if (cursor_ == 1) {
             options_.sounds =
                 std::clamp(std::round((options_.sounds + step) * 10.0) / 10.0, 0.0, 1.0);
+        } else if (cursor_ == 3) {
+            // The game's own, then each language of data/translations, round.
+            std::vector<std::string> languages{std::string()};
+            if (translations_ != nullptr) {
+                languages.insert(languages.end(), translations_->languages().begin(),
+                                 translations_->languages().end());
+            }
+            const auto now = std::find(languages.begin(), languages.end(), options_.language);
+            std::size_t at =
+                now == languages.end() ? 0 : static_cast<std::size_t>(now - languages.begin());
+            at = (at + (action == "move_right" ? 1 : languages.size() - 1)) % languages.size();
+            options_.language = languages[at];
         } else {
             std::size_t at = 0;
             for (std::size_t i = 0; i < text_speeds.size(); ++i) {
@@ -247,8 +271,8 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
     }
     case Page::Options:
         // On a key: wait for the next key pressed, to bind to it.
-        if (cursor_ >= 3 && cursor_ - 3 < options_.keys.size()) {
-            waiting_ = options_.keys[cursor_ - 3].first;
+        if (cursor_ >= first_key_line && cursor_ - first_key_line < options_.keys.size()) {
+            waiting_ = options_.keys[cursor_ - first_key_line].first;
         }
         return {};
     case Page::Save:
@@ -265,6 +289,10 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
     default:
         return {};
     }
+}
+
+std::string GameMenu::tr(std::string_view words) const {
+    return translations_ != nullptr ? translations_->translate(words) : std::string(words);
 }
 
 BattleData GameMenu::equip_data() const {
@@ -401,7 +429,7 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
             const std::size_t current =
                 static_cast<std::size_t>(page_) - static_cast<std::size_t>(Page::Pause);
             for (std::size_t k = 0; k < pause.size(); ++k) {
-                write("  " + pause[k], pad + pad, pad + pad + (line * static_cast<float>(k)),
+                write("  " + tr(pause[k]), pad + pad, pad + pad + (line * static_cast<float>(k)),
                       k == current ? gold : dim);
             }
         }

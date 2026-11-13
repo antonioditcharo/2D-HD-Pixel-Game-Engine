@@ -32,8 +32,15 @@ struct SpeakerLook {
     friend bool operator==(const SpeakerLook&, const SpeakerLook&) = default;
 };
 
+class Translations;
+
 class DialogueObject {
 public:
+    /// Where messages, questions and answers are translated from as they are queued
+    /// (localization.h); null for none.
+    void set_translations(const Translations* translations) noexcept {
+        translations_ = translations;
+    }
     /// Queues a message; it shows once those before it are closed.
     void say(const std::string& text);
     /// Queues a question with answers separated by "|" ("Yes|No"); spaces around each are
@@ -96,11 +103,15 @@ public:
 
 private:
     struct Message {
-        std::string text;
-        std::vector<std::string> choices;
+        std::string text;                 ///< As shown: translated.
+        std::vector<std::string> choices; ///< As shown: translated.
+        std::vector<std::string> written; ///< The answers as written, for answer_text().
         std::string speaker;
         SpeakerLook look;
     };
+    /// `text` translated, if there are translations.
+    [[nodiscard]] std::string shown(const std::string& text) const;
+    const Translations* translations_ = nullptr;
     std::optional<ConversationRequest> request_;
     std::map<std::string, bool, std::less<>> flags_;
     std::deque<Message> queue_;

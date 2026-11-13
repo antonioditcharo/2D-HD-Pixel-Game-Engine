@@ -9,6 +9,7 @@
 
 #include "engine/game/battle_screen.h"
 #include "engine/game/inventory.h"
+#include "engine/game/localization.h"
 #include "engine/game/quests.h"
 #include "engine/game/save.h"
 #include "engine/input/input.h"
@@ -17,9 +18,13 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::game {
+
+/// The words of the title screen and the pause menu, to translate.
+[[nodiscard]] std::vector<std::string> menu_words();
 
 /// The save slots the menus offer.
 inline constexpr std::int64_t menu_slots = 3;
@@ -45,9 +50,13 @@ public:
         /// Letters a second messages are typed at; -1 keeps the game's own, 0 shows them
         /// whole.
         double text_speed = -1.0;
+        /// A language of data/translations; empty keeps the game's own.
+        std::string language;
         /// Each action the player can rebind, with the names of its keys now.
         std::vector<std::pair<std::string, std::string>> keys;
     };
+    /// The Options page's first key line: Music, Sounds, Text speed and Language come first.
+    static constexpr std::size_t first_key_line = 4;
     /// What a choice asks the game to do.
     struct Result {
         enum class Kind : std::uint8_t { None, NewGame, Load, Save, Quit, Resume, Options, Rebind };
@@ -64,6 +73,10 @@ public:
         party_ = party;
         tables_ = tables;
         inventory_ = inventory;
+    }
+    /// Where the menus' words are translated from, and the languages offered; null for none.
+    void set_translations(const Translations* translations) noexcept {
+        translations_ = translations;
     }
     /// The Equip page's step: choosing a member, one of their slots, or what to wear there.
     enum class EquipStep : std::uint8_t { Member, Slot, Item };
@@ -112,6 +125,9 @@ private:
     EquipStep equip_step_ = EquipStep::Member;
     std::size_t equip_member_ = 0;
     std::size_t equip_slot_ = 0;
+    /// `words` translated, if there are translations.
+    [[nodiscard]] std::string tr(std::string_view words) const;
+    const Translations* translations_ = nullptr;
     PartyObject* party_ = nullptr;
     const TablesObject* tables_ = nullptr;
     const InventoryObject* inventory_ = nullptr;
