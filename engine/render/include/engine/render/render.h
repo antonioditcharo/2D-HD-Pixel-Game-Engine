@@ -428,6 +428,11 @@ struct Look {
     float contrast = 1.0F;         ///< 0 to 2.
     float saturation = 1.0F;       ///< 0 (grey) to 2.
     float vignette = 0.0F;         ///< How much the corners darken, 0 to 1.
+    /// The light's colour: each channel multiplied, 0 to 2 (1 changes nothing). Warm at dusk,
+    /// blue at night.
+    float tint_r = 1.0F;
+    float tint_g = 1.0F;
+    float tint_b = 1.0F;
 
     /// True if processing would change nothing, so it can be skipped.
     [[nodiscard]] bool neutral() const noexcept;

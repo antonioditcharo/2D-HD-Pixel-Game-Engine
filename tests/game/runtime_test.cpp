@@ -2743,3 +2743,70 @@ TEST_CASE("The battle screen is drawn over the world: enemies, the party, the me
         .write(reinterpret_cast<const char*>(png.data()),
                static_cast<std::streamsize>(png.size())); // NOLINT
 }
+
+TEST_CASE("Day and night: the light follows the clock, warm at dusk and blue at night") {
+    const game::LightingObject noon = game::daylight(12.0);
+    CHECK(noon.tint_r == doctest::Approx(1.0));
+    CHECK(noon.sun_angle == doctest::Approx(180.0)); // south at noon
+    CHECK(noon.sun_height == doctest::Approx(70.0));
+    const game::LightingObject dawn = game::daylight(6.0);
+    CHECK(dawn.sun_angle == doctest::Approx(90.0)); // rising in the east
+    CHECK(dawn.sun_height == doctest::Approx(5.0));
+    const game::LightingObject dusk = game::daylight(18.0);
+    CHECK(dusk.sun_angle == doctest::Approx(270.0));
+    CHECK(dusk.tint_r > 1.0);
+    CHECK(dusk.tint_b < 1.0);
+    const game::LightingObject night = game::daylight(23.0);
+    CHECK(night.tint_b > night.tint_r);
+    CHECK(night.ambient < noon.ambient);
+    CHECK(game::daylight(26.0).time_of_day == doctest::Approx(2.0)); // wraps
+    CHECK(game::daylight(-1.0).time_of_day == doctest::Approx(23.0));
+
+    // A clock of one real minute a day: fifteen seconds are six hours.
+    game::LightingObject light;
+    light.day_minutes = 1.0;
+    light.set_time(6.0);
+    CHECK(light.follows_time);
+    for (int i = 0; i < 15 * 60; ++i) {
+        game::advance_day(light, 1.0 / 60.0);
+    }
+    CHECK(light.time_of_day == doctest::Approx(12.0).epsilon(0.001));
+    CHECK(light.sun_height == doctest::Approx(70.0).epsilon(0.01));
+    // A tint set by logic stops following the time; the clock still runs.
+    light.set_tint(1.0, 0.2, 0.2);
+    game::advance_day(light, 1.0);
+    CHECK(light.tint_g == doctest::Approx(0.2));
+    CHECK(light.time_of_day > 12.0);
+}
+
+TEST_CASE("Night is drawn bluer than noon, and the clock is saved") {
+    const auto frame_at = [](double hour) {
+        const Project project;
+        std::vector<serialize::Issue> issues;
+        std::ifstream in(project.folder.path / game::project_file);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+        settings["day_minutes"] = 10.0;
+        settings["start_hour"] = hour;
+        write_json(project.folder.path / game::project_file, settings);
+        game::RuntimeOptions options;
+        options.headless = true;
+        const auto runtime = project.open(options);
+        REQUIRE(runtime->target() != nullptr);
+        runtime->step();
+        REQUIRE(runtime->draw());
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        // The background, at a corner (the hero is in the middle).
+        const render::Color corner = pixel(pixels, 32, 0, 0);
+        const serialize::Json saved = runtime->save();
+        CHECK(saved["lighting"]["time_of_day"].get<double>() ==
+              doctest::Approx(hour).epsilon(0.01));
+        CHECK(saved["lighting"]["follows_time"] == true);
+        return corner;
+    };
+    const render::Color noon = frame_at(12.0);
+    const render::Color night = frame_at(23.0);
+    CHECK(night.r < noon.r);
+    CHECK(night.b >= night.r);
+}

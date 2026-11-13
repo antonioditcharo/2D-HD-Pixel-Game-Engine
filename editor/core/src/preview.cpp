@@ -74,6 +74,11 @@ std::optional<engine::assets::Image> Preview::render(Document& document, double 
     if (settings.style != game::RenderStyle::Diorama) {
         look.tilt_shift = false; // a lens effect for the 3D style only
     }
+    // The light's colour at the hour the game starts (day and night).
+    const game::LightingObject light = game::starting_lighting(settings);
+    look.tint_r *= static_cast<float>(light.tint_r);
+    look.tint_g *= static_cast<float>(light.tint_g);
+    look.tint_b *= static_cast<float>(light.tint_b);
     const bool post = !look.neutral();
     render::RenderTarget& target = post ? *p.scene : *p.frame;
     if (settings.style == game::RenderStyle::Diorama) {

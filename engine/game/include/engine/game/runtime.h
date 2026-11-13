@@ -73,6 +73,10 @@ struct ProjectSettings {
     /// How the camera follows the player, in either style (CameraObject): smoothing in
     /// seconds (0 to 2), a dead zone and a look-ahead in tiles (0 to 16, 0 to 8).
     double camera_smoothing = 0.0;
+    /// Day and night: how many real minutes a game day lasts (0: no clock, the light as set
+    /// above), and the hour a game starts at (0 to 24).
+    double day_minutes = 0.0;
+    double start_hour = 12.0;
     double camera_dead_zone = 0.0;
     double camera_look_ahead = 0.0;
     /// The Diorama style's light at the start: ambient (0 to 2) and the sun (0 to 2).

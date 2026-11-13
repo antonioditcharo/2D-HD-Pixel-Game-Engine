@@ -241,3 +241,8 @@ Towards the reference scene of Spike R (`plan/08` Phase 0, `plan/04` §4):
    hardware.
 6. **The ADR-004 decision:** record whether the SDL GPU API covers the reference scene, or
    a native Direct3D 12 backend is needed.
+
+**The light's colour.** The Look also has a tint (`tint_r`, `tint_g`, `tint_b`, each 0 to 2,
+1 unchanged), multiplying each channel after grading: day and night colour the frame with it
+([game.md](game.md), Day and night). A Look that becomes non-neutral while a game plays (night
+falling) gets its post-processing pass then.

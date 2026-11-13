@@ -3,6 +3,8 @@
 #include "engine/game/lighting.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <string_view>
 #include <utility>
 
@@ -164,6 +166,91 @@ void register_dialogue_types(reflect::Registry& registry) {
         .tooltip("Happens when the player closes the last message.");
 }
 
+LightingObject daylight(double hours) {
+    struct Key {
+        double hour, ambient, sun, r, g, b;
+    };
+    static constexpr std::array<Key, 8> keys{{
+        {0.0, 0.22, 0.18, 0.55, 0.65, 1.00}, // night
+        {4.5, 0.22, 0.18, 0.55, 0.65, 1.00},
+        {6.0, 0.42, 0.30, 1.10, 0.86, 0.72}, // dawn
+        {9.0, 0.55, 0.45, 1.00, 0.98, 0.95},
+        {12.0, 0.60, 0.50, 1.00, 1.00, 1.00}, // noon
+        {16.0, 0.55, 0.45, 1.02, 0.97, 0.90},
+        {18.0, 0.42, 0.30, 1.15, 0.80, 0.65}, // dusk
+        {20.0, 0.22, 0.18, 0.55, 0.65, 1.00},
+    }};
+    double t = std::isfinite(hours) ? std::fmod(hours, 24.0) : 12.0;
+    if (t < 0.0) {
+        t += 24.0;
+    }
+    LightingObject light;
+    // Between the keys either side (after the last, towards midnight's).
+    Key a = keys.back();
+    Key b{24.0,           keys.front().ambient, keys.front().sun,
+          keys.front().r, keys.front().g,       keys.front().b};
+    for (std::size_t i = 0; i + 1 < keys.size(); ++i) {
+        if (t >= keys[i].hour && t < keys[i + 1].hour) {
+            a = keys[i];
+            b = keys[i + 1];
+        }
+    }
+    const double f = b.hour > a.hour ? (t - a.hour) / (b.hour - a.hour) : 0.0;
+    const auto mix = [f](double x, double y) { return x + ((y - x) * f); };
+    light.ambient = mix(a.ambient, b.ambient);
+    light.sun = mix(a.sun, b.sun);
+    light.tint_r = mix(a.r, b.r);
+    light.tint_g = mix(a.g, b.g);
+    light.tint_b = mix(a.b, b.b);
+    constexpr double pi = 3.14159265358979323846;
+    if (t >= 6.0 && t <= 18.0) {
+        light.sun_angle = 90.0 + ((t - 6.0) / 12.0 * 180.0);
+        light.sun_height = std::max(5.0, 70.0 * std::sin((t - 6.0) / 12.0 * pi));
+    } else {
+        light.sun_angle = 180.0; // the moon, in the south
+        light.sun_height = 35.0;
+    }
+    light.time_of_day = t;
+    light.follows_time = true;
+    return light;
+}
+
+void advance_day(LightingObject& lighting, double seconds) {
+    if (std::isfinite(lighting.day_minutes) && lighting.day_minutes > 0.0 &&
+        std::isfinite(seconds)) {
+        lighting.time_of_day += seconds * 24.0 / (lighting.day_minutes * 60.0);
+        lighting.time_of_day = std::fmod(lighting.time_of_day, 24.0);
+        if (lighting.time_of_day < 0.0) {
+            lighting.time_of_day += 24.0;
+        }
+    }
+    if (lighting.follows_time) {
+        const LightingObject now = daylight(lighting.time_of_day);
+        lighting.ambient = now.ambient;
+        lighting.sun = now.sun;
+        lighting.sun_angle = now.sun_angle;
+        lighting.sun_height = now.sun_height;
+        lighting.tint_r = now.tint_r;
+        lighting.tint_g = now.tint_g;
+        lighting.tint_b = now.tint_b;
+    }
+}
+
+void LightingObject::set_time(double hours) {
+    if (std::isfinite(hours)) {
+        time_of_day = std::fmod(std::fmod(hours, 24.0) + 24.0, 24.0);
+        follows_time = true;
+        advance_day(*this, 0.0);
+    }
+}
+
+void LightingObject::set_tint(double red, double green, double blue) {
+    tint_r = std::clamp(std::isfinite(red) ? red : 1.0, 0.0, 2.0);
+    tint_g = std::clamp(std::isfinite(green) ? green : 1.0, 0.0, 2.0);
+    tint_b = std::clamp(std::isfinite(blue) ? blue : 1.0, 0.0, 2.0);
+    follows_time = false;
+}
+
 void register_lighting_types(reflect::Registry& registry) {
     auto lighting = registry.add_type<LightingObject>("lighting")
                         .display_name("Lighting")
@@ -193,6 +280,44 @@ void register_lighting_types(reflect::Registry& registry) {
         .display_name("Sun height")
         .tooltip("How high the sun is above the horizon: low for long morning and evening "
                  "shadows, 90 for noon.");
+    lighting.property<&LightingObject::time_of_day>("time_of_day")
+        .range(0.0, 24.0)
+        .step(0.25)
+        .display_name("Time of day")
+        .tooltip("The hour, from 0 (midnight) to 24.");
+    lighting.property<&LightingObject::day_minutes>("day_minutes")
+        .range(0.0, 1440.0)
+        .step(1.0)
+        .display_name("Day length")
+        .tooltip("How many real minutes a game day lasts; 0 stops the clock.");
+    lighting.property<&LightingObject::follows_time>("follows_time")
+        .display_name("Light follows the time")
+        .tooltip("The sun, the light and its colour follow the time of day.");
+    lighting.property<&LightingObject::tint_r>("tint_r")
+        .range(0.0, 2.0)
+        .step(0.05)
+        .display_name("Tint red")
+        .tooltip("The light's red, 1 unchanged.");
+    lighting.property<&LightingObject::tint_g>("tint_g")
+        .range(0.0, 2.0)
+        .step(0.05)
+        .display_name("Tint green")
+        .tooltip("The light's green, 1 unchanged.");
+    lighting.property<&LightingObject::tint_b>("tint_b")
+        .range(0.0, 2.0)
+        .step(0.05)
+        .display_name("Tint blue")
+        .tooltip("The light's blue, 1 unchanged.");
+    lighting.action<&LightingObject::set_time>("set_time", {"hours"})
+        .text("Set the time of day to {hours}")
+        .tooltip("Jumps the clock to an hour (6 is dawn, 12 noon, 18 dusk, 22 night), and the "
+                 "light follows it.")
+        .param("hours")
+        .range(0.0, 24.0);
+    lighting.action<&LightingObject::set_tint>("set_tint", {"red", "green", "blue"})
+        .text("Tint the light {red}, {green}, {blue}")
+        .tooltip("Colours the light, each channel 0 to 2 (1 unchanged): a red alarm, a green "
+                 "swamp. The light stops following the time.");
 }
 
 } // namespace engine::game

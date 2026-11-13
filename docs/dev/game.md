@@ -273,6 +273,31 @@ or a scene fades, Walkers stand still with everyone. Turned off (`enabled`), its
 ordinary one again. Where it started, its rest and its place on the route are saved with
 games; its way is found again after loading.
 
+### Day and night
+
+The Project view's *Day and night* sets how many real minutes a game day lasts
+(`day_minutes`; 0, the default, has no clock and keeps the light as set) and the hour a
+game starts at (`start_hour`, 12). With a clock, the **lighting** object's time runs on
+each step and the light follows it (`daylight()` in
+[`lighting.h`](../../engine/game/include/engine/game/lighting.h)), blended between
+keyframes as HD-2D games light their days:
+
+| Hour | Light |
+|---|---|
+| Night (20 to 4:30) | Dim, the moon high in the south, a blue tint |
+| Dawn (6) | The sun rising in the east, low (long shadows), a warm tint |
+| Noon (12) | The sun high in the south, bright, no tint |
+| Dusk (18) | The sun setting in the west, low, an orange tint |
+
+The sun's direction and height drive the Diorama style's shading and shadows; the **tint**
+(the light's colour, each channel 0 to 2) colours the frame in either style, as part of the
+Look ([rendering.md](rendering.md) §8), so Classic 2D games have nights too. Logic uses
+*Set the time of day to {hours}* (the light follows it), *Tint the light {red}, {green},
+{blue}* (logic's own colour: the light stops following the time; *Light follows the time*
+turns it back on), and reads or sets *Time of day*, *Day length*, and the tint's channels.
+Saved games keep the time, the clock, and the colour. The editor's scene view shows the
+starting hour's colour.
+
 ### Particles
 
 **Particles** (`particles`, [`particles.h`](../../engine/game/include/engine/game/particles.h))

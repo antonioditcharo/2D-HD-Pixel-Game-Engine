@@ -19,7 +19,30 @@ struct LightingObject {
     /// above the horizon, 5 to 90 (scene2d::sun_direction()).
     double sun_angle = scene2d::default_sun_angle;
     double sun_height = scene2d::default_sun_height;
+    /// The light's colour, each channel 0 to 2 (1 changes nothing), in both styles.
+    double tint_r = 1.0;
+    double tint_g = 1.0;
+    double tint_b = 1.0;
+    /// The time of day, in hours from 0 to 24.
+    double time_of_day = 12.0;
+    /// How many real minutes a game day lasts; 0 stops the clock.
+    double day_minutes = 0.0;
+    /// Whether the light (the sun, its strength, the ambient light and the tint) follows the
+    /// time of day; otherwise logic sets them itself.
+    bool follows_time = false;
+
+    /// Sets the time of day and lets the light follow it.
+    void set_time(double hours);
+    /// Sets the light's colour; logic's own, not following the time.
+    void set_tint(double red, double green, double blue);
 };
+
+/// The light at `hours` (0 to 24): a dark blue night, a warm low sun at dawn and dusk, a
+/// bright high one at noon, blended between. The sun rises in the east (90 degrees) at 6
+/// and sets in the west (270) at 18; at night the moon lights from high in the south.
+[[nodiscard]] LightingObject daylight(double hours);
+/// One step of `seconds`: the clock runs (if it does) and, following the time, the light.
+void advance_day(LightingObject& lighting, double seconds);
 
 /// Registers LightingObject as "lighting".
 void register_lighting_types(reflect::Registry& registry);

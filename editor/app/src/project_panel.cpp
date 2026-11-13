@@ -181,6 +181,16 @@ void ProjectPanel::build() {
     channel(tr("Background green"), "background_g", &engine::render::Color::g);
     channel(tr("Background blue"), "background_b", &engine::render::Color::b);
 
+    QFormLayout* day = group(tr("Day and night"));
+    number(
+        day, tr("Day length (minutes, 0: no clock)"), "day_minutes", 0, 1440, 1, 0,
+        [](const Settings& s) { return s.day_minutes; },
+        [](Settings& s, double v) { s.day_minutes = v; });
+    number(
+        day, tr("Starting hour"), "start_hour", 0, 24, 0.5, 1,
+        [](const Settings& s) { return s.start_hour; },
+        [](Settings& s, double v) { s.start_hour = v; });
+
     QFormLayout* following = group(tr("Camera following"));
     number(
         following, tr("Smoothing (s)"), "camera_smoothing", 0, 2, 0.05, 2,

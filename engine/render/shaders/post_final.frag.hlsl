@@ -13,6 +13,7 @@ cbuffer Look : register(b0, space3)
     float4 tilt;  // x: focus centre, y: half the sharp band, z: strongest blur (pixels), w: ramp
     float4 bloom; // x: threshold, y: intensity, z: radius (pixels)
     float4 grade; // x: exposure, y: contrast, z: saturation, w: vignette
+    float4 tint;  // the light's colour: r, g, b multiplied
 };
 
 float tilt_radius(float y)
@@ -73,6 +74,7 @@ float4 main(float4 position : SV_Position) : SV_Target0
     c = (c - 0.5) * grade.y + 0.5;
     const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
     c = lerp(float3(luma, luma, luma), c, grade.z);
+    c *= tint.rgb;
     if (grade.w > 0.0)
     {
         // Squared distance from the centre, 1 at the corners.

@@ -40,7 +40,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 26> known_project_keys{"format",
+constexpr std::array<std::string_view, 28> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -65,7 +65,9 @@ constexpr std::array<std::string_view, 26> known_project_keys{"format",
                                                               "sprite_shadow",
                                                               "shadow_shape",
                                                               "block_shadow",
-                                                              "scene_fade"};
+                                                              "scene_fade",
+                                                              "day_minutes",
+                                                              "start_hour"};
 
 } // namespace
 
@@ -75,6 +77,14 @@ LightingObject starting_lighting(const ProjectSettings& settings) {
     lighting.sun = settings.sun_light;
     lighting.sun_angle = settings.sun_angle;
     lighting.sun_height = settings.sun_height;
+    // With a clock, the light follows the time from the starting hour.
+    lighting.time_of_day =
+        std::clamp(std::isfinite(settings.start_hour) ? settings.start_hour : 12.0, 0.0, 24.0);
+    if (settings.day_minutes > 0.0) {
+        lighting.day_minutes = settings.day_minutes;
+        lighting.follows_time = true;
+        advance_day(lighting, 0.0);
+    }
     return lighting;
 }
 
@@ -100,11 +110,18 @@ namespace {
 
 /// The look a project's frames get: tilt-shift imitates a lens photographing a miniature,
 /// so it belongs to the Diorama style; flat Classic 2D keeps the rest of the look.
-render::Look effective_look(const ProjectSettings& settings) {
+render::Look effective_look(const ProjectSettings& settings, const LightingObject& lighting) {
     render::Look look = settings.look;
     if (settings.style != RenderStyle::Diorama) {
         look.tilt_shift = false;
     }
+    // The light's colour (day and night, or logic's), in either style.
+    const auto channel = [](double v) {
+        return static_cast<float>(std::clamp(std::isfinite(v) ? v : 1.0, 0.0, 2.0));
+    };
+    look.tint_r *= channel(lighting.tint_r);
+    look.tint_g *= channel(lighting.tint_g);
+    look.tint_b *= channel(lighting.tint_b);
     return look;
 }
 
@@ -339,6 +356,8 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     number("block_shadow", settings.block_shadow, 0.0, 1.0);
     number("scene_fade", settings.scene_fade, 0.0, 3.0);
     number("camera_smoothing", settings.camera_smoothing, 0.0, 2.0);
+    number("day_minutes", settings.day_minutes, 0.0, 1440.0);
+    number("start_hour", settings.start_hour, 0.0, 24.0);
     number("camera_dead_zone", settings.camera_dead_zone, 0.0, 16.0);
     number("camera_look_ahead", settings.camera_look_ahead, 0.0, 8.0);
     if (const auto shape = doc.find("shadow_shape"); shape != doc.end()) {
@@ -453,6 +472,8 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["block_shadow"] = settings.block_shadow;
     json["scene_fade"] = settings.scene_fade;
     json["camera_smoothing"] = settings.camera_smoothing;
+    json["day_minutes"] = settings.day_minutes;
+    json["start_hour"] = settings.start_hour;
     json["camera_dead_zone"] = settings.camera_dead_zone;
     json["camera_look_ahead"] = settings.camera_look_ahead;
     serialize::Json look = serialize::Json::object();
@@ -779,7 +800,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         if (r.settings.style == RenderStyle::Diorama) {
             r.world_renderer = render::WorldRenderer::create(*r.device);
         }
-        const bool post = !effective_look(r.settings).neutral();
+        const bool post = !effective_look(r.settings, r.lighting).neutral();
         if (post) {
             r.scene = r.device->create_render_target(r.settings.width, r.settings.height);
             r.post = render::PostProcessor::create(*r.device);
@@ -831,6 +852,7 @@ void Runtime::step() {
         emit(*r.vm, *r.world, entity, "arrived");
     }
     update_camera(r.camera, *r.world, dt);
+    advance_day(r.lighting, dt);
     // Physics: dynamic bodies move, and bodies that start touching tell Rules.
     for (const auto& [first, second] : r.physics->step(*r.world, moves, dt, r.settings.ppu)) {
         for (const auto& [touched, other] : {std::pair{first, second}, std::pair{second, first}}) {
@@ -1120,6 +1142,15 @@ bool Runtime::draw() {
             camera.y = at[1];
         }
     }
+    // A look that comes to need processing while playing (night falls): its pass, now.
+    if (r.post == nullptr && !effective_look(r.settings, r.lighting).neutral()) {
+        r.scene = r.device->create_render_target(r.settings.width, r.settings.height);
+        r.post = render::PostProcessor::create(*r.device);
+        if (r.scene == nullptr || r.post == nullptr) {
+            r.post.reset();
+            return false;
+        }
+    }
     render::RenderTarget& world_target = r.post != nullptr ? *r.scene : *r.target;
     ParticleView particles;
     particles.flat = camera;
@@ -1140,7 +1171,8 @@ bool Runtime::draw() {
     // Particles over the world, before the look, so bloom makes fire glow.
     static_cast<void>(draw_particles(*r.world, *r.sprites, *r.white, world_target, particles));
     // The look, applied to the world only: the message box is drawn after, crisp.
-    if (r.post != nullptr && !r.post->apply(*r.scene, *r.target, effective_look(r.settings))) {
+    if (r.post != nullptr &&
+        !r.post->apply(*r.scene, *r.target, effective_look(r.settings, r.lighting))) {
         return false;
     }
 
@@ -1302,10 +1334,15 @@ serialize::Json Runtime::save() const {
         variables[script] = std::move(values);
     }
     json["variables"] = std::move(variables);
-    json["lighting"] = serialize::Json{{"ambient", r.lighting.ambient},
-                                       {"sun", r.lighting.sun},
-                                       {"sun_angle", r.lighting.sun_angle},
-                                       {"sun_height", r.lighting.sun_height}};
+    json["lighting"] = serialize::Json{
+        {"time_of_day", r.lighting.time_of_day},
+        {"day_minutes", r.lighting.day_minutes},
+        {"follows_time", r.lighting.follows_time},
+        {"tint", serialize::Json::array({r.lighting.tint_r, r.lighting.tint_g, r.lighting.tint_b})},
+        {"ambient", r.lighting.ambient},
+        {"sun", r.lighting.sun},
+        {"sun_angle", r.lighting.sun_angle},
+        {"sun_height", r.lighting.sun_height}};
     serialize::Json carried = serialize::Json::object();
     for (const auto& [item, count] : r.inventory.items()) {
         carried[item] = count;
@@ -1518,6 +1555,20 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
     // The lighting, if the save has it (saves made before it was saved do not).
     if (const auto lighting = json.find("lighting");
         lighting != json.end() && lighting->is_object()) {
+        if (const auto follows = lighting->find("follows_time");
+            follows != lighting->end() && follows->is_boolean()) {
+            r.lighting.follows_time = follows->get<bool>();
+        }
+        if (const auto tint = lighting->find("tint");
+            tint != lighting->end() && tint->is_array() && tint->size() == 3) {
+            std::array<double*, 3> channels{&r.lighting.tint_r, &r.lighting.tint_g,
+                                            &r.lighting.tint_b};
+            for (std::size_t i = 0; i < 3; ++i) {
+                if ((*tint)[i].is_number()) {
+                    *channels.at(i) = std::clamp((*tint)[i].get<double>(), 0.0, 2.0);
+                }
+            }
+        }
         struct Entry {
             const char* key;
             double* target;
@@ -1527,7 +1578,9 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
         for (const Entry& entry : {Entry{"ambient", &r.lighting.ambient, 0.0, 2.0},
                                    Entry{"sun", &r.lighting.sun, 0.0, 2.0},
                                    Entry{"sun_angle", &r.lighting.sun_angle, 0.0, 360.0},
-                                   Entry{"sun_height", &r.lighting.sun_height, 5.0, 90.0}}) {
+                                   Entry{"sun_height", &r.lighting.sun_height, 5.0, 90.0},
+                                   Entry{"time_of_day", &r.lighting.time_of_day, 0.0, 24.0},
+                                   Entry{"day_minutes", &r.lighting.day_minutes, 0.0, 1440.0}}) {
             const auto value = lighting->find(entry.key);
             if (value != lighting->end() && value->is_number() &&
                 std::isfinite(value->get<double>())) {
