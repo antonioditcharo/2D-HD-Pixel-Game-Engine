@@ -487,6 +487,7 @@ void register_types(reflect::Registry& registry) {
     register_quest_types(registry);
     register_particle_types(registry);
     register_table_types(registry);
+    register_battle_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -515,6 +516,9 @@ struct Runtime::Impl {
     InventoryObject inventory;
     QuestObject quests;
     TablesObject tables;
+    PartyObject party;
+    BattleObject battle;
+    std::optional<BattleScreen> battle_screen;
     ConversationPlayer conversation;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
@@ -687,6 +691,13 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         issues.push_back(
             serialize::Issue{"", "The tables object could not be made available to logic."});
     }
+    for (const auto& [name, object] : {std::pair{"party", reflect::ObjectRef::of(r.party)},
+                                       std::pair{"battle", reflect::ObjectRef::of(r.battle)}}) {
+        if (!r.vm->bind(name, object)) {
+            issues.push_back(serialize::Issue{
+                "", std::string("The ") + name + " object could not be made available to logic."});
+        }
+    }
     r.quests.set_dialogue(&r.dialogue);
     if (!r.vm->bind("quests", reflect::ObjectRef::of(r.quests))) {
         issues.push_back(
@@ -808,7 +819,8 @@ void Runtime::step() {
     // While a message is open, the player stands still and Interact turns its pages.
     // So does everyone while the scene fades out and in.
     const bool talking = r.dialogue.is_open();
-    const input::InputState& moves = talking || r.fading != Impl::Fade::None ? r.idle : r.state;
+    const input::InputState& moves =
+        talking || r.battle_screen || r.fading != Impl::Fade::None ? r.idle : r.state;
 
     // 2. Movement, with walls, bodies and walk animations; then trigger areas.
     const double dt = r.clock.step_seconds();
@@ -840,6 +852,11 @@ void Runtime::step() {
     // 3. Events: each pressed action runs the Rules listening for it. Interact also
     //    reaches what each mover faces, in mover GUID order.
     for (const std::string& action : r.state.pressed_actions()) {
+        // In a battle, the battle screen takes every press.
+        if (r.battle_screen) {
+            r.battle_screen->press(action, r.inventory);
+            continue;
+        }
         // A question's answers show on its last page; Up and Down move the cursor there.
         const std::vector<std::string>& choices = r.dialogue.choices();
         const bool choosing =
@@ -900,6 +917,63 @@ void Runtime::step() {
 
     // 4. Waiting Sequences, and events emitted while scripts ran.
     r.vm->update(dt);
+
+    // Battles: one logic asked for starts, with the numbers of the data tables; one that is
+    // over and read gives its rewards, keeps the party's HP, and tells Rules how it went.
+    if (std::optional<std::string> request = r.battle.take_request(); request && !r.battle_screen) {
+        std::vector<std::string> enemies;
+        std::string item;
+        for (const char c : *request + ",") {
+            if (c == ',' || c == '|') {
+                const std::size_t a = item.find_first_not_of(' ');
+                if (a != std::string::npos) {
+                    enemies.push_back(item.substr(a, item.find_last_not_of(' ') - a + 1));
+                }
+                item.clear();
+            } else {
+                item += c;
+            }
+        }
+        const BattleData data{r.tables.find("data/party"), r.tables.find("data/enemies"),
+                              r.tables.find("data/skills"), r.tables.find("data/items")};
+        std::vector<std::string> members = r.party.members();
+        if (members.empty() && data.party != nullptr && !data.party->rows.empty()) {
+            members.push_back(data.party->rows.front().id); // the first of data/party
+        }
+        std::string error;
+        std::optional<Battle> fight =
+            Battle::start(data, members, r.party.condition(), enemies,
+                          static_cast<std::uint32_t>((r.steps + 1) * 2654435761ULL), error);
+        if (fight) {
+            r.battle_screen.emplace(std::move(*fight));
+            r.battle.set_fighting(true);
+        } else {
+            r.problems.push_back("The battle could not start: " + error);
+        }
+    }
+    if (r.battle_screen && r.battle_screen->finished()) {
+        Battle& fought = r.battle_screen->battle();
+        for (const Fighter& f : fought.fighters()) {
+            if (!f.enemy) {
+                r.party.condition()[f.id] = {f.hp, f.mp};
+            }
+        }
+        for (const auto& [item, count] : fought.take_used_items()) {
+            r.inventory.take(item, count);
+        }
+        const BattleOutcome outcome = fought.outcome();
+        if (outcome == BattleOutcome::Won) {
+            r.party.add_xp(fought.xp());
+            if (fought.gold() > 0) {
+                r.inventory.give("gold", fought.gold());
+            }
+        }
+        r.battle_screen.reset();
+        r.battle.set_fighting(false);
+        r.vm->emit("battle", outcome == BattleOutcome::Won    ? "won"
+                             : outcome == BattleOutcome::Lost ? "lost"
+                                                              : "fled");
+    }
 
     // Conversations: one logic asked for starts; the one playing goes on once no message
     // is open, and Rules hear when it ends.
@@ -1068,6 +1142,18 @@ bool Runtime::draw() {
     // The look, applied to the world only: the message box is drawn after, crisp.
     if (r.post != nullptr && !r.post->apply(*r.scene, *r.target, effective_look(r.settings))) {
         return false;
+    }
+
+    // A battle, over the world.
+    if (r.battle_screen) {
+        // Enemies' pictures, by their path in assets/.
+        const auto picture = [&r](const std::string& path) -> const render::Texture* {
+            const assets::AssetRecord* record = r.assets.find(path);
+            return record != nullptr && r.textures != nullptr ? r.textures->get(record->guid)
+                                                              : nullptr;
+        };
+        r.battle_screen->draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(),
+                              r.inventory, picture);
     }
 
     // The message box, over everything.
@@ -1242,6 +1328,12 @@ serialize::Json Runtime::save() const {
         flags[name] = on;
     }
     json["flags"] = std::move(flags);
+    serialize::Json condition = serialize::Json::object();
+    for (const auto& [member, hp_mp] : r.party.condition()) {
+        condition[member] = serialize::Json::array({hp_mp.first, hp_mp.second});
+    }
+    json["party"] = serialize::Json{
+        {"members", r.party.members()}, {"condition", std::move(condition)}, {"xp", r.party.xp()}};
     return json;
 }
 
@@ -1358,6 +1450,31 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
                     "How many of it the player carries must be a whole number above 0. It "
                     "was left out."});
             }
+        }
+    }
+    // The party, if the save has it; a battle being fought stops.
+    r.battle_screen.reset();
+    r.battle.set_fighting(false);
+    r.party.clear();
+    if (const auto party = json.find("party"); party != json.end() && party->is_object()) {
+        if (party->contains("members") && (*party)["members"].is_array()) {
+            for (const serialize::Json& member : (*party)["members"]) {
+                if (member.is_string()) {
+                    r.party.add_member(member.get<std::string>());
+                }
+            }
+        }
+        if (party->contains("condition") && (*party)["condition"].is_object()) {
+            for (const auto& [member, hp_mp] : (*party)["condition"].items()) {
+                if (hp_mp.is_array() && hp_mp.size() == 2 && hp_mp[0].is_number_integer() &&
+                    hp_mp[1].is_number_integer()) {
+                    r.party.condition()[member] = {hp_mp[0].get<std::int64_t>(),
+                                                   hp_mp[1].get<std::int64_t>()};
+                }
+            }
+        }
+        if (party->contains("xp") && (*party)["xp"].is_number_integer()) {
+            r.party.set_xp((*party)["xp"].get<std::int64_t>());
         }
     }
     // The story's flags, if the save has them; a conversation playing stops.
@@ -1565,6 +1682,14 @@ const InventoryObject& Runtime::inventory() const noexcept {
 
 const QuestObject& Runtime::quests() const noexcept {
     return impl_->quests;
+}
+
+const PartyObject& Runtime::party() const noexcept {
+    return impl_->party;
+}
+
+const BattleScreen* Runtime::battle_screen() const noexcept {
+    return impl_->battle_screen ? &*impl_->battle_screen : nullptr;
 }
 
 const DialogueObject& Runtime::dialogue() const noexcept {

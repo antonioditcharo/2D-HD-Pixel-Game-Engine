@@ -9,6 +9,7 @@
 
 #include "engine/assets/assets.h"
 #include "engine/foundation/reflect.h"
+#include "engine/game/battle_screen.h"
 #include "engine/game/behaviours.h"
 #include "engine/game/camera.h"
 #include "engine/game/clock.h"
@@ -218,6 +219,9 @@ public:
     /// What the player carries, as logic gives and takes it.
     [[nodiscard]] const InventoryObject& inventory() const noexcept;
     [[nodiscard]] const QuestObject& quests() const noexcept;
+    [[nodiscard]] const PartyObject& party() const noexcept;
+    /// The battle being fought, if any.
+    [[nodiscard]] const BattleScreen* battle_screen() const noexcept;
     [[nodiscard]] DialogueObject& dialogue() noexcept;
     /// The audio engine; null with AudioMode::Off or when no sound output was found.
     [[nodiscard]] audio::AudioEngine* audio() noexcept;

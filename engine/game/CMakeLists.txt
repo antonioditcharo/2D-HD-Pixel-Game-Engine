@@ -3,6 +3,8 @@
 find_package(SDL3 CONFIG REQUIRED)
 
 add_library(engine_game STATIC
+    src/battle.cpp
+    src/battle_screen.cpp
     src/behaviours.cpp
     src/camera.cpp
     src/clock.cpp

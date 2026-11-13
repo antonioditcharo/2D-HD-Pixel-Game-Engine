@@ -2,6 +2,7 @@
 // by the runtime and played with recorded input. The drawing test needs a GPU; the others
 // run without graphics, as servers and tools do.
 
+#include "engine/game/battle.h"
 #include "engine/game/conversation.h"
 #include "engine/game/logic_world.h"
 #include "engine/game/runtime.h"
@@ -2446,4 +2447,299 @@ TEST_CASE("Logic reads the project's tables") {
     CHECK(logged("Slime") == 1);
     CHECK(logged("2") == 1);
     CHECK(logged("0") == 1);
+}
+
+namespace {
+
+/// The tables a battle reads: a hero and a mage, a slime and a bat, two skills, a potion.
+struct BattleTables {
+    BattleTables() {
+        party.columns = {{"name", game::ColumnKind::Text},     {"max_hp", game::ColumnKind::Whole},
+                         {"max_mp", game::ColumnKind::Whole},  {"attack", game::ColumnKind::Whole},
+                         {"defense", game::ColumnKind::Whole}, {"speed", game::ColumnKind::Whole},
+                         {"skills", game::ColumnKind::Text}};
+        party.rows.push_back({"hero",
+                              {{"name", "Hero"},
+                               {"max_hp", "40"},
+                               {"max_mp", "0"},
+                               {"attack", "6"},
+                               {"defense", "3"},
+                               {"speed", "5"}}});
+        party.rows.push_back({"mage",
+                              {{"name", "Mira"},
+                               {"max_hp", "25"},
+                               {"max_mp", "12"},
+                               {"attack", "2"},
+                               {"defense", "1"},
+                               {"speed", "7"},
+                               {"skills", "fire, heal"}}});
+        enemies.columns = party.columns;
+        enemies.columns.push_back({"xp", game::ColumnKind::Whole});
+        enemies.columns.push_back({"gold", game::ColumnKind::Whole});
+        enemies.columns.push_back({"image", game::ColumnKind::Text});
+        enemies.rows.push_back({"slime",
+                                {{"name", "Slime"},
+                                 {"max_hp", "12"},
+                                 {"attack", "3"},
+                                 {"defense", "1"},
+                                 {"speed", "2"},
+                                 {"xp", "5"},
+                                 {"gold", "3"}}});
+        enemies.rows.push_back({"bat",
+                                {{"name", "Bat"},
+                                 {"max_hp", "8"},
+                                 {"attack", "4"},
+                                 {"speed", "9"},
+                                 {"xp", "4"},
+                                 {"gold", "2"},
+                                 {"image", "art/rock.png"}}});
+        skills.columns = {{"name", game::ColumnKind::Text},
+                          {"mp_cost", game::ColumnKind::Whole},
+                          {"power", game::ColumnKind::Whole},
+                          {"heals", game::ColumnKind::YesNo},
+                          {"all", game::ColumnKind::YesNo}};
+        skills.rows.push_back(
+            {"fire", {{"name", "Fire"}, {"mp_cost", "5"}, {"power", "6"}, {"all", "yes"}}});
+        skills.rows.push_back(
+            {"heal", {{"name", "Heal"}, {"mp_cost", "3"}, {"power", "15"}, {"heals", "yes"}}});
+        items.columns = {{"name", game::ColumnKind::Text}, {"heal", game::ColumnKind::Whole}};
+        items.rows.push_back({"potion", {{"name", "Potion"}, {"heal", "20"}}});
+    }
+    [[nodiscard]] game::BattleData data() const { return {&party, &enemies, &skills, &items}; }
+    game::Table party;
+    game::Table enemies;
+    game::Table skills;
+    game::Table items;
+};
+
+} // namespace
+
+TEST_CASE("Battles: commands, speed order, skills, items, victory, and the same every time") {
+    const BattleTables tables;
+    std::string error;
+    std::optional<game::Battle> started = game::Battle::start(
+        tables.data(), {"hero", "mage"}, {{"hero", {30, 0}}}, {"slime", "slime", "bat"}, 42, error);
+    REQUIRE(started.has_value());
+    game::Battle battle = std::move(*started);
+    REQUIRE(battle.fighters().size() == 5);
+    CHECK(battle.fighters()[0].hp == 30); // carried in from before
+    CHECK(battle.fighters()[2].name == "Slime A");
+    CHECK(battle.fighters()[3].name == "Slime B");
+    CHECK(battle.take_messages() == std::vector<std::string>{"Slime A, Slime B, Bat appear!"});
+    CHECK(game::Battle::base_damage(battle.fighters()[0], battle.fighters()[2], 0) == 11);
+
+    // The hero chooses first, then the mage; refusals change nothing.
+    const std::map<std::string, std::int64_t, std::less<>> bag{{"potion", 1}};
+    REQUIRE(battle.chooser() == std::optional<std::size_t>(0));
+    CHECK_FALSE(battle.choose({game::BattleCommand::Kind::Attack, {}, 1}, bag, error));
+    CHECK(error == "Choose an enemy still standing.");
+    CHECK_FALSE(battle.choose({game::BattleCommand::Kind::Skill, "fire", 2}, bag, error));
+    CHECK(error == "Hero cannot use that.");
+    REQUIRE(battle.choose({game::BattleCommand::Kind::Attack, {}, 2}, bag, error));
+    REQUIRE(battle.chooser() == std::optional<std::size_t>(1));
+    CHECK(battle.usable_skills().size() == 2);
+    // Taking a choice back, then choosing again.
+    REQUIRE(battle.undo_choice());
+    CHECK(battle.chooser() == std::optional<std::size_t>(0));
+    REQUIRE(battle.choose({game::BattleCommand::Kind::Item, "potion", 0}, bag, error));
+    REQUIRE(battle.choose({game::BattleCommand::Kind::Skill, "fire", 2}, bag, error));
+    // The round is fought: the bat (speed 9) first, Mira (7), the hero (5), the slimes (2).
+    const std::vector<std::string> round = battle.take_messages();
+    REQUIRE_FALSE(round.empty());
+    CHECK(round.front() == "Bat attacks!");
+    CHECK(std::find(round.begin(), round.end(), "Mira uses Fire!") != round.end());
+    CHECK(std::find(round.begin(), round.end(), "Hero uses Potion.") != round.end());
+    CHECK(battle.fighters()[1].mp == 7);
+    CHECK(battle.take_used_items().at("potion") == 1);
+
+    // Fight on until it ends; with these numbers the party wins.
+    for (int rounds = 0; rounds < 30 && battle.outcome() == game::BattleOutcome::Fighting;
+         ++rounds) {
+        while (const std::optional<std::size_t> who = battle.chooser()) {
+            std::size_t target = 0;
+            for (std::size_t i = 0; i < battle.fighters().size(); ++i) {
+                if (battle.fighters()[i].enemy && battle.fighters()[i].alive()) {
+                    target = i;
+                    break;
+                }
+            }
+            REQUIRE(battle.choose({game::BattleCommand::Kind::Attack, {}, target}, {}, error));
+        }
+        static_cast<void>(battle.take_messages());
+    }
+    CHECK(battle.outcome() == game::BattleOutcome::Won);
+    CHECK(battle.xp() == 14);
+    CHECK(battle.gold() == 8);
+    CHECK_FALSE(battle.chooser().has_value());
+
+    // The same seed and choices give the same fight.
+    const auto replay = [&](std::uint32_t seed) {
+        std::optional<game::Battle> b =
+            game::Battle::start(tables.data(), {"hero"}, {}, {"bat"}, seed, error);
+        std::string ignored;
+        b->choose({game::BattleCommand::Kind::Defend, {}, 0}, {}, ignored);
+        return b->take_messages();
+    };
+    CHECK(replay(7) == replay(7));
+
+    // Defending halves the damage taken; fleeing can work; no one to fight is refused.
+    game::Fighter brute;
+    brute.attack = 10;
+    game::Fighter wall;
+    wall.defense = 4;
+    CHECK(game::Battle::base_damage(brute, wall, 0) == 16);
+    wall.defending = true;
+    CHECK(game::Battle::base_damage(brute, wall, 0) == 8);
+    bool fled = false;
+    for (std::uint32_t seed = 1; seed < 20 && !fled; ++seed) {
+        std::optional<game::Battle> b =
+            game::Battle::start(tables.data(), {"mage"}, {}, {"slime"}, seed, error);
+        b->choose({game::BattleCommand::Kind::Flee, {}, 0}, {}, error);
+        fled = b->outcome() == game::BattleOutcome::Fled;
+    }
+    CHECK(fled);
+    CHECK_FALSE(game::Battle::start(tables.data(), {"hero"}, {{"hero", {0, 0}}}, {"bat"}, 1, error)
+                    .has_value());
+    CHECK(error == "Every party member is down: there is no one to fight.");
+    CHECK_FALSE(game::Battle::start(tables.data(), {"ghost"}, {}, {"bat"}, 1, error).has_value());
+    CHECK(error == "data/party has no row \"ghost\".");
+}
+
+TEST_CASE("A battle from logic: fought with the keys on the battle screen, won, and rewarded") {
+    const Project project;
+    const BattleTables tables;
+    {
+        std::filesystem::create_directories(project.folder.path / "assets/data");
+        for (const auto& [name, table] :
+             {std::pair{"party", &tables.party}, std::pair{"enemies", &tables.enemies},
+              std::pair{"skills", &tables.skills}, std::pair{"items", &tables.items}}) {
+            std::ofstream(project.folder.path / "assets/data" / (std::string(name) + ".dtable"),
+                          std::ios::binary)
+                << game::table_to_text(*table);
+        }
+        logic::LogicAsset rules;
+        rules.name = "fight";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "party", "add_member", {Project::text("hero")}),
+                         ir::do_action(3, "battle", "start", {Project::text("bat")})},
+                        {}});
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{4}, "battle", "won", {}, {ir::log(5, Project::text("won"))}, {}});
+        write_json(project.folder.path / "assets/logic/fight.drules",
+                   serialize::logic_to_json(rules));
+    }
+    // Interact, pressed and let go every few steps: read the messages, pick Attack, the bat.
+    input::Recording replay;
+    for (std::uint64_t step = 4; step < 400; step += 4) {
+        replay.record(step, key(input::Key::Z), true);
+        replay.record(step + 2, key(input::Key::Z), false);
+    }
+    game::RuntimeOptions options = no_graphics(&replay);
+    const auto runtime = project.open(options);
+    runtime->step();
+    runtime->step();
+    REQUIRE(runtime->battle_screen() != nullptr);
+    REQUIRE(runtime->battle_screen()->message() != nullptr);
+    CHECK(*runtime->battle_screen()->message() == "Bat appears!");
+    // The hero does not walk while fighting.
+    const world::Entity hero = runtime->world().find_named("hero").at(0);
+    const double x = runtime->world().get<scene2d::Transform2D>(hero)->x;
+    for (int i = 0; i < 398 && runtime->battle_screen() != nullptr; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->battle_screen() == nullptr);
+    CHECK(runtime->world().get<scene2d::Transform2D>(hero)->x == x);
+    CHECK(std::count(runtime->log().begin(), runtime->log().end(), "won") == 1);
+    CHECK(runtime->party().xp() == 4);
+    CHECK(runtime->inventory().count_of("gold") == 2);
+    CHECK(runtime->party().in_party("hero"));
+    // The party's HP is kept, and saved with the game.
+    serialize::Json saved = runtime->save();
+    CHECK(saved["party"]["members"] == serialize::Json::array({"hero"}));
+    CHECK(saved["party"]["xp"] == 4);
+    const auto other = project.open(no_graphics(nullptr));
+    std::vector<serialize::Issue> issues;
+    REQUIRE(other->load(saved, issues));
+    CHECK(other->party().xp() == 4);
+    CHECK(other->party().hp_of("hero") == runtime->party().hp_of("hero"));
+}
+
+TEST_CASE("The battle screen is drawn over the world: enemies, the party, the menu") {
+    const Project project;
+    const BattleTables tables;
+    std::filesystem::create_directories(project.folder.path / "assets/data");
+    for (const auto& [name, table] :
+         {std::pair{"party", &tables.party}, std::pair{"enemies", &tables.enemies},
+          std::pair{"skills", &tables.skills}, std::pair{"items", &tables.items}}) {
+        std::ofstream(project.folder.path / "assets/data" / (std::string(name) + ".dtable"),
+                      std::ios::binary)
+            << game::table_to_text(*table);
+    }
+    // At a game's size: 320 x 180.
+    std::vector<serialize::Issue> issues;
+    std::ifstream in(project.folder.path / game::project_file);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    serialize::Json settings = serialize::parse(text, issues).value_or(serialize::Json{});
+    settings["width"] = 320;
+    settings["height"] = 180;
+    write_json(project.folder.path / game::project_file, settings);
+    {
+        logic::LogicAsset rules;
+        rules.name = "fight";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "party", "add_member", {Project::text("hero")}),
+                         ir::do_action(3, "party", "add_member", {Project::text("mage")}),
+                         ir::do_action(4, "battle", "start", {Project::text("slime, slime, bat")})},
+                        {}});
+        write_json(project.folder.path / "assets/logic/fight.drules",
+                   serialize::logic_to_json(rules));
+    }
+    input::Recording replay;
+    replay.record(3, key(input::Key::Z), true); // past "... appear!"
+    replay.record(5, key(input::Key::Z), false);
+    game::RuntimeOptions options;
+    options.headless = true;
+    options.replay = &replay;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    for (int i = 0; i < 8; ++i) {
+        runtime->step();
+    }
+    REQUIRE(runtime->battle_screen() != nullptr);
+    CHECK(runtime->battle_screen()->message() == nullptr); // the command menu shows
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    REQUIRE(pixels.size() == std::size_t{320} * 180 * 4);
+    // The bat's picture (the rock's colour), above its name on the right.
+    bool rock = false;
+    for (std::uint32_t y = 0; y < 90; ++y) {
+        for (std::uint32_t x = 214; x < 320; ++x) {
+            rock = rock || pixel(pixels, 320, x, y) == rock_colour;
+        }
+    }
+    CHECK(rock);
+    // The menu's and the status box's light borders, at the bottom.
+    CHECK(pixel(pixels, 320, 319, 179).r > 200);
+    CHECK(pixel(pixels, 320, 0, 179).r > 200);
+    // The chosen command and the chooser are in gold somewhere.
+    bool gold = false;
+    for (std::size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        gold = gold || (pixels[i] == 255 && pixels[i + 1] == 210 && pixels[i + 2] == 122);
+    }
+    CHECK(gold);
+    // A picture of it, for looking at.
+    assets::Image image{320, 180, pixels};
+    const std::vector<std::uint8_t> png = assets::encode_png(image);
+    std::ofstream(std::filesystem::temp_directory_path() / "sparxel-battle-screen.png",
+                  std::ios::binary)
+        .write(reinterpret_cast<const char*>(png.data()),
+               static_cast<std::streamsize>(png.size())); // NOLINT
 }
