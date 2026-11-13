@@ -10,6 +10,7 @@
 #include "engine/assets/assets.h"
 #include "engine/foundation/reflect.h"
 #include "engine/game/behaviours.h"
+#include "engine/game/camera.h"
 #include "engine/game/clock.h"
 #include "engine/game/dialogue.h"
 #include "engine/game/inventory.h"
@@ -64,6 +65,11 @@ struct ProjectSettings {
     /// The camera stops at the edges of the map (the tilemaps), so nothing beyond them
     /// shows; a map smaller than the screen is centred.
     bool camera_clamp = true;
+    /// How the camera follows the player, in either style (CameraObject): smoothing in
+    /// seconds (0 to 2), a dead zone and a look-ahead in tiles (0 to 16, 0 to 8).
+    double camera_smoothing = 0.0;
+    double camera_dead_zone = 0.0;
+    double camera_look_ahead = 0.0;
     /// The Diorama style's light at the start: ambient (0 to 2) and the sun (0 to 2).
     /// Logic changes them with the "lighting" object.
     double ambient_light = 0.55;

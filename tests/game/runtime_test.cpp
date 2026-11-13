@@ -343,6 +343,8 @@ TEST_CASE("Project settings are read, checked and written back") {
     diorama.camera_pitch = 40.0;
     diorama.camera_distance = 9.5;
     diorama.camera_fov = 25.0;
+    diorama.camera_smoothing = 0.15;
+    diorama.camera_look_ahead = 1.5;
     diorama.camera_clamp = false;
     diorama.ambient_light = 0.2;
     diorama.sun_light = 1.5;
@@ -361,6 +363,8 @@ TEST_CASE("Project settings are read, checked and written back") {
     CHECK(again.camera_pitch == 40.0);
     CHECK(again.camera_distance == 9.5);
     CHECK(again.camera_fov == 25.0);
+    CHECK(again.camera_smoothing == 0.15);
+    CHECK(again.camera_look_ahead == 1.5);
     CHECK_FALSE(again.camera_clamp);
     CHECK(again.ambient_light == 0.2);
     CHECK(again.sun_light == 1.5);

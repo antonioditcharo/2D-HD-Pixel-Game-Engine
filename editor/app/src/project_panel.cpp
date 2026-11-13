@@ -181,6 +181,20 @@ void ProjectPanel::build() {
     channel(tr("Background green"), "background_g", &engine::render::Color::g);
     channel(tr("Background blue"), "background_b", &engine::render::Color::b);
 
+    QFormLayout* following = group(tr("Camera following"));
+    number(
+        following, tr("Smoothing (s)"), "camera_smoothing", 0, 2, 0.05, 2,
+        [](const Settings& s) { return s.camera_smoothing; },
+        [](Settings& s, double v) { s.camera_smoothing = v; });
+    number(
+        following, tr("Dead zone (tiles)"), "camera_dead_zone", 0, 16, 0.25, 2,
+        [](const Settings& s) { return s.camera_dead_zone; },
+        [](Settings& s, double v) { s.camera_dead_zone = v; });
+    number(
+        following, tr("Look ahead (tiles)"), "camera_look_ahead", 0, 8, 0.25, 2,
+        [](const Settings& s) { return s.camera_look_ahead; },
+        [](Settings& s, double v) { s.camera_look_ahead = v; });
+
     QFormLayout* camera = group(tr("Camera (Diorama)"));
     number(
         camera, tr("Looking down (°)"), "camera_pitch", 5, 85, 1, 1,

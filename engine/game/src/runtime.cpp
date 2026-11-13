@@ -40,12 +40,32 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 23> known_project_keys{
-    "format",       "version",         "name",       "start_scene",  "ppu",
-    "width",        "height",          "background", "render_style", "gravity",
-    "camera_pitch", "camera_distance", "camera_fov", "camera_clamp", "ambient_light",
-    "sun_light",    "sun_angle",       "sun_height", "look",         "sprite_shadow",
-    "shadow_shape", "block_shadow",    "scene_fade"};
+constexpr std::array<std::string_view, 26> known_project_keys{"format",
+                                                              "version",
+                                                              "name",
+                                                              "start_scene",
+                                                              "ppu",
+                                                              "width",
+                                                              "height",
+                                                              "background",
+                                                              "render_style",
+                                                              "gravity",
+                                                              "camera_pitch",
+                                                              "camera_distance",
+                                                              "camera_fov",
+                                                              "camera_clamp",
+                                                              "camera_smoothing",
+                                                              "camera_dead_zone",
+                                                              "camera_look_ahead",
+                                                              "ambient_light",
+                                                              "sun_light",
+                                                              "sun_angle",
+                                                              "sun_height",
+                                                              "look",
+                                                              "sprite_shadow",
+                                                              "shadow_shape",
+                                                              "block_shadow",
+                                                              "scene_fade"};
 
 } // namespace
 
@@ -318,6 +338,9 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     number("sprite_shadow", settings.sprite_shadow, 0.0, 1.0);
     number("block_shadow", settings.block_shadow, 0.0, 1.0);
     number("scene_fade", settings.scene_fade, 0.0, 3.0);
+    number("camera_smoothing", settings.camera_smoothing, 0.0, 2.0);
+    number("camera_dead_zone", settings.camera_dead_zone, 0.0, 16.0);
+    number("camera_look_ahead", settings.camera_look_ahead, 0.0, 8.0);
     if (const auto shape = doc.find("shadow_shape"); shape != doc.end()) {
         if (shape->is_string() && shape->get<std::string>() == "cast") {
             settings.shadow_shape = scene2d::ShadowShape::Cast;
@@ -429,6 +452,9 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["shadow_shape"] = settings.shadow_shape == scene2d::ShadowShape::Round ? "round" : "cast";
     json["block_shadow"] = settings.block_shadow;
     json["scene_fade"] = settings.scene_fade;
+    json["camera_smoothing"] = settings.camera_smoothing;
+    json["camera_dead_zone"] = settings.camera_dead_zone;
+    json["camera_look_ahead"] = settings.camera_look_ahead;
     serialize::Json look = serialize::Json::object();
     look["tilt_shift"] = settings.look.tilt_shift;
     for (const LookNumber& number : look_numbers) {
@@ -457,6 +483,7 @@ void register_types(reflect::Registry& registry) {
     register_dialogue_types(registry);
     register_lighting_types(registry);
     register_inventory_types(registry);
+    register_camera_types(registry);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -481,6 +508,7 @@ struct Runtime::Impl {
     SaveObject save_object;
     DialogueObject dialogue;
     LightingObject lighting;
+    CameraObject camera;
     InventoryObject inventory;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
@@ -636,6 +664,13 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         issues.push_back(
             serialize::Issue{"", "The audio object could not be made available to logic."});
     }
+    r.camera.smoothing = r.settings.camera_smoothing;
+    r.camera.dead_zone = r.settings.camera_dead_zone;
+    r.camera.look_ahead = r.settings.camera_look_ahead;
+    if (!r.vm->bind("camera", reflect::ObjectRef::of(r.camera))) {
+        issues.push_back(
+            serialize::Issue{"", "The camera object could not be made available to logic."});
+    }
     r.lighting = starting_lighting(r.settings);
     if (!r.vm->bind("lighting", reflect::ObjectRef::of(r.lighting))) {
         issues.push_back(
@@ -767,6 +802,7 @@ void Runtime::step() {
     for (const world::Entity entity : arrived) {
         emit(*r.vm, *r.world, entity, "arrived");
     }
+    update_camera(r.camera, *r.world, dt);
     // Physics: dynamic bodies move, and bodies that start touching tell Rules.
     for (const auto& [first, second] : r.physics->step(*r.world, moves, dt, r.settings.ppu)) {
         for (const auto& [touched, other] : {std::pair{first, second}, std::pair{second, first}}) {
@@ -930,13 +966,13 @@ bool Runtime::draw() {
     if (r.device == nullptr) {
         return false;
     }
-    // The camera follows the player (the first Top-down Mover), else looks at the origin.
+    // The camera rig: the player (the first Top-down Mover not walking by itself), or what
+    // logic told it to follow or look at, shaken; else the origin.
     scene2d::Camera2D camera;
     camera.ppu = r.settings.ppu;
-    if (const std::optional<std::array<double, 2>> player = player_position(*r.world)) {
-        camera.x = (*player)[0];
-        camera.y = (*player)[1];
-    }
+    const std::array<double, 2> view_at = camera_view(r.camera, *r.world, r.steps);
+    camera.x = view_at[0];
+    camera.y = view_at[1];
     const double aspect = static_cast<double>(r.target->width()) /
                           static_cast<double>(std::max<std::uint32_t>(r.target->height(), 1));
     scene2d::DioramaCamera orbit;
@@ -1310,6 +1346,7 @@ std::filesystem::path Runtime::save_folder() const {
 bool Runtime::change_scene(std::string_view scene, std::string_view where,
                            std::vector<serialize::Issue>& issues) {
     Impl& r = *impl_;
+    r.camera.placed = false; // it jumps to the new scene rather than gliding
     const std::optional<Guid> guid = Guid::parse(scene);
     const assets::AssetRecord* record = guid ? r.assets.find(*guid) : r.assets.find(scene);
     if (record == nullptr || !record->path.ends_with(".dscene")) {

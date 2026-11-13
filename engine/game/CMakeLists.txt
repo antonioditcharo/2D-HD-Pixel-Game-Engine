@@ -4,6 +4,7 @@ find_package(SDL3 CONFIG REQUIRED)
 
 add_library(engine_game STATIC
     src/behaviours.cpp
+    src/camera.cpp
     src/clock.cpp
     src/dialogue.cpp
     src/inventory.cpp

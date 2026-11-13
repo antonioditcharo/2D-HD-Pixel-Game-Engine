@@ -495,3 +495,83 @@ TEST_CASE("Walkers do not set off trigger areas or interact") {
     f.w->get<game::Walker>(guard)->enabled = false;
     CHECK(game::update_triggers(*f.w).size() == 1);
 }
+
+TEST_CASE("The camera follows, smooths, keeps a dead zone, looks ahead and shakes") {
+    Fixture f;
+    game::CameraObject camera;
+    // By default it is exactly on the player, from the first step.
+    f.at(f.hero) = scene2d::Transform2D{3.0, 4.0};
+    CHECK(game::camera_view(camera, *f.w, 0) == std::array<double, 2>{3.0, 4.0});
+    game::update_camera(camera, *f.w, 1.0 / 60.0);
+    CHECK(camera.placed);
+    f.at(f.hero).x = 5.0;
+    game::update_camera(camera, *f.w, 1.0 / 60.0);
+    CHECK(camera.x == 5.0);
+
+    // Smoothing: it closes part of the gap each step, the same however steps are cut.
+    camera.smoothing = 0.2;
+    f.at(f.hero).x = 7.0;
+    game::update_camera(camera, *f.w, 0.1);
+    const double after_one = camera.x;
+    CHECK(after_one > 5.0);
+    CHECK(after_one < 7.0);
+    game::CameraObject twice = camera;
+    twice.x = 5.0;
+    game::update_camera(twice, *f.w, 0.05);
+    game::update_camera(twice, *f.w, 0.05);
+    CHECK(twice.x == doctest::Approx(after_one));
+    for (int i = 0; i < 120; ++i) {
+        game::update_camera(camera, *f.w, 1.0 / 60.0);
+    }
+    CHECK(camera.x == doctest::Approx(7.0).epsilon(0.001));
+
+    // A dead zone of 2 tiles: moving within a tile of the middle leaves the camera.
+    camera.smoothing = 0.0;
+    camera.dead_zone = 2.0;
+    f.at(f.hero).x = 7.8;
+    game::update_camera(camera, *f.w, 1.0 / 60.0);
+    CHECK(camera.x == doctest::Approx(7.0));
+    f.at(f.hero).x = 9.0;
+    game::update_camera(camera, *f.w, 1.0 / 60.0);
+    CHECK(camera.x == doctest::Approx(8.0)); // the target on the zone's edge
+    camera.dead_zone = 0.0;
+
+    // Look ahead: the way the player walks, turning smoothly.
+    camera.look_ahead = 2.0;
+    f.walk(60, {engine::input::Key::Right});
+    for (int i = 0; i < 60; ++i) {
+        game::update_camera(camera, *f.w, 1.0 / 60.0);
+        f.walk(1, {engine::input::Key::Right});
+    }
+    CHECK(camera.ahead_x == doctest::Approx(2.0));
+    CHECK(camera.x == doctest::Approx(f.at(f.hero).x + 2.0).epsilon(0.01));
+    camera.look_ahead = 0.0;
+
+    // Someone else, then a fixed place, then the player again.
+    const world::Entity elder = f.place("elder", -4.0, 1.0);
+    camera.follow_entity("elder");
+    camera.ahead_x = 0.0;
+    game::update_camera(camera, *f.w, 1.0 / 60.0);
+    CHECK(camera.x == -4.0);
+    CHECK(camera.y == 1.0);
+    static_cast<void>(elder);
+    camera.look_at(10.0, 10.0);
+    game::update_camera(camera, *f.w, 1.0 / 60.0);
+    CHECK(camera.x == 10.0);
+    camera.follow_player();
+    game::update_camera(camera, *f.w, 1.0 / 60.0);
+    CHECK(camera.x == f.at(f.hero).x);
+
+    // Shaking: around where it is, fading out, the same for the same step.
+    camera.shake(0.5, 1.0);
+    const std::array<double, 2> shaken = game::camera_view(camera, *f.w, 7);
+    CHECK(shaken == game::camera_view(camera, *f.w, 7));
+    CHECK(std::abs(shaken[0] - camera.x) <= 0.5);
+    CHECK(game::camera_view(camera, *f.w, 7) != game::camera_view(camera, *f.w, 8));
+    for (int i = 0; i < 61; ++i) {
+        game::update_camera(camera, *f.w, 1.0 / 60.0);
+    }
+    CHECK(game::camera_view(camera, *f.w, 7) == std::array<double, 2>{camera.x, camera.y});
+    camera.shake(-1.0, 1.0); // nonsense is ignored
+    CHECK(camera.shake_left == 0.0);
+}

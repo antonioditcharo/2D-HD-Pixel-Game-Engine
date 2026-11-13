@@ -273,6 +273,27 @@ or a scene fades, Walkers stand still with everyone. Turned off (`enabled`), its
 ordinary one again. Where it started, its rest and its place on the route are saved with
 games; its way is found again after loading.
 
+### The camera
+
+The view follows the player: the first Top-down Mover that is not a Walker. How it follows
+is set in the Project view's *Camera following* (`camera_smoothing`, `camera_dead_zone`,
+`camera_look_ahead` in the project file), in either style, and logic changes it through the
+**camera** object (`CameraObject`, [`camera.h`](../../engine/game/include/engine/game/camera.h)),
+as the camera rigs of other engines do (`plan/02` D10):
+
+| | What it does |
+|---|---|
+| **Smoothing** (0 to 2 s) | About how long the camera takes to catch up. Each step closes the same share of the gap for the same time (1 − e<sup>−t/smoothing</sup>), so it glides the same at any step length. 0, the default, keeps it exactly on the player, as before |
+| **Dead zone** (0 to 16 tiles) | A square around the middle of the view in which the player moves without the camera moving; leaving it, the camera moves only as far as keeps the player on its edge |
+| **Look ahead** (0 to 8 tiles) | The view leads the way the player walks, turning to a new way at 6 tiles a second, and settles back when they stop |
+| *Camera follows {name}*, *Camera follows the player* | Someone else, such as a character in a cutscene (*Follows*, `follow`, holds the name), or the player again |
+| *Camera looks at {x}, {y}* | Goes to a place and stays there, until it follows someone again |
+| *Shake the camera by {strength} for {seconds} seconds* | Up to 4 tiles for up to 10 s, fading out: an explosion, a quake. The same step always shakes the same way, so recordings replay |
+
+The camera moves once per fixed step (`update_camera()`, after the characters), and jumps
+straight to its place when a game starts and when a scene changes, rather than gliding
+across. The map's edges still stop the view (*Stay inside the map*), after all of this.
+
 ### Solid Body, Trigger Area and Interactable
 
 | Behaviour | Properties | What it does |
