@@ -1,6 +1,7 @@
 #include "editor/core/doctor.h"
 
 #include "engine/game/behaviours.h"
+#include "engine/game/conversation.h"
 #include "engine/scene2d/scene2d.h"
 #include "engine/serialize/json.h"
 
@@ -150,6 +151,25 @@ std::vector<Finding> examine(const Document& document) {
         f.message = issue.path + ": " + issue.message;
         f.logic = issue.path;
         found.push_back(std::move(f));
+    }
+
+    // Conversations: ways that lead nowhere, and logic naming conversations that are gone.
+    for (const engine::assets::AssetRecord& record : assets.assets()) {
+        if (!record.path.ends_with(".dtalk")) {
+            continue;
+        }
+        std::string error;
+        const std::optional<engine::game::Conversation> talk = engine::game::parse_conversation(
+            read_text(document.folder() / "assets" / record.path), error);
+        const std::vector<std::string> problems =
+            talk ? engine::game::check_conversation(*talk) : std::vector<std::string>{error};
+        for (const std::string& problem : problems) {
+            Finding f;
+            f.severity = talk ? Finding::Severity::Warning : Finding::Severity::Problem;
+            f.message = record.path + ": " + problem;
+            f.asset = record.path;
+            found.push_back(std::move(f));
+        }
     }
 
     // Scenes that nothing leads to: not the start, and no logic or door names them.

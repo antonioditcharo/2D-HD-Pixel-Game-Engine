@@ -242,6 +242,7 @@ add_executable(editor_core_tests
     test_main.cpp
     editor/document_test.cpp
     editor/sprite_test.cpp
+    editor/story_test.cpp
 )
 target_link_libraries(editor_core_tests PRIVATE
     editor::core
@@ -260,6 +261,7 @@ if(TARGET editor_app)
         editor_app/main.cpp
         editor_app/app_test.cpp
         editor_app/sprite_studio_test.cpp
+        editor_app/story_test.cpp
     )
     target_link_libraries(editor_app_tests PRIVATE
         editor::app

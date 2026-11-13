@@ -2,6 +2,7 @@
 // by the runtime and played with recorded input. The drawing test needs a GPU; the others
 // run without graphics, as servers and tools do.
 
+#include "engine/game/conversation.h"
 #include "engine/game/logic_world.h"
 #include "engine/game/runtime.h"
 #include "engine/ui/text.h"
@@ -2142,4 +2143,183 @@ TEST_CASE("Particles are drawn over the scene, where their emitter is") {
         }
     }
     CHECK(warm);
+}
+
+namespace {
+
+/// The elder's conversation: a greeting, a question whose third answer needs a key, and
+/// what each answer leads to.
+game::Conversation elder_talk() {
+    game::Conversation c;
+    c.start = "hello";
+    c.speakers.push_back(game::Speaker{"Elder", "#ffd27a"});
+    game::TalkNode hello;
+    hello.id = "hello";
+    hello.speaker = "Elder";
+    hello.text = "Welcome, traveller.";
+    hello.next = "again";
+    c.nodes.push_back(hello);
+    // Said only before the flag is set: the second time, straight to the question.
+    game::TalkNode again;
+    again.id = "again";
+    again.speaker = "Elder";
+    again.text = "Have we met?";
+    again.next = "ask";
+    again.conditions.push_back({game::TalkCondition::Kind::Flag, "met", true});
+    again.effects.push_back({game::TalkEffect::Kind::SetFlag, "met", ""});
+    c.nodes.push_back(again);
+    game::TalkNode ask;
+    ask.id = "ask";
+    ask.speaker = "Elder";
+    ask.text = "Will you find my cat?";
+    ask.choices.push_back({"Yes", "yes", {}});
+    ask.choices.push_back({"No", "", {}});
+    ask.choices.push_back(
+        {"Open the gate|now", "gate", {{game::TalkCondition::Kind::HasItem, "key", false}}});
+    c.nodes.push_back(ask);
+    game::TalkNode yes;
+    yes.id = "yes";
+    yes.speaker = "Elder";
+    yes.text = "Bless you. Take this.";
+    yes.effects.push_back({game::TalkEffect::Kind::GiveItem, "coin", "3"});
+    yes.effects.push_back({game::TalkEffect::Kind::StartQuest, "cat", "The lost cat"});
+    c.nodes.push_back(yes);
+    game::TalkNode gate;
+    gate.id = "gate";
+    gate.text = "The gate creaks open.";
+    c.nodes.push_back(gate);
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("Conversations are read and written the same, and checked for broken ways") {
+    const game::Conversation talk = elder_talk();
+    std::string error;
+    const std::optional<game::Conversation> back =
+        game::parse_conversation(game::conversation_to_text(talk), error);
+    REQUIRE(back.has_value());
+    CHECK(back.value_or(game::Conversation{}) == talk);
+    CHECK(game::check_conversation(talk).empty());
+
+    game::Conversation broken = talk;
+    broken.start = "hi";
+    broken.nodes[2].choices[0].next = "maybe";
+    broken.nodes.push_back(broken.nodes[4]);
+    const std::vector<std::string> problems = game::check_conversation(broken);
+    CHECK(std::find(problems.begin(), problems.end(), "Two nodes are called \"gate\".") !=
+          problems.end());
+    CHECK(std::find(problems.begin(), problems.end(),
+                    "It starts at \"hi\", which is not one of its nodes.") != problems.end());
+    CHECK(std::find(problems.begin(), problems.end(),
+                    "\"ask\", choice \"Yes\", leads to \"maybe\", which is not one of its "
+                    "nodes.") != problems.end());
+    CHECK(std::find(problems.begin(), problems.end(), "Nothing leads to \"hello\".") !=
+          problems.end());
+    CHECK_FALSE(game::parse_conversation("{\"format\": \"sparxel.scene\"}", error).has_value());
+    CHECK(error == "This is not a conversation (\"sparxel.conversation\").");
+}
+
+TEST_CASE("A conversation plays line by line, offers the choices that hold, and does its effects") {
+    game::DialogueObject dialogue;
+    game::InventoryObject bag;
+    game::QuestObject quests;
+    game::ConversationPlayer player;
+    player.start(elder_talk(), "talk/elder.dtalk");
+    CHECK(player.update(dialogue, bag, quests, dialogue.flags()).empty());
+    REQUIRE(dialogue.current() != nullptr);
+    CHECK(*dialogue.current() == "Welcome, traveller.");
+    CHECK(dialogue.current_speaker() == "Elder");
+    // Nothing more while the message is open.
+    CHECK(player.update(dialogue, bag, quests, dialogue.flags()).empty());
+    CHECK(dialogue.said().size() == 1);
+    dialogue.close_current();
+    player.update(dialogue, bag, quests, dialogue.flags());
+    CHECK(*dialogue.current() == "Have we met?");
+    CHECK(dialogue.flag("met"));
+    dialogue.close_current();
+    // The question: without a key, two answers.
+    player.update(dialogue, bag, quests, dialogue.flags());
+    CHECK(*dialogue.current() == "Will you find my cat?");
+    CHECK(dialogue.choices() == std::vector<std::string>{"Yes", "No"});
+    REQUIRE(dialogue.choose(0));
+    dialogue.close_current();
+    player.update(dialogue, bag, quests, dialogue.flags());
+    CHECK(*dialogue.current() == "Bless you. Take this.");
+    CHECK(bag.count_of("coin") == 3);
+    CHECK(quests.active("cat"));
+    dialogue.close_current();
+    CHECK(player.update(dialogue, bag, quests, dialogue.flags()) == "talk/elder.dtalk");
+    CHECK_FALSE(player.playing());
+    CHECK_FALSE(dialogue.is_open());
+
+    // Again, with the key: the flag skips the second line, the third answer shows (its bar
+    // made a slash), and picking it leads to the gate; that line has no speaker.
+    bag.give("key", 1);
+    player.start(elder_talk(), "talk/elder.dtalk", "again");
+    player.update(dialogue, bag, quests, dialogue.flags());
+    CHECK(*dialogue.current() == "Will you find my cat?");
+    CHECK(dialogue.choices() == std::vector<std::string>{"Yes", "No", "Open the gate/now"});
+    REQUIRE(dialogue.choose(2));
+    dialogue.close_current();
+    player.update(dialogue, bag, quests, dialogue.flags());
+    CHECK(*dialogue.current() == "The gate creaks open.");
+    CHECK(dialogue.current_speaker().empty());
+    // "No" leads nowhere: the conversation ends.
+    dialogue.close_current();
+    player.start(elder_talk(), "talk/elder.dtalk", "ask");
+    player.update(dialogue, bag, quests, dialogue.flags());
+    REQUIRE(dialogue.choose(1));
+    dialogue.close_current();
+    CHECK(player.update(dialogue, bag, quests, dialogue.flags()) == "talk/elder.dtalk");
+}
+
+TEST_CASE("Logic starts a conversation, and the story's flags are saved with the game") {
+    const Project project;
+    {
+        std::ofstream(project.folder.path / "assets/talk.dtalk", std::ios::binary)
+            << game::conversation_to_text(elder_talk());
+        logic::LogicAsset rules;
+        rules.name = "talk";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "",
+            "game_start",
+            {},
+            {ir::do_action(2, "dialogue", "start_conversation", {Project::text("talk.dtalk")}),
+             ir::do_action(3, "dialogue", "set_flag", {Project::text("rested")})},
+            {}});
+        rules.rules.push_back(logic::Rule{logic::BlockId{4},
+                                          "dialogue",
+                                          "conversation_ended",
+                                          {},
+                                          {ir::log(5, ir::event_value("name"))},
+                                          {}});
+        write_json(project.folder.path / "assets/logic/talk.drules",
+                   serialize::logic_to_json(rules));
+    }
+    const auto runtime = project.open(no_graphics(nullptr));
+    runtime->step();
+    runtime->step();
+    REQUIRE(runtime->dialogue().current() != nullptr);
+    CHECK(*runtime->dialogue().current() == "Welcome, traveller.");
+    CHECK(runtime->dialogue().current_speaker() == "Elder");
+    CHECK(runtime->dialogue().flag("rested"));
+    serialize::Json saved = runtime->save();
+    CHECK(saved["flags"]["rested"] == true);
+    const auto other = project.open(no_graphics(nullptr));
+    std::vector<serialize::Issue> issues;
+    REQUIRE(other->load(saved, issues));
+    CHECK(issues.empty());
+    CHECK(other->dialogue().flag("rested"));
+    // A file that is not there is a problem, in plain language.
+    game::DialogueObject& d = runtime->dialogue();
+    while (d.is_open()) {
+        d.close_current();
+    }
+    d.start_conversation("talk/none.dtalk");
+    runtime->step();
+    CHECK(std::find(runtime->problems().begin(), runtime->problems().end(),
+                    "talk/none.dtalk: there is no such conversation in assets/.") !=
+          runtime->problems().end());
 }

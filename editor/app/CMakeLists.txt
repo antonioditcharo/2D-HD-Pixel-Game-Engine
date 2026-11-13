@@ -21,6 +21,8 @@ add_library(editor_app STATIC
     src/sprite_studio.cpp
     src/sprite_studio.h
     src/start_page.cpp
+    src/story_window.cpp
+    src/story_window.h
     src/start_page.h
     src/tile_palette.cpp
     src/tile_palette.h

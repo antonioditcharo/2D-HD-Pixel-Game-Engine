@@ -513,6 +513,7 @@ struct Runtime::Impl {
     CameraObject camera;
     InventoryObject inventory;
     QuestObject quests;
+    ConversationPlayer conversation;
     std::size_t page = 0;   ///< Of the message showing.
     std::size_t choice = 0; ///< The answer the cursor is on, for a question.
     input::InputState idle; ///< No controls held: what movement sees while a message is open.
@@ -893,6 +894,33 @@ void Runtime::step() {
     // 4. Waiting Sequences, and events emitted while scripts ran.
     r.vm->update(dt);
 
+    // Conversations: one logic asked for starts; the one playing goes on once no message
+    // is open, and Rules hear when it ends.
+    if (std::optional<DialogueObject::ConversationRequest> request =
+            r.dialogue.take_conversation_request()) {
+        const assets::AssetRecord* record = r.assets.find(request->file);
+        const std::optional<std::vector<std::uint8_t>> bytes =
+            record != nullptr ? r.assets.read(record->guid) : std::nullopt;
+        std::string error = "there is no such conversation in assets/.";
+        std::optional<Conversation> talk =
+            bytes ? parse_conversation(
+                        std::string_view(reinterpret_cast<const char*>(bytes->data()), // NOLINT
+                                         bytes->size()),
+                        error)
+                  : std::nullopt;
+        if (talk) {
+            r.conversation.start(std::move(*talk), request->file, request->node);
+        } else {
+            r.problems.push_back(request->file + ": " + error);
+        }
+    }
+    if (const std::string ended =
+            r.conversation.update(r.dialogue, r.inventory, r.quests, r.dialogue.flags());
+        !ended.empty()) {
+        const std::array<reflect::Value, 1> payload{reflect::Value{ended}};
+        r.vm->emit("dialogue", "conversation_ended", payload);
+    }
+
     // 5. Animation; animations that reached their end tell Rules they finished.
     for (const world::Entity entity : scene2d::animate(*r.world, dt, r.sheets.get())) {
         emit(*r.vm, *r.world, entity, "finished");
@@ -1048,6 +1076,22 @@ bool Runtime::draw() {
             *r.white, one,
             render::Rect{box.x + 1.0F, box.y + 1.0F, box.width - 2.0F, box.height - 2.0F},
             render::Color{18, 20, 40, 240});
+        // Who speaks, on a plate above the box's left end.
+        if (const std::string& speaker = r.dialogue.current_speaker(); !speaker.empty()) {
+            const float plate_width =
+                static_cast<float>(ui::measure(font, speaker)) + (2.0F * message_padding);
+            const float plate_height =
+                static_cast<float>(font.line_height()) + (2.0F * message_padding) - 2.0F;
+            const float plate_y = std::max(0.0F, box.y - plate_height + 1.0F);
+            r.sprites->draw(*r.white, one, render::Rect{box.x, plate_y, plate_width, plate_height},
+                            render::Color{230, 232, 240, 255});
+            r.sprites->draw(
+                *r.white, one,
+                render::Rect{box.x + 1.0F, plate_y + 1.0F, plate_width - 2.0F, plate_height - 2.0F},
+                render::Color{40, 30, 60, 245});
+            ui::draw_text(*r.sprites, *r.font, font, speaker, box.x + message_padding,
+                          plate_y + message_padding - 1.0F, render::Color{255, 210, 122, 255});
+        }
         const std::size_t first = r.page * static_cast<std::size_t>(box.lines);
         for (std::size_t i = first;
              i < lines.size() && i < first + static_cast<std::size_t>(box.lines); ++i) {
@@ -1186,6 +1230,11 @@ serialize::Json Runtime::save() const {
                                        {"order", quest.order}};
     }
     json["quests"] = std::move(quests);
+    serialize::Json flags = serialize::Json::object();
+    for (const auto& [name, on] : r.dialogue.flags()) {
+        flags[name] = on;
+    }
+    json["flags"] = std::move(flags);
     return json;
 }
 
@@ -1301,6 +1350,19 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
                     "/inventory/" + item,
                     "How many of it the player carries must be a whole number above 0. It "
                     "was left out."});
+            }
+        }
+    }
+    // The story's flags, if the save has them; a conversation playing stops.
+    r.conversation.stop();
+    r.dialogue.flags().clear();
+    if (const auto flags = json.find("flags"); flags != json.end() && flags->is_object()) {
+        for (const auto& [name, on] : flags->items()) {
+            if (on.is_boolean()) {
+                r.dialogue.flags()[name] = on.get<bool>();
+            } else {
+                issues.push_back(serialize::Issue{
+                    "/flags/" + name, "A flag must be true or false. It was left out."});
             }
         }
     }

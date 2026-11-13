@@ -41,6 +41,53 @@ void DialogueObject::ask(const std::string& question, const std::string& answers
     said_.push_back(question);
 }
 
+void DialogueObject::say_as(const std::string& speaker, const std::string& text) {
+    say(text);
+    queue_.back().speaker = trimmed(speaker);
+}
+
+void DialogueObject::ask_as(const std::string& speaker, const std::string& question,
+                            const std::string& answers) {
+    ask(question, answers);
+    queue_.back().speaker = trimmed(speaker);
+}
+
+const std::string& DialogueObject::current_speaker() const noexcept {
+    static const std::string none;
+    return queue_.empty() ? none : queue_.front().speaker;
+}
+
+void DialogueObject::start_conversation(const std::string& file) {
+    start_conversation_at(file, {});
+}
+
+void DialogueObject::start_conversation_at(const std::string& file, const std::string& node) {
+    request_ = ConversationRequest{trimmed(file), trimmed(node)};
+}
+
+std::optional<DialogueObject::ConversationRequest> DialogueObject::take_conversation_request() {
+    std::optional<ConversationRequest> request = std::move(request_);
+    request_.reset();
+    return request;
+}
+
+void DialogueObject::set_flag(const std::string& name) {
+    if (const std::string key = trimmed(name); !key.empty()) {
+        flags_[key] = true;
+    }
+}
+
+void DialogueObject::clear_flag(const std::string& name) {
+    if (const std::string key = trimmed(name); !key.empty()) {
+        flags_[key] = false;
+    }
+}
+
+bool DialogueObject::flag(const std::string& name) const {
+    const auto found = flags_.find(trimmed(name));
+    return found != flags_.end() && found->second;
+}
+
 const std::vector<std::string>& DialogueObject::choices() const noexcept {
     static const std::vector<std::string> none;
     return queue_.empty() ? none : queue_.front().choices;
@@ -75,6 +122,30 @@ void register_dialogue_types(reflect::Registry& registry) {
         .tooltip("Shows a question and answers to pick from, separated by | (Yes|No). Up "
                  "and Down choose, and Interact picks. Wait until the message closes, then "
                  "check the answer.");
+    dialogue.action<&DialogueObject::say_as>("say_as", {"speaker", "text"})
+        .text("{speaker} says {text}")
+        .tooltip("Shows a message box with the speaker's name above it.");
+    dialogue.action<&DialogueObject::start_conversation>("start_conversation", {"file"})
+        .text("Start the conversation {file}")
+        .tooltip("Plays a conversation made in the Story editor, such as talk/elder.dtalk: its "
+                 "lines, the player's choices and what they lead to.");
+    dialogue
+        .action<&DialogueObject::start_conversation_at>("start_conversation_at", {"file", "node"})
+        .text("Start the conversation {file} at {node}")
+        .tooltip("Plays a conversation from one of its nodes rather than its start.");
+    dialogue.action<&DialogueObject::set_flag>("set_flag", {"name"})
+        .text("Set the flag {name}")
+        .tooltip("Marks a fact of the story as true, such as met_the_elder. Conversations "
+                 "test flags too.");
+    dialogue.action<&DialogueObject::clear_flag>("clear_flag", {"name"})
+        .text("Clear the flag {name}")
+        .tooltip("Marks a fact of the story as no longer true.");
+    dialogue.condition<&DialogueObject::flag>("flag", {"name"})
+        .text("The flag {name} is set")
+        .tooltip("Whether a fact of the story is true.");
+    dialogue.event<std::string>("conversation_ended", {"name"})
+        .text("When a conversation ends")
+        .tooltip("Happens when a conversation reaches its end; {name} is its file.");
     dialogue.condition<&DialogueObject::is_open>("is_open")
         .text("A message is open")
         .tooltip("Whether a message box is on screen.");

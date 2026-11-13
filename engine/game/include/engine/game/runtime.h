@@ -12,6 +12,7 @@
 #include "engine/game/behaviours.h"
 #include "engine/game/camera.h"
 #include "engine/game/clock.h"
+#include "engine/game/conversation.h"
 #include "engine/game/dialogue.h"
 #include "engine/game/inventory.h"
 #include "engine/game/lighting.h"

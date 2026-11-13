@@ -37,6 +37,7 @@ class SpriteStudio;
 class StartPage;
 class SfxGenerator;
 class DoctorPanel;
+class StoryWindow;
 class TilePalette;
 
 class MainWindow : public QMainWindow {
@@ -118,6 +119,11 @@ public:
     /// Opens Search everything, empty, its results all there.
     void show_search();
     [[nodiscard]] SearchBox* search_box() const noexcept { return search_; }
+    /// Opens a conversation of the project (its path in assets/, a .dtalk) in the Story
+    /// editor, or brings its window forward. Null, showing why, if it cannot.
+    StoryWindow* open_story(const QString& asset_path);
+    /// Makes a conversation as assets/talk/<name>.dtalk, with one node, and opens it.
+    StoryWindow* new_story(const QString& name);
     /// Opens the sound effect generator, saving into the project's assets/sfx.
     SfxGenerator* show_sfx_generator();
     /// Reads the assets folder again, and draws again the pictures that changed (hot
@@ -182,6 +188,8 @@ private:
     std::filesystem::path player_;
     /// The open Sprite Studio windows, by the .dsprite each edits.
     std::map<std::string, SpriteStudio*> studios_;
+    /// The open Story windows, by the conversation each edits.
+    std::map<std::string, StoryWindow*> stories_;
     QTimer* autosave_timer_ = nullptr;
     QStackedWidget* stack_ = nullptr; ///< The start page, or the scene.
     SearchBox* search_ = nullptr;

@@ -12,6 +12,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,7 +26,33 @@ public:
     /// Queues a question with answers separated by "|" ("Yes|No"); spaces around each are
     /// dropped, and so are empty ones. With no answers left, it is an ordinary message.
     void ask(const std::string& question, const std::string& answers);
+    /// The same, with the name of who says it, shown on a plate above the message.
+    void say_as(const std::string& speaker, const std::string& text);
+    void ask_as(const std::string& speaker, const std::string& question,
+                const std::string& answers);
     [[nodiscard]] bool is_open() const noexcept { return !queue_.empty(); }
+    /// Who says the message showing; empty for none.
+    [[nodiscard]] const std::string& current_speaker() const noexcept;
+
+    /// Plays the conversation in `file` (its path in assets/, such as "talk/elder.dtalk")
+    /// from its start (or, with `node`, from that node). The runtime takes the request.
+    void start_conversation(const std::string& file);
+    void start_conversation_at(const std::string& file, const std::string& node);
+    struct ConversationRequest {
+        std::string file;
+        std::string node;
+    };
+    /// The conversation logic asked for since the last call, if any.
+    [[nodiscard]] std::optional<ConversationRequest> take_conversation_request();
+
+    /// The story's flags: yes/no facts that conversations and Rules set and test.
+    void set_flag(const std::string& name);
+    void clear_flag(const std::string& name);
+    [[nodiscard]] bool flag(const std::string& name) const;
+    [[nodiscard]] std::map<std::string, bool, std::less<>>& flags() noexcept { return flags_; }
+    [[nodiscard]] const std::map<std::string, bool, std::less<>>& flags() const noexcept {
+        return flags_;
+    }
 
     /// The message showing, or null.
     [[nodiscard]] const std::string* current() const noexcept {
@@ -42,7 +70,10 @@ public:
     [[nodiscard]] std::string answer_text() const { return answer_text_; }
 
     /// Closes every message without telling Rules: when a save is loaded.
-    void clear() noexcept { queue_.clear(); }
+    void clear() noexcept {
+        queue_.clear();
+        request_.reset();
+    }
     /// Every message said or asked, oldest first, for logs and tests.
     [[nodiscard]] const std::vector<std::string>& said() const noexcept { return said_; }
 
@@ -50,7 +81,10 @@ private:
     struct Message {
         std::string text;
         std::vector<std::string> choices;
+        std::string speaker;
     };
+    std::optional<ConversationRequest> request_;
+    std::map<std::string, bool, std::less<>> flags_;
     std::deque<Message> queue_;
     std::vector<std::string> said_;
     std::int64_t answer_ = 0;

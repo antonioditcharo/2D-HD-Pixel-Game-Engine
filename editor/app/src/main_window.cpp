@@ -48,6 +48,7 @@
 #include "sfx_generator.h"
 #include "sprite_studio.h"
 #include "start_page.h"
+#include "story_window.h"
 #include "tile_palette.h"
 
 namespace editor {
@@ -118,10 +119,10 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     asset_tree_->setObjectName(QStringLiteral("assets"));
     asset_tree_->setAccessibleName(tr("Assets"));
     asset_tree_->setModel(asset_model_);
-    asset_model_->setNameFilters({QStringLiteral("*.png"), QStringLiteral("*.wav"),
-                                  QStringLiteral("*.ogg"), QStringLiteral("*.mp3"),
-                                  QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
-                                  QStringLiteral("*.drules"), QStringLiteral("*.dsprite")});
+    asset_model_->setNameFilters(
+        {QStringLiteral("*.png"), QStringLiteral("*.wav"), QStringLiteral("*.ogg"),
+         QStringLiteral("*.mp3"), QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
+         QStringLiteral("*.drules"), QStringLiteral("*.dsprite"), QStringLiteral("*.dtalk")});
     asset_model_->setNameFilterDisables(false);
     // Pictures are dragged from here into the scene.
     asset_tree_->setDragEnabled(true);
@@ -290,6 +291,8 @@ std::vector<SearchItem> MainWindow::search_items() {
             items.push_back({path,
                              path.endsWith(QStringLiteral(".png")) ? tr("Picture") : tr("Sprite"),
                              [this, path] { open_sprite(path); }});
+        } else if (path.endsWith(QStringLiteral(".dtalk"))) {
+            items.push_back({path, tr("Conversation"), [this, path] { open_story(path); }});
         } else if (path.endsWith(QStringLiteral(".drules"))) {
             items.push_back({path, tr("Logic"), [this, path] {
                                  for (QDockWidget* dock : findChildren<QDockWidget*>()) {
@@ -329,6 +332,60 @@ void MainWindow::show_search() {
     search_->raise();
     search_->activateWindow();
     search_->field()->setFocus();
+}
+
+StoryWindow* MainWindow::open_story(const QString& asset_path) {
+    if (document_ == nullptr) {
+        return nullptr;
+    }
+    const fs::path file = (document_->folder() / "assets" / path_of(asset_path)).lexically_normal();
+    const std::string key = file.generic_string();
+    if (const auto found = stories_.find(key); found != stories_.end()) {
+        found->second->show();
+        found->second->raise();
+        found->second->activateWindow();
+        return found->second;
+    }
+    auto* story = new StoryWindow(this);
+    story->setWindowFlag(Qt::Window);
+    story->set_quiet(quiet_);
+    std::string error;
+    if (!story->open(file, error)) {
+        delete story;
+        report(tr("%1 could not be opened: %2").arg(asset_path, text_of(error)));
+        return nullptr;
+    }
+    connect(story, &StoryWindow::saved, this, [this] { reload_assets(); });
+    stories_[key] = story;
+    story->show();
+    return story;
+}
+
+StoryWindow* MainWindow::new_story(const QString& name) {
+    if (document_ == nullptr) {
+        return nullptr;
+    }
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || trimmed.contains(QLatin1Char('/')) ||
+        trimmed.contains(QLatin1Char('\\')) || trimmed.startsWith(QLatin1Char('.'))) {
+        report(tr("A conversation needs a name without slashes, such as \"elder\"."));
+        return nullptr;
+    }
+    const QString relative = QStringLiteral("talk/%1.dtalk").arg(trimmed);
+    const fs::path file = document_->folder() / "assets" / path_of(relative);
+    std::error_code ignored;
+    if (fs::exists(file, ignored)) {
+        report(tr("There is a conversation called %1 already.").arg(trimmed));
+        return nullptr;
+    }
+    fs::create_directories(file.parent_path(), ignored);
+    std::string error;
+    if (!StoryEditor::save(StoryEditor::blank(), file, error)) {
+        report(tr("The conversation could not be made: %1").arg(text_of(error)));
+        return nullptr;
+    }
+    reload_assets();
+    return open_story(relative);
 }
 
 SfxGenerator* MainWindow::show_sfx_generator() {
@@ -536,6 +593,16 @@ void MainWindow::build_actions() {
         }
     });
     sprite_action->setObjectName(QStringLiteral("new_sprite"));
+    QAction* talk_action = file->addAction(tr("New &conversation…"), this, [this] {
+        bool named = false;
+        const QString name =
+            QInputDialog::getText(this, tr("New conversation"), tr("The conversation's name:"),
+                                  QLineEdit::Normal, tr("elder"), &named);
+        if (named) {
+            new_story(name);
+        }
+    });
+    talk_action->setObjectName(QStringLiteral("new_conversation"));
     QAction* sound_action =
         file->addAction(tr("New sound &effect…"), this, [this] { show_sfx_generator(); });
     sound_action->setObjectName(QStringLiteral("new_sound"));
@@ -561,6 +628,8 @@ void MainWindow::build_actions() {
         const QString relative = text_of(chosen.lexically_proximate(assets).generic_string());
         if (file_path.endsWith(QStringLiteral(".dscene"))) {
             open_scene(relative);
+        } else if (file_path.endsWith(QStringLiteral(".dtalk"))) {
+            open_story(relative);
         } else if (file_path.endsWith(QStringLiteral(".png")) ||
                    file_path.endsWith(QStringLiteral(".dsprite"))) {
             // Pictures and sprites are drawn in Sprite Studio.
@@ -837,6 +906,13 @@ bool MainWindow::close_sprites() {
         }
         it->second->deleteLater();
         it = studios_.erase(it);
+    }
+    for (auto it = stories_.begin(); it != stories_.end();) {
+        if (!it->second->close()) {
+            return false;
+        }
+        it->second->deleteLater();
+        it = stories_.erase(it);
     }
     return true;
 }
