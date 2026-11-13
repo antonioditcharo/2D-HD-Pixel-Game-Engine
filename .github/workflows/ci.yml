@@ -96,7 +96,17 @@ jobs:
           SPARXEL_REQUIRE_GPU: "1"
         run: ctest --preset linux-dev
       - name: Static analysis
-        run: git ls-files '*.cpp' | xargs clang-tidy-18 -p build/linux-dev --quiet
+        # In parallel; each finding is also an annotation on the run, so it can be read
+        # without opening the log.
+        run: |
+          set +e
+          git ls-files '*.cpp' | xargs -P "$(nproc)" -n 4 clang-tidy-18 -p build/linux-dev --quiet > tidy.log 2>&1
+          status=$?
+          set -e
+          cat tidy.log
+          grep -E '^[^ ]+:[0-9]+:[0-9]+: (error|warning): ' tidy.log | sort -u | head -50 |
+            sed -E "s#^${GITHUB_WORKSPACE}/##; s#^([^:]+):([0-9]+):([0-9]+): (error|warning): (.*)#::error file=\1,line=\2,col=\3::\5#" || true
+          exit $status
 
   windows:
     name: Windows build and tests (${{ matrix.preset }})
