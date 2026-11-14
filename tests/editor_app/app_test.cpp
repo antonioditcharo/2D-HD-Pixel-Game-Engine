@@ -18,6 +18,7 @@
 #include <QDropEvent>
 #include <QFileSystemModel>
 #include <QGroupBox>
+#include <QIcon>
 #include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
@@ -30,6 +31,7 @@
 #include <QSettings>
 #include <QSpinBox>
 #include <QStatusBar>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
@@ -40,7 +42,9 @@
 #include <memory>
 #include <string>
 
+#include "asset_browser.h"
 #include "doctor_panel.h"
+#include "editor/core/asset_tools.h"
 #include "editor/core/new_project.h"
 #include "editor/core/snapshots.h"
 #include "inspector.h"
@@ -2344,4 +2348,61 @@ TEST_CASE("The Recolour dialog: picked colours, a reset, and only changes kept")
     dialog.set_hue_shift(240); // red to blue; the grey stays
     CHECK(dialog.text().find("#808080") == std::string::npos);
     CHECK(dialog.target(0)[2] > dialog.target(0)[0]);
+}
+
+TEST_CASE("The Assets panel: searched, pictures as thumbnails, usages found, renamed safely") {
+    Editor e;
+    // A search lists only names with its words.
+    CHECK(editor::asset_filters({}).contains(QStringLiteral("*.png")));
+    CHECK(editor::asset_filters(QStringLiteral("ro sc")).contains(QStringLiteral("*ro*sc*.png")));
+    CHECK(editor::asset_filters(QStringLiteral("a*")).front() == QStringLiteral("*a[*]*.png"));
+    e.window.search_assets(QStringLiteral("road"));
+    auto* search = e.window.findChild<QLineEdit*>(QStringLiteral("asset_search"));
+    REQUIRE(search != nullptr);
+    CHECK(search->text() == QStringLiteral("road"));
+    if (const QString shot = qEnvironmentVariable("SPARXEL_ASSETS_SCREENSHOT"); !shot.isEmpty()) {
+        e.window.search_assets(QStringLiteral("e"));
+        for (int i = 0; i < 20; ++i) {
+            QApplication::processEvents();
+            QThread::msleep(10);
+        }
+        search->parentWidget()->grab().save(shot);
+    }
+    e.window.search_assets({});
+
+    // A picture's thumbnail is itself, scaled by whole pixels.
+    const editor::AssetThumbnails thumbnails;
+    const QString hero =
+        QString::fromStdU16String((e.sample.path / "assets" / "art" / "hero.png").u16string());
+    const QIcon icon = thumbnails.thumbnail(hero, 32);
+    REQUIRE_FALSE(icon.isNull());
+    CHECK_FALSE(icon.pixmap(32, 32).toImage().pixelColor(16, 16) == QColor(Qt::transparent));
+    CHECK(thumbnails
+              .thumbnail(QString::fromStdU16String(
+                             (e.sample.path / "assets" / "maps" / "road.dscene").u16string()),
+                         32)
+              .isNull());
+
+    // Find usages: the hero's picture, in both scenes.
+    const std::vector<editor::AssetUse> uses = e.window.show_usages(QStringLiteral("art/hero.png"));
+    CHECK(uses.size() == 2);
+    auto* dialog = e.window.findChild<QDialog*>(QStringLiteral("usages_dialog"));
+    REQUIRE(dialog != nullptr);
+    CHECK(dialog->isVisible());
+    auto* list = dialog->findChild<QListWidget*>(QStringLiteral("usages_list"));
+    REQUIRE(list->count() == 2);
+    CHECK(list->item(1)->text().contains(QStringLiteral("hero")));
+    // Double-clicking a scene opens it.
+    Q_EMIT list->itemDoubleClicked(list->item(0));
+    CHECK(e.window.document()->scene_path() == "maps/road.dscene");
+
+    // Renaming the scene being edited: it stays open by its new name, and the village's
+    // logic, which goes there, follows.
+    REQUIRE(e.window.rename_asset(QStringLiteral("maps/road.dscene"), QStringLiteral("forest")));
+    CHECK(e.window.document()->scene_path() == "maps/forest.dscene");
+    CHECK(fs::exists(e.sample.path / "assets" / "maps" / "forest.dscene"));
+    CHECK_FALSE(editor::find_asset_usages(e.sample.path, "maps/forest.dscene").empty());
+    CHECK(editor::find_asset_usages(e.sample.path, "maps/road.dscene").empty());
+    CHECK_FALSE(
+        e.window.rename_asset(QStringLiteral("maps/forest.dscene"), QStringLiteral("village")));
 }

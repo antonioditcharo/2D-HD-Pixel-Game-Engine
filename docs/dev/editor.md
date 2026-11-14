@@ -99,6 +99,29 @@ back: restoring opens the scene it was made in and puts the work back as one und
 to save when closing. (`Document::write_recovery()`, `restore_recovery()`,
 `discard_recovery()`, `recovery_scene()`; Sprite Studio's sprites are not kept yet.)
 
+**The Assets panel** (`plan/02` A4). Pictures show as small thumbnails of themselves
+(scaled by whole pixels, so pixel art stays sharp, and remade when the file changes). The
+**search box** over the panel lists only names with every word typed, in order (*ro sc*
+finds `road.dscene`), opening folders to show what matched. **Right-click any asset** for:
+
+- **Find usages**: the files that use it, with the entities using it in each scene or
+  prefab (*maps/village.dscene: hero*). Pictures and sounds are found by their GUID,
+  scenes, conversations, tables and logic by their path; the project's settings count too
+  (the start scene). Double-click a scene, conversation or table there to open it.
+- **Rename…**: a new name in the same folder. The asset moves with its `.meta` (so its
+  GUID, and everything that uses it by GUID, stay the same) and its companions: a
+  picture's sprite sheet (`.sheet`), Sprite Studio source (`.dsprite`) and Aseprite file
+  of the same name. Every reference by path, in scenes, logic, conversations, prefabs,
+  tables and the project's settings, is rewritten (a table's both with and without
+  `.dtable`). The project is saved first and opened again after, in the same scene (by its
+  new name if it was the one renamed). A taken name is refused, and so are the tables the
+  game reads by name (`data/party`, `data/enemies`, `data/items`, `data/skills`,
+  `data/levels`, `data/states`, `data/achievements` and `data/translations`).
+  A rename cannot be undone with Undo; take a snapshot first for a big one.
+
+(`editor/core/asset_tools.h`: `find_asset_usages`, `asset_group`, `rename_asset`;
+`editor/app/src/asset_browser.h`: `AssetThumbnails`, `asset_filters`.)
+
 **Recolouring a sprite** (a palette swap). A Sprite's *Recolour* field has a
 **Recolour…** button that shows every colour of its picture beside the colour it will be
 drawn as, and the picture before and after. **Shift every colour** turns them all round the

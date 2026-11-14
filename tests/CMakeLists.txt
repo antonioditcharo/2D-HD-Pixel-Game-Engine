@@ -240,6 +240,7 @@ add_test(NAME export_and_play
 # The editor's model: documents, undo, saving, picking and the preview.
 add_executable(editor_core_tests
     test_main.cpp
+    editor/asset_tools_test.cpp
     editor/document_test.cpp
     editor/snapshots_test.cpp
     editor/sprite_test.cpp

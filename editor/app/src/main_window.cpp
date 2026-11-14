@@ -44,7 +44,9 @@
 #include <utility>
 #include <vector>
 
+#include "asset_browser.h"
 #include "doctor_panel.h"
+#include "editor/core/asset_tools.h"
 #include "editor/core/new_project.h"
 #include "editor/core/snapshots.h"
 #include "editor/exporter/exporter.h"
@@ -134,13 +136,17 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     asset_tree_->setObjectName(QStringLiteral("assets"));
     asset_tree_->setAccessibleName(tr("Assets"));
     asset_tree_->setModel(asset_model_);
-    asset_model_->setNameFilters(
-        {QStringLiteral("*.png"), QStringLiteral("*.wav"), QStringLiteral("*.ogg"),
-         QStringLiteral("*.mp3"), QStringLiteral("*.flac"), QStringLiteral("*.dscene"),
-         QStringLiteral("*.drules"), QStringLiteral("*.dsprite"), QStringLiteral("*.dtalk"),
-         QStringLiteral("*.dprefab"), QStringLiteral("*.dtable"), QStringLiteral("*.aseprite"),
-         QStringLiteral("*.ase")});
+    asset_model_->setNameFilters(asset_filters({}));
     asset_model_->setNameFilterDisables(false);
+    // Pictures by thumbnails of themselves.
+    asset_tree_->setItemDelegate(new AssetThumbnails(asset_tree_));
+    asset_tree_->setIconSize(QSize(24, 24));
+    // While searching, folders open as they are read, to show what matched in them.
+    connect(asset_model_, &QFileSystemModel::directoryLoaded, this, [this](const QString& path) {
+        if (asset_search_ != nullptr && !asset_search_->text().trimmed().isEmpty()) {
+            asset_tree_->expand(asset_model_->index(path));
+        }
+    });
     // Pictures are dragged from here into the scene.
     asset_tree_->setDragEnabled(true);
     asset_tree_->setDragDropMode(QAbstractItemView::DragOnly);
@@ -148,9 +154,22 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
         asset_tree_->hideColumn(column);
     }
     asset_tree_->header()->hide();
+    // A search box over them: names with every word typed, in order.
+    asset_search_ = new QLineEdit(this);
+    asset_search_->setObjectName(QStringLiteral("asset_search"));
+    asset_search_->setPlaceholderText(tr("Search assets"));
+    asset_search_->setClearButtonEnabled(true);
+    connect(asset_search_, &QLineEdit::textChanged, this,
+            [this](const QString& text) { search_assets(text); });
+    auto* assets_side = new QWidget(this);
+    auto* assets_column = new QVBoxLayout(assets_side);
+    assets_column->setContentsMargins(0, 0, 0, 0);
+    assets_column->setSpacing(2);
+    assets_column->addWidget(asset_search_);
+    assets_column->addWidget(asset_tree_);
     auto* assets = new QDockWidget(tr("Assets"), this);
     assets->setObjectName(QStringLiteral("assets_dock"));
-    assets->setWidget(asset_tree_);
+    assets->setWidget(assets_side);
     addDockWidget(Qt::LeftDockWidgetArea, assets);
 
     // Right: the inspector, with the advanced fields a tick away.
@@ -557,6 +576,118 @@ void MainWindow::show_snapshots() {
         }
     });
     dialog.exec();
+}
+
+void MainWindow::search_assets(const QString& text) {
+    if (asset_search_->text() != text) {
+        asset_search_->setText(text); // comes back here
+        return;
+    }
+    asset_model_->setNameFilters(asset_filters(text));
+    if (!text.trimmed().isEmpty()) {
+        asset_tree_->expandAll();
+        // Folders not read yet open when they are (see directoryLoaded above).
+        const QModelIndex root = asset_tree_->rootIndex();
+        for (int row = 0; row < asset_model_->rowCount(root); ++row) {
+            const QModelIndex child = asset_model_->index(row, 0, root);
+            if (asset_model_->canFetchMore(child)) {
+                asset_model_->fetchMore(child);
+            }
+        }
+    }
+}
+
+std::vector<AssetUse> MainWindow::show_usages(const QString& asset) {
+    if (document_ == nullptr) {
+        return {};
+    }
+    // Saved first: usages are read from the files.
+    if (document_->dirty() && !save()) {
+        return {};
+    }
+    const std::vector<AssetUse> uses = find_asset_usages(document_->folder(), utf8_of(asset));
+    if (usages_ == nullptr) {
+        usages_ = new QDialog(this);
+        usages_->setObjectName(QStringLiteral("usages_dialog"));
+        usages_->resize(460, 320);
+        auto* column = new QVBoxLayout(usages_);
+        auto* list = new QListWidget(usages_);
+        list->setObjectName(QStringLiteral("usages_list"));
+        column->addWidget(list);
+        // A scene, conversation or table double-clicked is opened.
+        connect(list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+            const QString file = item->data(Qt::UserRole).toString();
+            if (file.endsWith(QStringLiteral(".dscene"))) {
+                open_scene(file);
+            } else if (file.endsWith(QStringLiteral(".dtalk"))) {
+                open_story(file);
+            } else if (file.endsWith(QStringLiteral(".dtable"))) {
+                open_table(file);
+            }
+        });
+    }
+    usages_->setWindowTitle(tr("What uses %1").arg(asset));
+    auto* list = usages_->findChild<QListWidget*>(QStringLiteral("usages_list"));
+    list->clear();
+    for (const AssetUse& use : uses) {
+        QString line = text_of(use.file);
+        if (!use.where.empty()) {
+            QStringList names;
+            for (const std::string& name : use.where) {
+                names << text_of(name);
+            }
+            line += QStringLiteral(" — ") + names.join(QStringLiteral(", "));
+        } else if (use.count > 1) {
+            line += tr(" (%1 times)").arg(use.count);
+        }
+        auto* item = new QListWidgetItem(line, list);
+        item->setData(Qt::UserRole, text_of(use.file));
+    }
+    if (uses.empty()) {
+        new QListWidgetItem(tr("Nothing uses it."), list);
+    }
+    usages_->show();
+    usages_->raise();
+    return uses;
+}
+
+bool MainWindow::rename_asset(const QString& asset, const QString& name) {
+    if (document_ == nullptr) {
+        return false;
+    }
+    if (document_->dirty() && !save()) {
+        return false;
+    }
+    // The scene being edited is opened again afterwards, by its new name if it is renamed.
+    const QString scene = text_of(document_->scene_path());
+    QString scene_after = scene;
+    for (const std::string& file : asset_group(document_->folder(), utf8_of(asset))) {
+        if (text_of(file) == scene) {
+            const QFileInfo was(scene);
+            scene_after = (was.path() == QStringLiteral(".") ? QString() : was.path() + '/') +
+                          name + '.' + was.suffix();
+        }
+    }
+    const fs::path folder = document_->folder();
+    std::vector<std::string> changed;
+    std::string error;
+    if (!editor::rename_asset(folder, utf8_of(asset), utf8_of(name.trimmed()), changed, error)) {
+        report(tr("Not renamed: %1").arg(text_of(error)));
+        return false;
+    }
+    if (!open_project(folder)) {
+        return false;
+    }
+    if (text_of(document_->scene_path()) != scene_after) {
+        open_scene(scene_after);
+    }
+    statusBar()->showMessage(changed.empty()
+                                 ? tr("Renamed to %1. What uses it still finds it.").arg(name)
+                                 : tr("Renamed to %1, and %2 file(s) that named it updated.")
+                                       .arg(name)
+                                       .arg(changed.size()),
+                             8000);
+    return true;
 }
 
 HelpWindow* MainWindow::show_guide(const QString& page) {
@@ -1007,23 +1138,37 @@ void MainWindow::build_actions() {
             return;
         }
         const QString file_path = asset_model_->filePath(index);
+        if (asset_model_->isDir(index)) {
+            return;
+        }
         const bool aseprite =
             file_path.endsWith(QStringLiteral(".aseprite"), Qt::CaseInsensitive) ||
             file_path.endsWith(QStringLiteral(".ase"), Qt::CaseInsensitive);
-        if (!file_path.endsWith(QStringLiteral(".png")) && !aseprite) {
-            return;
-        }
         std::error_code ignored;
         const fs::path assets = fs::weakly_canonical(document_->folder() / "assets", ignored);
         const fs::path chosen = fs::weakly_canonical(path_of(file_path), ignored);
         const QString relative = text_of(chosen.lexically_proximate(assets).generic_string());
         QMenu menu(this);
+        menu.addAction(tr("Find usages"), this, [this, relative] { show_usages(relative); });
+        menu.addAction(tr("Rename…"), this, [this, relative] {
+            const QString stem = QFileInfo(relative).completeBaseName();
+            bool named = false;
+            const QString name = QInputDialog::getText(this, tr("Rename"), tr("New name:"),
+                                                       QLineEdit::Normal, stem, &named);
+            if (named && name != stem) {
+                rename_asset(relative, name);
+            }
+        });
         if (aseprite) {
+            menu.addSeparator();
             menu.addAction(tr("Import again from Aseprite"), this,
                            [this, relative] { import_aseprite(relative); });
+        }
+        if (!file_path.endsWith(QStringLiteral(".png"))) {
             menu.exec(asset_tree_->viewport()->mapToGlobal(at));
             return;
         }
+        menu.addSeparator();
         menu.addAction(tr("Open in Sprite Studio"), this,
                        [this, relative] { open_sprite(relative); });
         QAction* make = menu.addAction(tr("Make auto-tiles"), this,

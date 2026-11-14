@@ -14,6 +14,8 @@ file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/guide.qrc"
 
 add_library(editor_app STATIC
     "${CMAKE_CURRENT_BINARY_DIR}/guide.qrc"
+    src/asset_browser.cpp
+    src/asset_browser.h
     src/doctor_panel.cpp
     src/doctor_panel.h
     src/help_window.cpp

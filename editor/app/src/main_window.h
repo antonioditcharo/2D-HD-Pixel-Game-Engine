@@ -12,7 +12,9 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "editor/core/asset_tools.h"
 #include "editor/core/doctor.h"
 #include "editor/core/document.h"
 #include "editor/core/new_project.h"
@@ -24,6 +26,8 @@ class QStackedWidget;
 class QSettings;
 class QTreeWidget;
 class QTreeView;
+class QDialog;
+class QLineEdit;
 class QFileSystemModel;
 
 namespace editor {
@@ -144,6 +148,13 @@ public:
     bool restore_snapshot(const QString& id);
     /// File > Snapshots: the project's snapshots with their pictures, to go back to or delete.
     void show_snapshots();
+    /// Lists in the Assets panel only names with every word of `text`, in order.
+    void search_assets(const QString& text);
+    /// Shows (and returns) what uses the asset at `asset`, relative to assets/.
+    std::vector<AssetUse> show_usages(const QString& asset);
+    /// Saves, then renames the asset at `asset` (with its companions) to `name`, updating
+    /// what names it, and opens the project again. False, saying why, if it cannot.
+    bool rename_asset(const QString& asset, const QString& name);
     /// Makes a conversation as assets/talk/<name>.dtalk, with one node, and opens it.
     StoryWindow* new_story(const QString& name);
     /// Opens a data table of the project (its path in assets/, a .dtable), or brings its
@@ -241,6 +252,8 @@ private:
     SceneView* view_ = nullptr;
     QTreeWidget* outliner_ = nullptr;
     QTreeView* asset_tree_ = nullptr;
+    QLineEdit* asset_search_ = nullptr;
+    QDialog* usages_ = nullptr;
     QString palette_key_; ///< The tileset the palette shows, to notice when it changes.
     QFileSystemModel* asset_model_ = nullptr;
     Inspector* inspector_ = nullptr;
