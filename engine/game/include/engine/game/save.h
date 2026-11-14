@@ -158,6 +158,13 @@ public:
 
     /// The name of the last copy made, for Rules to act on it.
     [[nodiscard]] std::string last_created() const { return last_created_; }
+    /// Whether the object named `object` (a name or GUID, as an event's who) has the tag
+    /// `tag`; false for no such object, or none tagged so. The runtime answers it.
+    [[nodiscard]] bool is_tagged(const std::string& object, const std::string& tag) const {
+        return tag_check_ && tag_check_(object, tag);
+    }
+    using TagCheck = std::function<bool(std::string_view object, std::string_view tag)>;
+    void set_tag_check(TagCheck check) { tag_check_ = std::move(check); }
     void set_last_created(std::string name) { last_created_ = std::move(name); }
     /// The save folder; empty if there is none.
     [[nodiscard]] std::filesystem::path folder() const;
@@ -178,6 +185,7 @@ private:
     std::optional<SceneRequest> scene_request_;
     std::string scene_path_;
     std::string scene_guid_;
+    TagCheck tag_check_;
 };
 
 /// Registers SaveObject as "game".

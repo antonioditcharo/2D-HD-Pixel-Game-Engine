@@ -434,6 +434,12 @@ by its name or its GUID. Since it could be any object, the editor offers what an
 project's objects can do, and a step on a part the actual one lacks is reported when it
 runs. `who` (like `it`) is a word logic keeps: an entity named so is reached by its GUID.
 
+To ask *what* who is, the game object's condition **"{object} is tagged {tag}"** takes
+the event's [who] (or any object's name): *"When [who] walks into the spikes: if [who] is
+tagged hero, go to the scene “maps/start.dscene”"*. It is no for an object without the tag, or for no such object,
+so it is safe whatever walked in. (`SaveObject::is_tagged()`, answered by the runtime
+from the world being played.)
+
 **For each object tagged enemy** is a step (with *Log*, *Wait* and *Repeat* in the
 editor's list of steps): the steps inside it run once for each object with the tag, in
 turn, each time as *it*, so *"For each object tagged enemy: Stand still (it)"* stops them
@@ -664,7 +670,7 @@ named by path (`maps/cave.dscene`) or GUID.
 
 ## 10. Next increments
 
-1. **"Who", further** (`plan/05` §2): conditions on what *who* is (*"who is tagged
-   enemy"*); tags, *it*, *For each* and *who* are done (§5).
+1. **"Who", further** (`plan/05` §2): a *Choose* step picking one tagged object (the
+   nearest, at random); tags, *it*, *For each*, *who* and *is tagged* are done (§5).
 2. **Play in the editor** (`plan/03` §8): the runtime inside the editor's own window, as
    well as in `sparxel-player` (F5 today, [player.md](player.md)).

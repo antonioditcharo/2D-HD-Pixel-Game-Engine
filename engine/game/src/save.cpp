@@ -192,6 +192,10 @@ void register_save_types(reflect::Registry& registry) {
     game.condition<&SaveObject::in_scene>("in_scene", {"scene"})
         .text("The scene is {scene}")
         .tooltip("Whether the scene being played is this one.");
+    game.condition<&SaveObject::is_tagged>("is_tagged", {"object", "tag"})
+        .text("{object} is tagged {tag}")
+        .tooltip("Whether an object (such as the event's [who]) has the tag: \"[who] is "
+                 "tagged enemy\". No for an object without it, or no such object.");
 }
 
 } // namespace engine::game

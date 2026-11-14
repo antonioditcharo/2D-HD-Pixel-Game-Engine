@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <deque>
@@ -995,6 +996,19 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         return path;
     });
     r.save_object.set_scene(scene->path, scene->guid.to_string());
+    // "[who] is tagged enemy": asked of whichever world is playing.
+    r.save_object.set_tag_check([&r](std::string_view object, std::string_view tag) {
+        if (r.world == nullptr) {
+            return false;
+        }
+        const world::Entity entity = resolve(*r.world, object);
+        std::string wanted;
+        for (const char c : tag) {
+            wanted += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        const std::vector<std::string> tags = tags_of(*r.world, entity);
+        return entity.is_valid() && std::find(tags.begin(), tags.end(), wanted) != tags.end();
+    });
     // The other scenes' entities, for logic about them.
     for (const assets::AssetRecord& record : r.assets.assets()) {
         if (!record.path.ends_with(".dscene") || record.guid == scene->guid) {

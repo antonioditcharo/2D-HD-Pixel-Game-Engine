@@ -4886,3 +4886,50 @@ TEST_CASE("A box frame: every box drawn with the project's picture, its corners 
     CHECK(pixel(pixels, 32, 6, 12) == render::Color{0, 0, 255, 255});
     CHECK(pixel(pixels, 32, 3, 10) == background); // outside it
 }
+
+TEST_CASE("Conditions on who: whether the object an event names is tagged") {
+    const Project project;
+    {
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        w.add<game::Interactable>(w.create("bell"));
+        w.add<game::Tags>(w.create("knight"))->tags = "Hero, brave";
+        w.add<game::Tags>(w.create("rat"))->tags = "vermin";
+        write_json(project.folder.path / "assets/maps/bell.dscene", serialize::scene_to_json(w));
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->start_scene = "maps/bell.dscene";
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+        // "When [who] rings the bell: if [who] is tagged hero, log welcome, otherwise away."
+        logic::LogicAsset rules;
+        rules.name = "bell";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "bell",
+            "interacted",
+            {ir::call("game", "is_tagged", {ir::event_value("who"), Project::text("hero")})},
+            {ir::log(2, Project::text("welcome"))},
+            {ir::log(3, Project::text("away"))}});
+        write_json(project.folder.path / "assets/logic/bell.drules",
+                   serialize::logic_to_json(rules));
+    }
+    const auto runtime = project.open(no_graphics(nullptr));
+    runtime->step();
+    const world::Entity bell = runtime->world().find_named("bell").at(0);
+    for (const char* who : {"knight", "rat", "nobody"}) {
+        const std::array<reflect::Value, 1> by{reflect::Value{std::string(who)}};
+        CHECK(game::emit(runtime->vm(), runtime->world(), bell, "interacted", by));
+        runtime->step();
+    }
+    const std::vector<std::string>& log = runtime->log();
+    CHECK(std::count(log.begin(), log.end(), "welcome") == 1);
+    CHECK(std::count(log.begin(), log.end(), "away") == 2);
+}
