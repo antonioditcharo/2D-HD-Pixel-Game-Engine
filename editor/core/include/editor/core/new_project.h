@@ -15,7 +15,7 @@ namespace editor {
 /// What a new project starts as: the same small game, drawn flat or as an HD-2D diorama
 /// (the walls standing up, lit by the sun, with shadows and the tilt-shift look); a
 /// visual novel, a story told in pictures and words; or a platformer, seen from the side.
-enum class ProjectTemplate : std::uint8_t { TopDown2D, Diorama, VisualNovel, Platformer };
+enum class ProjectTemplate : std::uint8_t { TopDown2D, Diorama, VisualNovel, Platformer, Rpg };
 
 /// Makes a new project named `name` in `folder`, which must not exist yet or be empty, and
 /// returns true; or returns false, with `error` in plain language, and overwrites nothing.

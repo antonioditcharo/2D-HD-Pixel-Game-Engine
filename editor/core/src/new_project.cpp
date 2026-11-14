@@ -1,7 +1,9 @@
 #include "editor/core/new_project.h"
 
 #include "engine/assets/assets.h"
+#include "engine/game/conversation.h"
 #include "engine/game/runtime.h"
+#include "engine/game/tables.h"
 #include "engine/logic/ir.h"
 #include "engine/scene2d/scene2d.h"
 #include "engine/serialize/json.h"
@@ -89,6 +91,38 @@ assets::Image hero() {
     block(4, 8, 11, 12, tunic);
     block(5, 13, 6, 15, boots);
     block(9, 13, 10, 15, boots);
+    return image;
+}
+
+/// The hero's figure in other colours: a villager.
+assets::Image figure(Rgb hair, Rgb tunic) {
+    assets::Image image = hero();
+    for (std::size_t at = 0; at + 3 < image.rgba.size(); at += 4) {
+        const Rgb now{image.rgba[at], image.rgba[at + 1], image.rgba[at + 2]};
+        const Rgb with = now == Rgb{84, 52, 36} ? hair : now == Rgb{52, 96, 180} ? tunic : now;
+        std::copy(with.begin(), with.end(), image.rgba.begin() + static_cast<std::ptrdiff_t>(at));
+    }
+    return image;
+}
+
+/// A green slime: a dome with a lighter shine and two eyes.
+assets::Image slime() {
+    assets::Image image;
+    image.width = tile;
+    image.height = tile;
+    image.rgba.assign(std::size_t{tile} * tile * 4, 0);
+    for (std::uint32_t y = 6; y < tile; ++y) {
+        for (std::uint32_t x = 0; x < tile; ++x) {
+            const double dx = (static_cast<double>(x) + 0.5 - 8.0) / 7.5;
+            const double dy = (static_cast<double>(y) + 0.5 - 15.0) / 9.0;
+            if ((dx * dx) + (dy * dy) <= 1.0) {
+                put(image, x, y,
+                    (x == 5 || x == 6) && y == 8 ? Rgb{170, 240, 160} : Rgb{70, 180, 80});
+            }
+        }
+    }
+    put(image, 6, 11, Rgb{20, 40, 20});
+    put(image, 10, 11, Rgb{20, 40, 20});
     return image;
 }
 
@@ -444,6 +478,162 @@ bool create_visual_novel(const fs::path& folder, std::string_view name, std::str
     return true;
 }
 
+/// The RPG template's data, logic and conversation, written into `assets_folder`.
+bool write_rpg_files(const fs::path& assets_folder) {
+    namespace game = engine::game;
+    namespace logic = engine::logic;
+    namespace ir = engine::logic::ir;
+    using engine::reflect::Value;
+    const auto table = [](std::vector<game::TableColumn> columns,
+                          std::vector<game::TableRow> rows) {
+        game::Table t;
+        t.columns = std::move(columns);
+        t.rows = std::move(rows);
+        return game::table_to_text(t);
+    };
+    using K = game::ColumnKind;
+    const std::string party = table({{"name", K::Text},
+                                     {"max_hp", K::Whole},
+                                     {"max_mp", K::Whole},
+                                     {"attack", K::Whole},
+                                     {"defense", K::Whole},
+                                     {"speed", K::Whole},
+                                     {"skills", K::Text},
+                                     {"max_hp_growth", K::Whole},
+                                     {"attack_growth", K::Whole}},
+                                    {{"hero",
+                                      {{"name", "Hero"},
+                                       {"max_hp", "30"},
+                                       {"max_mp", "6"},
+                                       {"attack", "6"},
+                                       {"defense", "2"},
+                                       {"speed", "5"},
+                                       {"skills", "heal@2"},
+                                       {"max_hp_growth", "6"},
+                                       {"attack_growth", "2"}}}});
+    const std::string enemies = table({{"name", K::Text},
+                                       {"max_hp", K::Whole},
+                                       {"attack", K::Whole},
+                                       {"defense", K::Whole},
+                                       {"speed", K::Whole},
+                                       {"xp", K::Whole},
+                                       {"gold", K::Whole},
+                                       {"image", K::Text}},
+                                      {{"slime",
+                                        {{"name", "Slime"},
+                                         {"max_hp", "14"},
+                                         {"attack", "4"},
+                                         {"defense", "0"},
+                                         {"speed", "3"},
+                                         {"xp", "10"},
+                                         {"gold", "8"},
+                                         {"image", "art/slime.png"}}}});
+    const std::string skills =
+        table({{"name", K::Text}, {"mp_cost", K::Whole}, {"power", K::Whole}, {"heals", K::YesNo}},
+              {{"heal", {{"name", "Heal"}, {"mp_cost", "3"}, {"power", "15"}, {"heals", "yes"}}}});
+    const std::string items = table(
+        {{"name", K::Text},
+         {"description", K::Text},
+         {"heal", K::Whole},
+         {"price", K::Whole},
+         {"slot", K::Text},
+         {"attack", K::Whole}},
+        {{"potion",
+          {{"name", "Potion"}, {"description", "Heals 15 HP."}, {"heal", "15"}, {"price", "10"}}},
+         {"sword",
+          {{"name", "Bronze sword"},
+           {"description", "Attack +3."},
+           {"price", "30"},
+           {"slot", "weapon"},
+           {"attack", "3"}}}});
+
+    // The elder's conversation: a greeting, a question, and an answer to each choice.
+    game::Conversation talk;
+    talk.start = "start";
+    talk.speakers.push_back(game::Speaker{"Elder", "#ffd27a"});
+    game::TalkNode start;
+    start.id = "start";
+    start.speaker = "Elder";
+    start.text = "Welcome, traveller. A slime has been bothering the village.";
+    start.next = "ask";
+    start.x = 0.0;
+    game::TalkNode ask;
+    ask.id = "ask";
+    ask.speaker = "Elder";
+    ask.text = "Will you deal with it?";
+    ask.choices = {{"Yes", "yes", {}}, {"Not yet", "later", {}}};
+    ask.x = 260.0;
+    game::TalkNode yes;
+    yes.id = "yes";
+    yes.speaker = "Elder";
+    yes.text = "Bless you! Take this potion. The shop to the east sells more.";
+    yes.effects.push_back({game::TalkEffect::Kind::GiveItem, "potion", "1"});
+    yes.effects.push_back({game::TalkEffect::Kind::StartQuest, "slime", "The village slime"});
+    yes.x = 520.0;
+    game::TalkNode later;
+    later.id = "later";
+    later.speaker = "Elder";
+    later.text = "Come back when you are ready.";
+    later.x = 520.0;
+    later.y = 140.0;
+    talk.nodes = {start, ask, yes, later};
+
+    logic::LogicAsset rules;
+    rules.name = "village";
+    std::uint64_t block = 1;
+    const auto text = [](const char* words) { return ir::literal(Value{std::string(words)}); };
+    rules.rules.push_back(
+        logic::Rule{logic::BlockId{block++},
+                    "",
+                    "game_start",
+                    {},
+                    {ir::do_action(block++, "party", "add_member", {text("hero")}),
+                     ir::do_action(block++, "inventory", "give",
+                                   {text("gold"), ir::literal(Value{std::int64_t{20}})})},
+                    {}});
+    block += 2;
+    rules.rules.push_back(logic::Rule{
+        logic::BlockId{block++},
+        "elder",
+        "interacted",
+        {},
+        {ir::do_action(block++, "dialogue", "start_conversation", {text("talk/elder.dtalk")})},
+        {}});
+    rules.rules.push_back(
+        logic::Rule{logic::BlockId{block++},
+                    "shopkeeper",
+                    "interacted",
+                    {},
+                    {ir::do_action(block++, "inventory", "open_shop", {text("potion, sword")})},
+                    {}});
+    rules.rules.push_back(
+        logic::Rule{logic::BlockId{block++},
+                    "slime",
+                    "defeated",
+                    {},
+                    {ir::do_action(block++, "quests", "complete", {text("slime")}),
+                     ir::do_action(block++, "dialogue", "say",
+                                   {text("The slime is gone! The elder will be glad.")})},
+                    {}});
+    std::error_code failed;
+    for (const char* sub : {"data", "talk", "logic"}) {
+        fs::create_directories(assets_folder / sub, failed);
+    }
+    return !failed && write_text(assets_folder / "data" / "party.dtable", party) &&
+           write_text(assets_folder / "data" / "enemies.dtable", enemies) &&
+           write_text(assets_folder / "data" / "skills.dtable", skills) &&
+           write_text(assets_folder / "data" / "items.dtable", items) &&
+           write_text(assets_folder / "talk" / "elder.dtalk", game::conversation_to_text(talk)) &&
+           write_text(assets_folder / "logic" / "village.drules",
+                      serialize::to_text(serialize::logic_to_json(rules))) &&
+           write_text(assets_folder / "credits.txt", "A Sparxel RPG\n\nMade with Sparxel\n") &&
+           write_png(assets_folder / "art" / "elder.png",
+                     figure({220, 220, 220}, {120, 60, 140})) &&
+           write_png(assets_folder / "art" / "shopkeeper.png",
+                     figure({40, 30, 20}, {190, 120, 40})) &&
+           write_png(assets_folder / "art" / "slime.png", slime());
+}
+
 } // namespace
 
 bool create_project(const fs::path& folder, std::string_view name, std::string& error,
@@ -486,6 +676,16 @@ bool create_project(const fs::path& folder, std::string_view name, std::string& 
     if (kind == ProjectTemplate::Platformer) {
         return create_platformer(folder, name, error, tileset_id, hero_png->guid.to_string());
     }
+    const bool rpg = kind == ProjectTemplate::Rpg;
+    if (rpg && !write_rpg_files(folder / "assets")) {
+        error = "The project's folder could not be written to.";
+        return false;
+    }
+    database.refresh();
+    const auto picture = [&database](const char* path) {
+        const assets::AssetRecord* record = database.find(path);
+        return record != nullptr ? record->guid.to_string() : std::string();
+    };
     // The ground under the walls, both under the hero.
     const serialize::Json under{{"layer", -2}, {"x", 0.0}, {"y", 0.0}};
     const serialize::Json flat{{"layer", -1}, {"x", 0.0}, {"y", 0.0}};
@@ -502,6 +702,25 @@ bool create_project(const fs::path& folder, std::string_view name, std::string& 
     entities.push_back(entity("hero", {{"sprite", {{"image", hero_png->guid.to_string()}}},
                                        {"top_down_mover", {{"speed", 4.0}}},
                                        {"transform_2d", {{"x", 10.0}, {"y", 6.0}}}}));
+    if (rpg) {
+        // The village: an elder to talk to, a shopkeeper, and a slime on the road.
+        entities.push_back(entity("elder", {{"sprite", {{"image", picture("art/elder.png")}}},
+                                            {"interactable", serialize::Json::object()},
+                                            {"body", serialize::Json::object()},
+                                            {"transform_2d", {{"x", 5.5}, {"y", 4.0}}}}));
+        entities.push_back(
+            entity("shopkeeper", {{"sprite", {{"image", picture("art/shopkeeper.png")}}},
+                                  {"interactable", serialize::Json::object()},
+                                  {"body", serialize::Json::object()},
+                                  {"transform_2d", {{"x", 15.5}, {"y", 4.0}}}}));
+        entities.push_back(entity("slime", {{"sprite", {{"image", picture("art/slime.png")}}},
+                                            {"enemy_on_map", {{"enemies", "slime"}}},
+                                            {"transform_2d", {{"x", 10.5}, {"y", 9.0}}}}));
+        entities.push_back(
+            entity("gold", {{"screen_text", {{"text", "Gold {gold}"}, {"anchor", "top_right"}}}}));
+        entities.push_back(
+            entity("health", {{"screen_text", {{"text", "HP {hp:hero}/{max_hp:hero}"}}}}));
+    }
     const serialize::Json scene{
         {"format", "sparxel.scene"}, {"version", 1}, {"entities", std::move(entities)}};
     engine::game::ProjectSettings settings;
@@ -510,6 +729,11 @@ bool create_project(const fs::path& folder, std::string_view name, std::string& 
     if (kind == ProjectTemplate::Diorama) {
         settings.style = engine::game::RenderStyle::Diorama;
         settings.look.tilt_shift = true;
+    }
+    if (rpg) {
+        settings.title_screen = true;
+        settings.pause_menu = true;
+        settings.text_speed = 40.0;
     }
     if (!write_text(maps / "start.dscene", serialize::to_text(scene)) ||
         !write_text(folder / "project.sparxel.json",

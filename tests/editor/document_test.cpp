@@ -5,7 +5,9 @@
 #include "engine/audio/audio.h"
 #include "engine/foundation/guid.h"
 #include "engine/game/behaviours.h"
+#include "engine/game/hud.h"
 #include "engine/game/localization.h"
+#include "engine/game/logic_world.h"
 #include "engine/game/runtime.h"
 #include "engine/game/tables.h"
 #include "engine/input/input.h"
@@ -3337,4 +3339,55 @@ TEST_CASE("Aseprite files are imported as a sprite sheet beside them, with their
         }
     }
     CHECK(d->import_aseprite("art/tiles.png", error).empty()); // not an Aseprite file
+}
+
+TEST_CASE("A new RPG: a village with an elder, a shop, a slime, menus and a HUD, that plays") {
+    const fs::path folder =
+        fs::temp_directory_path() / ("sparxel-new-" + Guid::generate().to_string());
+    std::string error;
+    REQUIRE(editor::create_project(folder, "Village Quest", error, editor::ProjectTemplate::Rpg));
+    {
+        std::vector<serialize::Issue> issues;
+        const auto d = editor::Document::open(folder, issues);
+        REQUIRE(d != nullptr);
+        CHECK(issues.empty());
+        CHECK(d->entities().size() == 8);
+        CHECK(d->world().get<game::EnemyOnMap>(d->world().find_named("slime").at(0)) != nullptr);
+        CHECK(d->world().get<game::ScreenText>(d->world().find_named("gold").at(0)) != nullptr);
+        CHECK(d->check_logic("logic/village.drules").empty());
+        CHECK(d->settings().title_screen);
+        CHECK(d->settings().pause_menu);
+    }
+    engine::input::Recording replay;
+    const auto z = engine::input::Binding::key(engine::input::Key::Z);
+    replay.record(2, z, true); // New game
+    replay.record(3, z, false);
+    game::RuntimeOptions options;
+    options.graphics = false;
+    options.replay = &replay;
+    options.audio = game::AudioMode::Headless;
+    options.save_folder = folder / "saves";
+    std::vector<serialize::Issue> issues;
+    const std::unique_ptr<game::Runtime> runtime = game::Runtime::open(folder, options, issues);
+    CHECK(issues.empty());
+    REQUIRE(runtime != nullptr);
+    CHECK(runtime->menu().page() == game::GameMenu::Page::Title);
+    CHECK(runtime->menu().credits().size() >= 1);
+    for (int i = 0; i < 6; ++i) {
+        runtime->step();
+    }
+    CHECK_FALSE(runtime->menu().open());
+    CHECK(runtime->party().in_party("hero"));
+    CHECK(runtime->inventory().count_of("gold") == 20);
+    // Talking to the elder starts the conversation.
+    const std::array<engine::reflect::Value, 1> by{engine::reflect::Value{std::string("hero")}};
+    CHECK(game::emit(runtime->vm(), runtime->world(), runtime->world().find_named("elder").at(0),
+                     "interacted", by));
+    runtime->step();
+    runtime->step();
+    REQUIRE(runtime->dialogue().is_open());
+    CHECK(runtime->dialogue().current_speaker() == "Elder");
+    CHECK(runtime->problems().empty());
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
 }
