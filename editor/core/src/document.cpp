@@ -1551,8 +1551,11 @@ std::string Document::copy_entities(const std::vector<Guid>& entities) const {
         bool inside = false;
         for (world::Entity up = d.world->parent(e); up.is_valid() && !inside;
              up = d.world->parent(up)) {
-            inside =
-                std::find(entities.begin(), entities.end(), d.world->guid(up)) != entities.end();
+            // find_if, not find: some standard libraries' vectorized find refuses a
+            // 16-byte type such as a GUID under clang-cl.
+            const Guid above = d.world->guid(up);
+            inside = std::find_if(entities.begin(), entities.end(),
+                                  [above](const Guid& g) { return g == above; }) != entities.end();
         }
         if (inside) {
             continue;
@@ -1648,7 +1651,9 @@ std::vector<Guid> Document::duplicate(const std::vector<Guid>& entities, std::st
         bool inside = false;
         for (world::Entity up = d.world->parent(e); up.is_valid() && !inside;
              up = d.world->parent(up)) {
-            inside = std::find(kept.begin(), kept.end(), d.world->guid(up)) != kept.end();
+            const Guid above = d.world->guid(up);
+            inside = std::find_if(kept.begin(), kept.end(),
+                                  [above](const Guid& g) { return g == above; }) != kept.end();
         }
         if (inside || i >= copies.size()) {
             continue;
