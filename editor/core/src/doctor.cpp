@@ -102,18 +102,22 @@ void check_palette(const engine::assets::AssetDatabase& assets,
             continue;
         }
         const std::optional<std::vector<std::uint8_t>> bytes = assets.read(record.guid);
-        std::string error;
-        const std::optional<engine::assets::Image> image =
-            bytes ? engine::assets::decode_png(*bytes, error) : std::nullopt;
-        if (!image) {
+        if (!bytes.has_value()) {
             continue;
         }
+        std::string error;
+        const std::optional<engine::assets::Image> image =
+            engine::assets::decode_png(bytes.value(), error);
+        if (!image.has_value()) {
+            continue;
+        }
+        const std::vector<std::uint8_t>& rgba = image.value().rgba;
         std::vector<sprite::Color> outside;
-        for (std::size_t i = 0; i + 3 < image->rgba.size(); i += 4) {
-            if (image->rgba[i + 3] == 0) {
+        for (std::size_t i = 0; i + 3 < rgba.size(); i += 4) {
+            if (rgba[i + 3] == 0) {
                 continue;
             }
-            const sprite::Color c{image->rgba[i], image->rgba[i + 1], image->rgba[i + 2], 255};
+            const sprite::Color c{rgba[i], rgba[i + 1], rgba[i + 2], 255};
             if (std::ranges::find(palette, c) == palette.end() &&
                 std::ranges::find(outside, c) == outside.end()) {
                 outside.push_back(c);
