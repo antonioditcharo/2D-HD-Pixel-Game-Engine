@@ -3,6 +3,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QBuffer>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QDialog>
@@ -12,15 +13,20 @@
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QInputDialog>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QProcess>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
@@ -40,6 +46,7 @@
 
 #include "doctor_panel.h"
 #include "editor/core/new_project.h"
+#include "editor/core/snapshots.h"
 #include "editor/exporter/exporter.h"
 #include "help_window.h"
 #include "inspector.h"
@@ -437,6 +444,119 @@ TableWindow* MainWindow::new_table(const QString& name) {
     }
     reload_assets();
     return open_table(relative);
+}
+
+bool MainWindow::take_snapshot(const QString& name) {
+    if (document_ == nullptr) {
+        return false;
+    }
+    // Saved first, so the snapshot has the work as it is; with a picture of the scene.
+    if (document_->dirty() && !save()) {
+        return false;
+    }
+    QByteArray png;
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    view_->grab()
+        .scaled(320, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+        .save(&buffer, "PNG");
+    std::string error;
+    const Snapshot made =
+        editor::take_snapshot(document_->folder(), utf8_of(name),
+                              std::vector<std::uint8_t>(png.begin(), png.end()), error);
+    if (made.id.empty()) {
+        report(text_of(error));
+        return false;
+    }
+    statusBar()->showMessage(
+        tr("Snapshot taken: %1 (File \u25b8 Snapshots\u2026 to go back to it)").arg(name), 8000);
+    return true;
+}
+
+bool MainWindow::restore_snapshot(const QString& id) {
+    if (document_ == nullptr) {
+        return false;
+    }
+    if (document_->dirty() && !save()) {
+        return false;
+    }
+    const fs::path folder = document_->folder();
+    std::string error;
+    if (!editor::restore_snapshot(folder, utf8_of(id), error)) {
+        report(text_of(error));
+        return false;
+    }
+    // Opened again, as the snapshot had it.
+    const bool opened = open_project(folder);
+    statusBar()->showMessage(
+        tr("Back to the snapshot \"%1\". The project as it was is a snapshot too.").arg(id), 10000);
+    return opened;
+}
+
+void MainWindow::show_snapshots() {
+    if (document_ == nullptr) {
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("snapshots_dialog"));
+    dialog.setWindowTitle(tr("Snapshots"));
+    dialog.resize(560, 420);
+    auto* column = new QVBoxLayout(&dialog);
+    auto* list = new QListWidget(&dialog);
+    list->setObjectName(QStringLiteral("snapshot_list"));
+    list->setIconSize(QSize(160, 90));
+    for (const Snapshot& s : list_snapshots(document_->folder())) {
+        auto* item = new QListWidgetItem(
+            QStringLiteral("%1\n%2").arg(text_of(s.name), text_of(s.when)), list);
+        item->setData(Qt::UserRole, text_of(s.id));
+        if (!s.picture.empty()) {
+            item->setIcon(QIcon(QPixmap(path_text(s.picture))));
+        }
+    }
+    if (list->count() > 0) {
+        list->setCurrentRow(0);
+    }
+    auto* buttons = new QHBoxLayout();
+    auto* restore = new QPushButton(tr("Go back to it"), &dialog);
+    restore->setToolTip(
+        tr("The project as it was then; the project as it is now is kept as a snapshot first"));
+    auto* remove = new QPushButton(tr("Delete"), &dialog);
+    auto* close_button = new QPushButton(tr("Close"), &dialog);
+    buttons->addWidget(restore);
+    buttons->addWidget(remove);
+    buttons->addStretch();
+    buttons->addWidget(close_button);
+    column->addWidget(new QLabel(tr("Restore points of the whole project, the newest first. "
+                                    "Take one with File \u25b8 Take a snapshot\u2026"),
+                                 &dialog));
+    column->addWidget(list);
+    column->addLayout(buttons);
+    connect(close_button, &QPushButton::clicked, &dialog, &QDialog::reject);
+    connect(restore, &QPushButton::clicked, &dialog, [this, list, &dialog] {
+        if (const QListWidgetItem* item = list->currentItem()) {
+            const QString id = item->data(Qt::UserRole).toString();
+            dialog.accept();
+            restore_snapshot(id);
+        }
+    });
+    connect(remove, &QPushButton::clicked, &dialog, [this, list] {
+        QListWidgetItem* item = list->currentItem();
+        if (item == nullptr ||
+            QMessageBox::question(this, tr("Delete the snapshot"),
+                                  tr("Delete \"%1\"? It cannot be brought back.")
+                                      .arg(item->text().section(QLatin1Char('\n'), 0, 0))) !=
+                QMessageBox::Yes) {
+            return;
+        }
+        std::string failed;
+        if (editor::delete_snapshot(document_->folder(),
+                                    utf8_of(item->data(Qt::UserRole).toString()), failed)) {
+            delete item;
+        } else {
+            report(text_of(failed));
+        }
+    });
+    dialog.exec();
 }
 
 HelpWindow* MainWindow::show_guide(const QString& page) {
@@ -920,6 +1040,19 @@ void MainWindow::build_actions() {
         }
     });
     open->setShortcut(QKeySequence::Open);
+    // Snapshots: restore points of the whole project.
+    QAction* snap_take = file->addAction(tr("Take a s&napshot…"), this, [this] {
+        bool named = false;
+        const QString name =
+            QInputDialog::getText(this, tr("Take a snapshot"), tr("What it is before or after:"),
+                                  QLineEdit::Normal, tr("Before trying something"), &named);
+        if (named) {
+            take_snapshot(name);
+        }
+    });
+    snap_take->setObjectName(QStringLiteral("take_snapshot"));
+    QAction* snap_list = file->addAction(tr("Snapshots…"), this, [this] { show_snapshots(); });
+    snap_list->setObjectName(QStringLiteral("snapshots"));
     QAction* close = file->addAction(tr("&Close project"), this, [this] { close_project(); });
     close->setObjectName(QStringLiteral("close_project"));
     close->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+W")));

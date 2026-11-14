@@ -10,6 +10,7 @@ add_library(editor_core STATIC
     src/new_project.cpp
     src/preview.cpp
     src/sfx.cpp
+    src/snapshots.cpp
     src/sprite.cpp
     src/story.cpp
     src/table_edit.cpp

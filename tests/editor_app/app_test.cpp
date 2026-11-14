@@ -11,12 +11,14 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileSystemModel>
 #include <QGroupBox>
+#include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -28,6 +30,7 @@
 #include <QSettings>
 #include <QSpinBox>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
 #include <QTreeWidget>
@@ -38,6 +41,7 @@
 
 #include "doctor_panel.h"
 #include "editor/core/new_project.h"
+#include "editor/core/snapshots.h"
 #include "inspector.h"
 #include "logic_panel.h"
 #include "main_window.h"
@@ -2244,4 +2248,39 @@ TEST_CASE("The scene view shows Screen Text where the game will") {
     }
     std::error_code ignored;
     fs::remove_all(folder, ignored);
+}
+
+TEST_CASE("File > Snapshots: one taken with a picture of the scene, listed, and gone back to") {
+    Editor e;
+    REQUIRE(e.window.take_snapshot(QStringLiteral("before the cave")));
+    std::vector<editor::Snapshot> all = editor::list_snapshots(e.sample.path);
+    REQUIRE(all.size() == 1);
+    CHECK(all[0].name == "before the cave");
+    REQUIRE_FALSE(all[0].picture.empty());
+    CHECK_FALSE(QImage(QString::fromStdU16String(all[0].picture.u16string())).isNull());
+
+    // The dialog lists it with its picture.
+    int listed = -1;
+    bool pictured = false;
+    QTimer::singleShot(0, [&] {
+        for (QWidget* top : QApplication::topLevelWidgets()) {
+            if (top->objectName() == QStringLiteral("snapshots_dialog")) {
+                const auto* list = top->findChild<QListWidget*>(QStringLiteral("snapshot_list"));
+                listed = list->count();
+                pictured = listed > 0 && !list->item(0)->icon().isNull();
+                qobject_cast<QDialog*>(top)->reject();
+            }
+        }
+    });
+    e.window.show_snapshots();
+    CHECK(listed == 1);
+    CHECK(pictured);
+
+    // Something made after it goes when it is gone back to; the project opens again.
+    std::ofstream(e.sample.path / "maps" / "extra.dscene") << "{}";
+    REQUIRE(e.window.restore_snapshot(QString::fromStdString(all[0].id)));
+    CHECK_FALSE(fs::exists(e.sample.path / "maps" / "extra.dscene"));
+    REQUIRE(e.window.document() != nullptr);
+    CHECK(e.window.outliner()->topLevelItemCount() == 7);
+    CHECK(editor::list_snapshots(e.sample.path).size() == 2); // with "Before restoring"
 }

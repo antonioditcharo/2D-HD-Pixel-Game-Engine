@@ -99,6 +99,17 @@ back: restoring opens the scene it was made in and puts the work back as one und
 to save when closing. (`Document::write_recovery()`, `restore_recovery()`,
 `discard_recovery()`, `recovery_scene()`; Sprite Studio's sprites are not kept yet.)
 
+**Snapshots** (`plan/02` A7). Before trying something big, *File ▸ Take a snapshot…* keeps
+the whole project, saved first, as a named restore point with a picture of the scene, in
+`.sparxel/snapshots/<date and time> <name>/` (never exported). *File ▸ Snapshots…* lists them,
+the newest first, with their pictures: **Go back to it** puts the project back as it was
+then and opens it again, after keeping the project as it is now as one more snapshot,
+*Before restoring*, so going back can itself be undone; **Delete** removes one for good. A
+snapshot is a full copy, so it needs no version control and works offline; for a project's
+history over months, a Git repository is still the better tool.
+(`editor/core/snapshots.h`: `take_snapshot`, `list_snapshots`, `restore_snapshot`,
+`delete_snapshot`.)
+
 **Scenes.** A project opens in the scene its game starts in. **Double-click a scene** in
 the Assets to edit it instead; the open scene is saved first if it changed, and Undo
 starts again in the scene opened. Logic belongs to the whole game: a Rule can be about an

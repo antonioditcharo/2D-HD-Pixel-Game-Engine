@@ -137,6 +137,13 @@ public:
     TableWindow* collect_translations();
     /// Opens the Sparxel guide (Help, F1), at `page` ("shop.md") if given.
     HelpWindow* show_guide(const QString& page);
+    /// Saves, then keeps the whole project as a snapshot named `name`, with a picture of the
+    /// scene (editor/core/snapshots.h). False, saying why, if it cannot.
+    bool take_snapshot(const QString& name);
+    /// Saves, then puts the project back as snapshot `id` had it and opens it again.
+    bool restore_snapshot(const QString& id);
+    /// File > Snapshots: the project's snapshots with their pictures, to go back to or delete.
+    void show_snapshots();
     /// Makes a conversation as assets/talk/<name>.dtalk, with one node, and opens it.
     StoryWindow* new_story(const QString& name);
     /// Opens a data table of the project (its path in assets/, a .dtable), or brings its

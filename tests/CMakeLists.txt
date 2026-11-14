@@ -241,6 +241,7 @@ add_test(NAME export_and_play
 add_executable(editor_core_tests
     test_main.cpp
     editor/document_test.cpp
+    editor/snapshots_test.cpp
     editor/sprite_test.cpp
     editor/story_test.cpp
     editor/table_test.cpp
