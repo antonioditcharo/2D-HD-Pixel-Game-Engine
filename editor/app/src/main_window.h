@@ -32,6 +32,8 @@ class QFileSystemModel;
 
 namespace editor {
 
+class GameView;
+
 class HelpWindow;
 class TutorialPanel;
 
@@ -158,6 +160,12 @@ public:
     /// Puts entity under `parent` (or at the top, for an invalid one), as the outliner's
     /// right-click menu does. False, saying why, if it cannot.
     bool put_under(engine::Guid entity, engine::Guid parent);
+    /// Game > Play in the editor (F6): saves, then plays the game in place of the scene.
+    /// `sound` off for tests. False, saying why, if it cannot start.
+    bool play_here(bool sound = true);
+    /// Game > Stop playing (Shift+F6), or the game quitting: back to the scene.
+    void stop_playing();
+    [[nodiscard]] GameView* game_view() const noexcept { return game_; }
     /// Edit > Copy: the selected entities, with everything under them, to the clipboard.
     bool copy_selection();
     /// Edit > Paste: the clipboard's entities, the first where the camera looks; selected.
@@ -263,6 +271,7 @@ private:
     SceneView* view_ = nullptr;
     QTreeWidget* outliner_ = nullptr;
     QTreeView* asset_tree_ = nullptr;
+    GameView* game_ = nullptr;
     QLineEdit* asset_search_ = nullptr;
     QDialog* usages_ = nullptr;
     QString palette_key_; ///< The tileset the palette shows, to notice when it changes.

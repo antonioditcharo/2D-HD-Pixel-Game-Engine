@@ -672,5 +672,5 @@ named by path (`maps/cave.dscene`) or GUID.
 
 1. **"Who", further** (`plan/05` §2): a *Choose* step picking one tagged object (the
    nearest, at random); tags, *it*, *For each*, *who* and *is tagged* are done (§5).
-2. **Play in the editor** (`plan/03` §8): the runtime inside the editor's own window, as
-   well as in `sparxel-player` (F5 today, [player.md](player.md)).
+2. **Play in the editor, further:** gamepads there, and pausing to inspect and change the
+   playing world (F6 plays in the editor's window today: [editor.md](editor.md)).

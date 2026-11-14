@@ -17,6 +17,8 @@ add_library(editor_app STATIC
     src/asset_browser.cpp
     src/asset_browser.h
     src/doctor_panel.cpp
+    src/game_view.cpp
+    src/game_view.h
     src/doctor_panel.h
     src/help_window.cpp
     src/help_window.h

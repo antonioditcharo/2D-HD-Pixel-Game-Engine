@@ -50,6 +50,7 @@
 #include "editor/core/asset_tools.h"
 #include "editor/core/new_project.h"
 #include "editor/core/snapshots.h"
+#include "game_view.h"
 #include "inspector.h"
 #include "logic_panel.h"
 #include "main_window.h"
@@ -2578,4 +2579,60 @@ TEST_CASE("Edit commands: copy and paste where the camera looks, duplicate, sele
     e.window.select(twins[0]);
     e.window.findChild<QAction*>(QStringLiteral("cut"))->trigger();
     CHECK_FALSE(d.world().find(twins[0]).is_valid());
+}
+
+TEST_CASE("Playing in the editor: the game's frames shown, its keys from here") {
+    Editor e;
+    REQUIRE(e.window.play_here(false));
+    editor::GameView* game = e.window.game_view();
+    REQUIRE(game->playing());
+    CHECK(game->isVisible());
+    game->advance(0.1);
+    CHECK(game->frame().width() == 320);
+    CHECK(game->frame().height() == 180);
+    engine::game::Runtime* runtime = game->runtime();
+    REQUIRE(runtime != nullptr);
+    const auto hero_x = [runtime] {
+        const engine::world::World& w = runtime->world();
+        return w.get<scene2d::Transform2D>(w.find_named("hero").at(0))->x;
+    };
+    // The sample greets the player first: Z (as a player would) through its messages.
+    const auto tap = [game](Qt::Key key) {
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier);
+        QApplication::sendEvent(game, &press);
+        game->advance(0.1);
+        QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier);
+        QApplication::sendEvent(game, &release);
+        game->advance(0.1);
+    };
+    for (int i = 0; i < 20 && runtime->dialogue().is_open(); ++i) {
+        tap(Qt::Key_Z);
+    }
+    REQUIRE_FALSE(runtime->dialogue().is_open());
+    const double start = hero_x();
+    // Right held: the hero walks right; let go, it stops.
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+    QApplication::sendEvent(game, &down);
+    for (int i = 0; i < 5; ++i) {
+        game->advance(0.1);
+    }
+    const double walked = hero_x();
+    CHECK(walked > start + 0.5);
+    QKeyEvent up(QEvent::KeyRelease, Qt::Key_Right, Qt::NoModifier);
+    QApplication::sendEvent(game, &up);
+    game->advance(0.2);
+    const double stopped = hero_x();
+    game->advance(0.5);
+    CHECK(hero_x() == stopped);
+    // The scene itself is not changed by playing.
+    CHECK(e.window.document()
+              ->world()
+              .get<scene2d::Transform2D>(e.window.document()->world().find(e.guid("hero")))
+              ->x == start);
+    CHECK(editor::engine_key(Qt::Key_Z) == engine::input::Key::Z);
+    CHECK_FALSE(editor::engine_key(Qt::Key_Menu).has_value());
+    // Stopped: back to the scene.
+    e.window.stop_playing();
+    CHECK_FALSE(game->playing());
+    CHECK(e.window.scene_view()->isVisible());
 }

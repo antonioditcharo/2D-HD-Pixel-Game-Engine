@@ -55,6 +55,7 @@
 #include "editor/core/new_project.h"
 #include "editor/core/snapshots.h"
 #include "editor/exporter/exporter.h"
+#include "game_view.h"
 #include "help_window.h"
 #include "inspector.h"
 #include "logic_panel.h"
@@ -118,6 +119,10 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     stack_ = new QStackedWidget(this);
     stack_->addWidget(start_);
     stack_->addWidget(view_);
+    // The game played here, in place of the scene while it plays.
+    game_ = new GameView(this);
+    stack_->addWidget(game_);
+    connect(game_, &GameView::ended, this, [this] { stop_playing(); });
     setCentralWidget(stack_);
     // Panels split beside and under each other anywhere, gather as tabs (with the tabs on
     // top), float as windows, and a group of tabs drags as one.
@@ -722,6 +727,28 @@ bool MainWindow::rename_asset(const QString& asset, const QString& name) {
                                        .arg(changed.size()),
                              8000);
     return true;
+}
+
+bool MainWindow::play_here(bool sound) {
+    if (document_ == nullptr || (document_->dirty() && !save())) {
+        return false;
+    }
+    std::string error;
+    if (!game_->start(document_->folder(), sound, error)) {
+        report(tr("The game could not start: %1").arg(text_of(error)));
+        return false;
+    }
+    stack_->setCurrentWidget(game_);
+    game_->setFocus();
+    statusBar()->showMessage(tr("Playing. Shift+F6 stops; F1 is the debug menu."), 6000);
+    return true;
+}
+
+void MainWindow::stop_playing() {
+    game_->stop();
+    if (stack_->currentWidget() == game_) {
+        stack_->setCurrentWidget(document_ != nullptr ? static_cast<QWidget*>(view_) : start_);
+    }
 }
 
 bool MainWindow::put_under(engine::Guid entity, engine::Guid parent) {
@@ -1341,6 +1368,15 @@ void MainWindow::build_actions() {
     }
     play_ = game->addAction(tr("&Play"), this, [this] { play(); });
     play_->setShortcut(Qt::Key_F5);
+    QAction* play_here_action =
+        game->addAction(tr("Play in the &editor"), this, [this] { play_here(); });
+    play_here_action->setObjectName(QStringLiteral("play_here"));
+    play_here_action->setShortcut(Qt::Key_F6);
+    play_here_action->setToolTip(tr("Plays the game in place of the scene, to test without "
+                                    "leaving the editor; Shift+F6 stops"));
+    QAction* stop_action = game->addAction(tr("&Stop playing"), this, [this] { stop_playing(); });
+    stop_action->setObjectName(QStringLiteral("stop_playing"));
+    stop_action->setShortcut(QKeySequence(QStringLiteral("Shift+F6")));
     export_ = game->addAction(tr("&Export…"), this, [this] { export_to({}); });
     for (QAction* action :
          {open, save_, undo_, redo_, new_entity_, delete_, snap, play_, export_}) {
