@@ -92,11 +92,11 @@ void register_hud(reflect::Registry& registry) {
     text.property<&ScreenText::anchor>("anchor").display_name("Place").tooltip(
         "The corner, side or middle of the screen it is fixed to.");
     text.property<&ScreenText::x>("x")
-        .range(0.0, 1000.0)
+        .range(-1000.0, 1000.0)
         .step(1.0)
         .tooltip("Pixels in from the place's side.");
     text.property<&ScreenText::y>("y")
-        .range(0.0, 1000.0)
+        .range(-1000.0, 1000.0)
         .step(1.0)
         .tooltip("Pixels in from the place's top or bottom.");
     text.property<&ScreenText::size>("size").range(1.0, 2.0).tooltip("2: twice as large.");
@@ -113,11 +113,11 @@ void register_hud(reflect::Registry& registry) {
     bar.property<&ScreenBar::anchor>("anchor").display_name("Place").tooltip(
         "The corner, side or middle of the screen it is fixed to.");
     bar.property<&ScreenBar::x>("x")
-        .range(0.0, 1000.0)
+        .range(-1000.0, 1000.0)
         .step(1.0)
         .tooltip("Pixels in from the place's side.");
     bar.property<&ScreenBar::y>("y")
-        .range(0.0, 1000.0)
+        .range(-1000.0, 1000.0)
         .step(1.0)
         .tooltip("Pixels in from the place's top or bottom.");
     bar.property<&ScreenBar::width>("width").range(4.0, 1000.0).step(1.0);
@@ -134,11 +134,11 @@ void register_hud(reflect::Registry& registry) {
     picture.property<&ScreenPicture::anchor>("anchor").display_name("Place").tooltip(
         "The corner, side or middle of the screen it is fixed to.");
     picture.property<&ScreenPicture::x>("x")
-        .range(0.0, 1000.0)
+        .range(-1000.0, 1000.0)
         .step(1.0)
         .tooltip("Pixels in from the place's side.");
     picture.property<&ScreenPicture::y>("y")
-        .range(0.0, 1000.0)
+        .range(-1000.0, 1000.0)
         .step(1.0)
         .tooltip("Pixels in from the place's top or bottom.");
     picture.property<&ScreenPicture::width>("width")

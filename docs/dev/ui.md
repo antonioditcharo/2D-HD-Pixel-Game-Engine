@@ -199,7 +199,11 @@ Values in braces, filled every frame:
 
 In the editor, the scene view shows them where the game will, with their words as
 written (braces and all), bars half full and pictures stretched as the game will, so they
-are placed by eye.
+are placed by eye. **Click one** to select it (it is outlined, and the inspector shows it)
+and **drag it** to move it: its *X* and *Y* change by whole pixels of the game's screen,
+measured from its *Place*, so one fixed to the bottom right stays fixed there when the
+screen's size changes. A drag is one undo step (*Move gold_panel on the screen*). X and Y
+may be negative, to place something left of or above the middle.
 
 `{{` writes a brace. Logic shows and hides them by their *Visible*, and changes their words
 like any other property.

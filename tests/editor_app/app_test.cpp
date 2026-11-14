@@ -2418,3 +2418,54 @@ TEST_CASE("The Assets panel: searched, pictures as thumbnails, usages found, ren
     CHECK_FALSE(
         e.window.rename_asset(QStringLiteral("maps/forest.dscene"), QStringLiteral("village")));
 }
+
+TEST_CASE("On-screen elements: clicked to select, dragged from their Place, in one undo") {
+    const fs::path folder =
+        fs::temp_directory_path() / ("sparxel-hud-drag-" + engine::Guid::generate().to_string());
+    std::string error;
+    REQUIRE(editor::create_project(folder, "HUD", error, editor::ProjectTemplate::Rpg));
+    {
+        editor::MainWindow window(SPARXEL_PLAYER);
+        window.resize(1400, 900);
+        window.show();
+        REQUIRE(window.open_project(folder));
+        QApplication::processEvents();
+        editor::SceneView* view = window.scene_view();
+        static_cast<void>(view->grab()); // painted, so its elements are where they show
+        const auto panel_entity = window.document()->world().find_named("gold_panel").at(0);
+        const engine::Guid panel = window.document()->world().guid(panel_entity);
+        const auto found =
+            std::ranges::find_if(view->hud_items(), [&](const editor::SceneView::HudItem& i) {
+                return i.entity == panel;
+            });
+        REQUIRE(found != view->hud_items().end());
+        // A point of the panel's rim, away from the words drawn over it.
+        const QPoint on = found->at.toRect().topLeft() + QPoint(2, 2);
+        const auto picture = [&] {
+            return window.document()->world().get<game::ScreenPicture>(
+                window.document()->world().find(panel));
+        };
+        CHECK(picture()->x == 1.0);
+        // Dragged 10 screen pixels left and 6 down: further from the right, and the top.
+        const int s = static_cast<int>(std::lround(found->at.width() / 60.0));
+        REQUIRE(s >= 1);
+        mouse(view, QEvent::MouseButtonPress, on, Qt::LeftButton);
+        CHECK(window.selection() == panel);
+        mouse(view, QEvent::MouseMove, on + QPoint(-5 * s, 3 * s), Qt::LeftButton);
+        mouse(view, QEvent::MouseMove, on + QPoint(-10 * s, 6 * s), Qt::LeftButton);
+        mouse(view, QEvent::MouseButtonRelease, on + QPoint(-10 * s, 6 * s), Qt::LeftButton);
+        QApplication::processEvents();
+        CHECK(picture()->x == 11.0);
+        CHECK(picture()->y == 7.0);
+        // The inspector shows it, and one undo puts it back.
+        auto* x_field = window.inspector()->findChild<QDoubleSpinBox*>(
+            QStringLiteral("property:screen_picture/x"));
+        REQUIRE(x_field != nullptr);
+        CHECK(x_field->value() == 11.0);
+        window.undo();
+        CHECK(picture()->x == 1.0);
+        CHECK(picture()->y == 1.0);
+    }
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
+}

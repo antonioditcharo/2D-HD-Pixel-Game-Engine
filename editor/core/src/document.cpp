@@ -705,6 +705,36 @@ bool Document::set_property(Guid entity, const reflect::TypeInfo& component,
     return true;
 }
 
+bool Document::place_on_screen(Guid entity, const reflect::TypeInfo& component, double x, double y,
+                               std::string& error) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(entity);
+    const reflect::ObjectRef object =
+        e.is_valid() ? d.world->get(e, component) : reflect::ObjectRef{};
+    const reflect::PropertyInfo* across = component.find_property("x");
+    const reflect::PropertyInfo* down = component.find_property("y");
+    if (object.is_null() || across == nullptr || down == nullptr) {
+        error = "That entity has no " + component.meta.display_name + " to move.";
+        return false;
+    }
+    const std::optional<reflect::Value> was_x = reflect::get_property(object, *across);
+    serialize::Json before = d.snapshot();
+    if (reflect::set_property(object, *across, reflect::Value{x}) != reflect::SetResult::Ok) {
+        error = "That is too far for " + component.meta.display_name + ".";
+        return false;
+    }
+    if (reflect::set_property(object, *down, reflect::Value{y}) != reflect::SetResult::Ok) {
+        if (was_x) {
+            static_cast<void>(reflect::set_property(object, *across, *was_x));
+        }
+        error = "That is too far for " + component.meta.display_name + ".";
+        return false;
+    }
+    d.record("Move " + d.name_of(entity) + " on the screen", std::move(before), entity,
+             "screen_place/" + component.name);
+    return true;
+}
+
 bool Document::set_property_many(const std::vector<Guid>& entities,
                                  const reflect::TypeInfo& component,
                                  const reflect::PropertyInfo& property, const reflect::Value& value,

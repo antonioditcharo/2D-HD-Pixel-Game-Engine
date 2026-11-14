@@ -7,8 +7,11 @@
 //
 // See docs/dev/editor.md.
 
+#include "engine/game/hud.h"
+
 #include <QImage>
 #include <QPoint>
+#include <QRectF>
 #include <QWidget>
 #include <algorithm>
 #include <array>
@@ -19,6 +22,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "editor/core/document.h"
 #include "editor/core/preview.h"
@@ -118,6 +122,19 @@ public:
     /// The point of this widget showing image point (ndc_x, ndc_y), from -1 to 1, y up.
     [[nodiscard]] QPoint from_ndc(double ndc_x, double ndc_y) const;
 
+    /// An on-screen element (a Screen Text, Bar or Picture) where this view last drew it.
+    struct HudItem {
+        engine::Guid entity;
+        const engine::reflect::TypeInfo* component = nullptr;
+        QRectF at; ///< On this widget.
+        engine::game::ScreenAnchor anchor = engine::game::ScreenAnchor::TopLeft;
+        double x = 0.0;
+        double y = 0.0;
+    };
+    /// The on-screen elements as last painted, the topmost last. Clicking one selects it,
+    /// and dragging it moves it by its X and Y from its Place.
+    [[nodiscard]] const std::vector<HudItem>& hud_items() const noexcept { return hud_items_; }
+
 Q_SIGNALS:
     void selected(engine::Guid entity);
     /// Ctrl- or Shift-click: `entity` joins the selection, or leaves it.
@@ -126,6 +143,9 @@ Q_SIGNALS:
     void boxed(std::vector<engine::Guid> entities);
     /// The scene was changed here: an entity dragged, or tiles painted.
     void moved();
+    /// A drag that changed the scene (moving, turning, scaling, an on-screen element) ended:
+    /// the inspector shows the values it left.
+    void drag_finished();
     /// Escape was pressed while painting.
     void stop_painting();
     void problem(const QString& message);
@@ -175,8 +195,13 @@ private:
         Box,
         Turn,
         Stretch,
-        Pivot
+        Pivot,
+        Hud
     } drag_ = Drag::None;
+    /// paint_hud()'s elements, kept for clicking and dragging them.
+    mutable std::vector<HudItem> hud_items_;
+    /// The on-screen element being dragged, as it was when the drag began.
+    HudItem hud_grabbed_;
     /// For a drag by the pivot ring: the picture's corners on the map when it began.
     std::array<std::array<double, 2>, 4> corners_{};
     /// For a drag by the turning or scaling handle: each selected picture's position,

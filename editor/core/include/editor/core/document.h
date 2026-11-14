@@ -181,6 +181,12 @@ public:
     bool set_property(engine::Guid entity, const engine::reflect::TypeInfo& component,
                       const engine::reflect::PropertyInfo& property,
                       const engine::reflect::Value& value, std::string& error);
+    /// Sets the "x" and "y" of an entity's `component` together (a Screen Text, Bar or
+    /// Picture dragged in the scene view): "Move hp_bar on the screen". Moves of the same
+    /// entity merge into one step, as a drag does. False, changing nothing, with `error`,
+    /// if it lacks them or refuses the values.
+    bool place_on_screen(engine::Guid entity, const engine::reflect::TypeInfo& component, double x,
+                         double y, std::string& error);
     /// Sets the same property of the same component on several entities at once, as one
     /// step of undo ("Change Speed of 2 entities"); typing into the field merges, as for
     /// one. Refused, changing nothing, with `error`, if any of them lacks the component

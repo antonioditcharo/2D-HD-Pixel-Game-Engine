@@ -278,6 +278,7 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     connect(view_, &SceneView::boxed, this,
             [this](std::vector<engine::Guid> guids) { select_many(std::move(guids)); });
     connect(view_, &SceneView::moved, this, [this] { changed(false); });
+    connect(view_, &SceneView::drag_finished, this, [this] { reselect(); });
     connect(view_, &SceneView::problem, this, &MainWindow::report);
     connect(logic_, &LogicPanel::edited, this, [this] { update_title_and_actions(); });
     connect(logic_, &LogicPanel::refused, this, &MainWindow::report);

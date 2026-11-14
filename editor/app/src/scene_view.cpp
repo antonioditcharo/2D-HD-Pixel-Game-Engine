@@ -11,6 +11,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPen>
 #include <QUrl>
 #include <algorithm>
 #include <cmath>
@@ -253,6 +254,12 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
         return;
     }
     const engine::world::World& world = document_->world();
+    hud_items_.clear();
+    const auto remember = [&](engine::world::Entity e, const engine::reflect::TypeInfo* type,
+                              const QRectF& at, engine::game::ScreenAnchor anchor, double x,
+                              double y) {
+        hud_items_.push_back(HudItem{world.guid(e), type, at, anchor, x, y});
+    };
     const auto sw = static_cast<double>(image_.width());
     const auto sh = static_cast<double>(image_.height());
     // Where a w x h thing goes on the game's screen, as the game places it.
@@ -268,7 +275,7 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
     };
     // Screen Pictures first, under the bars and words, as the game draws them.
     if (const auto* type = world.registry().find_type<engine::game::ScreenPicture>()) {
-        world.each(*type, [&](engine::world::Entity, engine::reflect::ObjectRef ref) {
+        world.each(*type, [&](engine::world::Entity e, engine::reflect::ObjectRef ref) {
             const auto* picture = ref.as<engine::game::ScreenPicture>();
             if (picture == nullptr || !picture->visible) {
                 return;
@@ -282,6 +289,7 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
             const double w = picture->width > 0.0 ? picture->width : pw;
             const double h = picture->height > 0.0 ? picture->height : ph;
             const QRectF at = place(picture->anchor, picture->x, picture->y, w, h);
+            remember(e, type, at, picture->anchor, picture->x, picture->y);
             painter.save();
             painter.setOpacity(std::clamp(picture->opacity, 0.0, 1.0));
             // The same pieces as the game's (engine/game/hud.h), in screen pixels.
@@ -307,7 +315,7 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
     painter.setFont(font);
     const QFontMetricsF metrics(font);
     if (const auto* type = world.registry().find_type<engine::game::ScreenText>()) {
-        world.each(*type, [&](engine::world::Entity, engine::reflect::ObjectRef ref) {
+        world.each(*type, [&](engine::world::Entity e, engine::reflect::ObjectRef ref) {
             const auto* label = ref.as<engine::game::ScreenText>();
             if (label == nullptr || !label->visible) {
                 return;
@@ -317,6 +325,7 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
             const double size = label->size >= 2 ? 2.0 : 1.0;
             const QRectF at = place(label->anchor, label->x, label->y,
                                     metrics.horizontalAdvance(words) * size / s, 9.0 * size);
+            remember(e, type, at, label->anchor, label->x, label->y);
             painter.setPen(QColor(0, 0, 0, 180));
             painter.drawText(at.translated(s, s), Qt::AlignLeft | Qt::AlignVCenter, words);
             painter.setPen(Qt::white);
@@ -324,13 +333,14 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
         });
     }
     if (const auto* type = world.registry().find_type<engine::game::ScreenBar>()) {
-        world.each(*type, [&](engine::world::Entity, engine::reflect::ObjectRef ref) {
+        world.each(*type, [&](engine::world::Entity e, engine::reflect::ObjectRef ref) {
             const auto* bar = ref.as<engine::game::ScreenBar>();
             if (bar == nullptr || !bar->visible) {
                 return;
             }
             const QRectF at =
                 place(bar->anchor, bar->x, bar->y, bar->width + 2.0, bar->height + 2.0);
+            remember(e, type, at, bar->anchor, bar->x, bar->y);
             painter.fillRect(at, QColor(230, 232, 240));
             const QRectF inside = at.adjusted(s, s, -s, -s);
             painter.fillRect(inside, QColor(18, 20, 40));
@@ -340,6 +350,15 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
                 QRectF(inside.topLeft(), QSizeF(inside.width() / 2.0, inside.height())),
                 fill.isValid() ? fill : QColor(220, 70, 70));
         });
+    }
+    for (const HudItem& item : hud_items_) {
+        if (item.entity == selection_) {
+            painter.save();
+            painter.setPen(QPen(QColor(255, 210, 122), 1, Qt::DashLine));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(item.at.adjusted(-2, -2, 1, 1));
+            painter.restore();
+        }
     }
 }
 
@@ -637,6 +656,22 @@ void SceneView::mousePressEvent(QMouseEvent* event) {
         }
     }
     axis_ = Axis::Free;
+    // On an on-screen element (the topmost): selected, and dragged across the screen.
+    if (event->button() == Qt::LeftButton && document_ != nullptr && !image_.isNull() &&
+        (event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) == 0) {
+        for (auto item = hud_items_.rbegin(); item != hud_items_.rend(); ++item) {
+            if (item->component != nullptr && item->at.contains(QPointF(drag_from_))) {
+                hud_grabbed_ = *item;
+                selection_ = item->entity;
+                group_.assign(1U, item->entity);
+                Q_EMIT selected(item->entity);
+                drag_ = Drag::Hud;
+                document_->end_merge();
+                update();
+                return;
+            }
+        }
+    }
     if (event->button() == Qt::LeftButton && document_ != nullptr && !image_.isNull()) {
         engine::world::Entity e;
         if (diorama()) {
@@ -693,6 +728,22 @@ void SceneView::mouseMoveEvent(QMouseEvent* event) {
             update();
         } else {
             paint_at(event->position().toPoint());
+        }
+        return;
+    }
+    if (drag_ == Drag::Hud) {
+        const int s = scale();
+        const double dx = std::round(static_cast<double>(delta.x()) / s);
+        const double dy = std::round(static_cast<double>(delta.y()) / s);
+        const int column = static_cast<int>(hud_grabbed_.anchor) % 3;
+        const int row = static_cast<int>(hud_grabbed_.anchor) / 3;
+        const double x = hud_grabbed_.x + (column == 2 ? -dx : dx);
+        const double y = hud_grabbed_.y + (row == 2 ? -dy : dy);
+        std::string error;
+        if (hud_grabbed_.component != nullptr &&
+            document_->place_on_screen(hud_grabbed_.entity, *hud_grabbed_.component, x, y, error)) {
+            Q_EMIT moved();
+            update();
         }
         return;
     }
@@ -905,9 +956,13 @@ void SceneView::mouseReleaseEvent(QMouseEvent* event) {
         update();
     }
     if ((drag_ == Drag::Entity || drag_ == Drag::Paint || drag_ == Drag::Turn ||
-         drag_ == Drag::Stretch || drag_ == Drag::Pivot) &&
+         drag_ == Drag::Stretch || drag_ == Drag::Pivot || drag_ == Drag::Hud) &&
         document_ != nullptr) {
         document_->end_merge();
+        if (drag_ != Drag::Paint) {
+            drag_ = Drag::None;
+            Q_EMIT drag_finished();
+        }
     }
     drag_ = Drag::None;
 }
