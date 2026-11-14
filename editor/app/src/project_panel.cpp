@@ -337,11 +337,11 @@ void ProjectPanel::build() {
         }
         pictures.sort();
         bool chosen = false;
-        const QString picture =
+        const QString source =
             QInputDialog::getItem(this, tr("Palette from a picture"), tr("Take the colours of:"),
                                   pictures, 0, false, &chosen);
         if (chosen) {
-            palette_from_picture(picture);
+            palette_from_picture(source);
         }
     });
 
