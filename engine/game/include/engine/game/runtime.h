@@ -32,6 +32,7 @@
 #include "engine/serialize/json.h"
 #include "engine/world/world.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -268,6 +269,8 @@ private:
     explicit Runtime(std::unique_ptr<Impl> impl);
     /// The player's options: read at start, kept after each change, put into effect.
     void load_options();
+    /// The player walked `walked` tiles to `at`: a footstep when due, on the ground's sound.
+    void footsteps(double walked, std::array<double, 2> at);
     /// Keeps the player's achievements in the save folder.
     void save_achievements();
     /// Makes a copy of a prefab for logic (SaveObject::create()); returns its name, or empty

@@ -164,6 +164,10 @@ void register_types(reflect::Registry& registry) {
         .unit(reflect::Unit::Seconds)
         .flags(reflect::property_flag::hidden)
         .tooltip("How long the tiles have been animating.");
+    tilemap.property<&Tilemap::footsteps>("footsteps")
+        .display_name("Footsteps")
+        .tooltip("The sound walking on these tiles makes (grass, stone, wood); empty to keep "
+                 "the walker's own.");
     tilemap.property<&Tilemap::autotile>("autotile")
         .display_name("Auto-tile")
         .tooltip("Painting picks each tile's edges and corners from its neighbours. For a "

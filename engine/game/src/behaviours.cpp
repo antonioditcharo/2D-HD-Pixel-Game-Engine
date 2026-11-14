@@ -125,6 +125,16 @@ void register_behaviours(reflect::Registry& registry) {
         .display_name("Hitbox height")
         .tooltip("How deep the feet are, for bumping into walls.");
     mover.property<&TopDownMover::facing>("facing").tooltip("The direction it looks.");
+    mover.property<&TopDownMover::footsteps>("footsteps")
+        .display_name("Footsteps")
+        .tooltip("The player's steps: a sound played as they walk, where the ground has no "
+                 "Footsteps of its own (a tilemap's). Empty for silence.");
+    mover.property<&TopDownMover::step_length>("step_length")
+        .range(0.1, 8.0)
+        .step(0.1)
+        .unit(reflect::Unit::Tiles)
+        .display_name("Step length")
+        .tooltip("Tiles walked between footsteps.");
     mover.property<&TopDownMover::moving>("moving")
         .flags(reflect::property_flag::read_only)
         .tooltip("Whether it is walking.");

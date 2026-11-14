@@ -144,6 +144,15 @@ All mix headless and read the samples, so they run anywhere, with no sound card:
 | In a game | A Rule on game start plays the theme by path; Interact's Rule plays a chime over it (0.5 + 0.25); missing and unreadable sounds reported; volumes in percent clamped; no engine, no problems. A chime at the door 5 tiles west of the hero: left 0.25 × 0.6875, right that × 0.375; out of hearing, nothing; nobody by that name, a problem; music streamed |
 
 
+## Footsteps
+
+As the player walks, a footstep sounds every **Step length** tiles (the Top-down Mover's,
+0.6 by default): the sound of the ground under their feet, the **Footsteps** of a tilemap
+with a tile there (grass, stone, wood boards: each its own map, or the same map), or else
+the mover's own **Footsteps**, or nothing. Each step's pitch differs a little, as feet do.
+Being moved by more than walking (arriving through a door) makes no step, and nothing
+counts during messages, menus and battles.
+
 ## Ducking
 
 While a message shows, the music eases down to **Music while a message shows** (the
@@ -157,4 +166,4 @@ music volume and the player's own (Options), without changing either
 
 1. **Snapshots:** whole mixes to switch between (a cave, underwater).
 2. **Fades for sound sources** as they start and stop, and a falloff curve to choose.
-3. **Footstep surfaces**, **zones** and **adaptive music** (ADR-009).
+3. **Audio zones** and **adaptive music** (ADR-009).

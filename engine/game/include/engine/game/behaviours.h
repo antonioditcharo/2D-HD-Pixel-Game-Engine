@@ -40,6 +40,10 @@ struct TopDownMover {
     double hitbox_height = 0.5; ///< In tiles, upwards from the position.
     Facing facing = Facing::Down;
     bool moving = false; ///< A move action was held in the last step (read-only).
+    /// The player's footsteps: a sound in assets/ played as they walk, where the ground
+    /// (a tilemap's Footsteps) has none of its own; empty for silence.
+    std::string footsteps;
+    double step_length = 0.6; ///< Tiles walked between footsteps.
 };
 
 /// What a Walker does.

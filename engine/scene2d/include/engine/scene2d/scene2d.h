@@ -189,6 +189,9 @@ struct Tilemap {
     double animation_fps = 4.0;
     double elapsed = 0.0; ///< Seconds the animation has run (hidden; saved with scenes).
     std::string tileset;  ///< The GUID of a PNG asset.
+    /// The sound walking on this map's tiles makes (grass, stone, wood): a sound in assets/;
+    /// empty to leave the walker's own.
+    std::string footsteps;
     std::string tiles;
     /// Each tile's own height, for terrain built tile by tile: text like `tiles`, a number
     /// per cell (0 to 16, halves and quarters allowed); an empty cell, or a cell past the

@@ -4354,3 +4354,45 @@ TEST_CASE("A save point opens the save slots alone; Cancel goes back to the game
     }
     CHECK_FALSE(runtime->menu().open());
 }
+
+TEST_CASE("Footsteps sound as the player walks, from the ground under their feet") {
+    const Project project;
+    {
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        const world::Entity hero = w.create("hero");
+        w.add<scene2d::Transform2D>(hero);
+        game::TopDownMover* mover = w.add<game::TopDownMover>(hero);
+        mover->step_length = 0.5;
+        const world::Entity ground = w.create("ground");
+        w.add<scene2d::Transform2D>(ground)->y = -1.0;
+        scene2d::Tilemap* map = w.add<scene2d::Tilemap>(ground);
+        map->tiles = "0,0,0,0,0,0";
+        map->footsteps = "sfx/chime.wav";
+        write_json(project.folder.path / "assets/maps/walk.dscene", serialize::scene_to_json(w));
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->start_scene = "maps/walk.dscene";
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+    }
+    input::Recording replay;
+    replay.record(0, key(input::Key::Right), true);
+    replay.record(40, key(input::Key::Right), false);
+    const auto runtime = project.open(no_graphics(&replay));
+    REQUIRE(runtime->audio() != nullptr);
+    bool heard = false;
+    for (int i = 0; i < 20; ++i) {
+        runtime->step();
+        heard = heard || runtime->audio()->playing_sounds() > 0;
+    }
+    CHECK(heard); // 4 tiles a second: a step every 0.5 tiles, on the ground's chime
+    CHECK(runtime->problems().empty());
+}

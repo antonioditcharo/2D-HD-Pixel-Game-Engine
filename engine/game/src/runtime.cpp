@@ -825,8 +825,10 @@ struct Runtime::Impl {
     std::size_t pauses_done = 0;
     double message_seconds = 0.0; ///< How long it has shown, for waves and shakes.
     double box_seconds = 0.0;     ///< How long the message box has been open, to open it.
-    std::size_t blipped = 0;      ///< Bytes of rich.plain the voice has gone past.
-    std::size_t letters = 0;      ///< Letters (not spaces) typed, for every other blip.
+    double stepped = 0.0;         ///< Tiles the player walked since the last footstep.
+    std::uint32_t steps_taken = 0;
+    std::size_t blipped = 0; ///< Bytes of rich.plain the voice has gone past.
+    std::size_t letters = 0; ///< Letters (not spaces) typed, for every other blip.
     /// Every speaker of the project's conversations, by name: how Rules' "{speaker} says"
     /// shows them too.
     std::map<std::string, SpeakerLook, std::less<>> cast;
@@ -1291,6 +1293,7 @@ void Runtime::step() {
         if (r.player_was && !talking && !r.battle_screen && !r.shop_screen && !r.menu.open()) {
             const double walked =
                 std::hypot((*now)[0] - (*r.player_was)[0], (*now)[1] - (*r.player_was)[1]);
+            footsteps(walked, *now);
             std::string background;
             if (const std::optional<std::string> enemies =
                     update_encounters(*r.world, walked, &background)) {
@@ -2647,6 +2650,57 @@ std::string Runtime::create_copy(const SaveObject::Spawn& spawn, std::string& er
     }
     r.world->set_name(root, name);
     return name;
+}
+
+void Runtime::footsteps(double walked, std::array<double, 2> at) {
+    Impl& r = *impl_;
+    const reflect::TypeInfo* mover_type = r.world->registry().find_type<TopDownMover>();
+    if (mover_type == nullptr || !(walked > 0.0) || walked > 4.0) {
+        return; // standing, or moved by more than walking (a door)
+    }
+    const TopDownMover* player = nullptr;
+    r.world->each(*mover_type, [&](world::Entity e, reflect::ObjectRef ref) {
+        const Walker* walker = r.world->get<Walker>(e);
+        if (player == nullptr && (walker == nullptr || !walker->enabled)) {
+            player = ref.as<TopDownMover>();
+        }
+    });
+    if (player == nullptr) {
+        return;
+    }
+    r.stepped += walked;
+    if (r.stepped < std::max(player->step_length, 0.1)) {
+        return;
+    }
+    r.stepped = 0.0;
+    // The ground under the player's feet: the footsteps of a map with a tile there.
+    std::string sound = player->footsteps;
+    const double ppu = std::max<std::uint32_t>(r.settings.ppu, 1);
+    if (const reflect::TypeInfo* type = r.world->registry().find_type<scene2d::Tilemap>()) {
+        r.world->each(*type, [&](world::Entity e, reflect::ObjectRef ref) {
+            const auto* map = ref.as<scene2d::Tilemap>();
+            const auto* origin = r.world->get<scene2d::Transform2D>(e);
+            if (map == nullptr || origin == nullptr || map->footsteps.empty()) {
+                return;
+            }
+            std::string error;
+            const scene2d::TileGrid* grid = map->grid(error);
+            const double tile =
+                static_cast<double>(map->tile_size == 0 ? ppu : map->tile_size) / ppu;
+            const double column = std::floor((at[0] - origin->x) / tile);
+            const double row = std::floor((at[1] - 0.01 - origin->y) / tile);
+            if (grid != nullptr && column >= 0 && row >= 0 &&
+                grid->at(static_cast<std::uint32_t>(column), static_cast<std::uint32_t>(row)) >=
+                    0) {
+                sound = map->footsteps;
+            }
+        });
+    }
+    if (!sound.empty()) {
+        // Each step a little different, as feet are.
+        const std::array<double, 3> pitches{1.0, 0.94, 1.06};
+        r.audio_object.play_voice(sound, pitches.at(r.steps_taken++ % pitches.size()));
+    }
 }
 
 void Runtime::save_achievements() {
