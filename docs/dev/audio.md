@@ -85,12 +85,14 @@ Logic uses the **Audio** object (`audio`):
 | `set_music_volume(percent)`, `set_sound_volume(percent)` | *Set the music volume to {percent}%*, 0 to 100 |
 
 A **Sound Source** component (`sound_source`: `sound`, `volume` 1, `range` 8 tiles,
-`playing`) repeats a sound where its entity is: a waterfall, a fire, a crowd. Each step
+`playing`, `fade` 0.5 seconds) repeats a sound where its entity is: a waterfall, a fire, a crowd. Each step
 the runtime sets its loop to how the player hears it now: `volume` × (1 − distance /
 `range`), silent `range` tiles away, and panned by how far to the side it is (fully at 8
 tiles), as `heard()` works out. It starts when it first plays, stops when `playing` is
 turned off or its entity goes, starts again if its sound is changed, and a sound that
-cannot be played is reported once. In the editor, a sound dragged into the scene becomes
+cannot be played is reported once. It fades in over `fade` seconds as it starts, and out
+from where it was as it stops (turned off, or its entity gone); 0 starts and stops it at
+once. In the editor, a sound dragged into the scene becomes
 one ([editor.md](editor.md)).
 
 - Sounds are named by **asset GUID** (what the editor writes) or by **path** in `assets/`
@@ -165,5 +167,5 @@ music volume and the player's own (Options), without changing either
 ## 6. Next increments
 
 1. **Snapshots:** whole mixes to switch between (a cave, underwater).
-2. **Fades for sound sources** as they start and stop, and a falloff curve to choose.
+2. **A falloff curve to choose** for sound sources (now straight).
 3. **Audio zones** and **adaptive music** (ADR-009).

@@ -353,6 +353,12 @@ void register_behaviours(reflect::Registry& registry) {
         .tooltip("How far it carries: silent this far away.");
     source.property<&SoundSource::playing>("playing").tooltip(
         "Turn off to silence it, and on again to start it.");
+    source.property<&SoundSource::fade>("fade")
+        .range(0.0, 10.0)
+        .step(0.1)
+        .unit(reflect::Unit::Seconds)
+        .tooltip("How long it takes to fade in when it starts playing, and out when it stops "
+                 "(or its entity goes). 0 starts and stops it at once.");
 
     registry.add_choice_list<physics::BodyType>("body_type")
         .display_name("Body type")

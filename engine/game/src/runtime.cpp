@@ -1758,7 +1758,7 @@ void Runtime::step() {
             r.fading = Impl::Fade::Out;
         }
     }
-    r.audio_object.update_sources(1.0 - fade());
+    r.audio_object.update_sources(1.0 - fade(), r.clock.step_seconds());
     for (std::string& problem : r.audio_object.take_problems()) {
         r.problems.push_back(std::move(problem));
     }

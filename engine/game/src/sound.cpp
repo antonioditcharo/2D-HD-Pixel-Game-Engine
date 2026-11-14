@@ -104,7 +104,7 @@ void AudioObject::set_sound_volume(std::int64_t percent) {
     }
 }
 
-void AudioObject::update_sources(double gain) {
+void AudioObject::update_sources(double gain, double seconds) {
     if (engine_ == nullptr || world_ == nullptr) {
         return;
     }
@@ -139,14 +139,30 @@ void AudioObject::update_sources(double gain) {
                 }
             }
         }
-        engine_->set_loop(playing.loop, level.volume, level.pan);
+        // Fading in as it starts.
+        playing.fade = std::max(source->fade, 0.0);
+        playing.faded =
+            playing.fade > 0.0 ? std::min(1.0, playing.faded + (seconds / playing.fade)) : 1.0;
+        playing.volume = level.volume;
+        playing.pan = level.pan;
+        engine_->set_loop(playing.loop, level.volume * playing.faded, level.pan);
         now.emplace(guid, std::move(playing));
     });
-    // What is left was turned off, changed its sound, or is gone.
-    for (const auto& [guid, old] : sources_) {
-        engine_->stop_loop(old.loop);
+    // What is left was turned off, changed its sound, or is gone: it fades out.
+    for (auto& [guid, old] : sources_) {
+        fading_out_.push_back(std::move(old));
     }
     sources_ = std::move(now);
+    for (auto it = fading_out_.begin(); it != fading_out_.end();) {
+        it->faded = it->fade > 0.0 ? it->faded - (seconds / it->fade) : 0.0;
+        if (it->faded <= 0.0) {
+            engine_->stop_loop(it->loop);
+            it = fading_out_.erase(it);
+        } else {
+            engine_->set_loop(it->loop, it->volume * it->faded, it->pan);
+            ++it;
+        }
+    }
 }
 
 void AudioObject::stop_sources() {
@@ -154,6 +170,10 @@ void AudioObject::stop_sources() {
         for (const auto& [guid, source] : sources_) {
             engine_->stop_loop(source.loop);
         }
+        for (const Source& source : fading_out_) {
+            engine_->stop_loop(source.loop);
+        }
+        fading_out_.clear();
     }
     sources_.clear();
 }

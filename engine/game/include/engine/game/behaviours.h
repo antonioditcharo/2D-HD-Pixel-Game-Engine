@@ -237,6 +237,7 @@ struct SoundSource {
     double volume = 1.0; ///< Beside it, 0 to 1.
     double range = 8.0;  ///< How far it carries, in tiles.
     bool playing = true;
+    double fade = 0.5; ///< Seconds it takes to fade in when it starts, and out when it stops.
 };
 
 /// How loud (0 to `source.volume`) and from which side (-1 left to 1 right) a sound source

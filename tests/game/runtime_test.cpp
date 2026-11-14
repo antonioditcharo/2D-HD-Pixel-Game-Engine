@@ -909,6 +909,7 @@ TEST_CASE("A Sound Source repeats where it is, louder as the player comes closer
     REQUIRE(hum != nullptr);
     hum->sound = "sfx/chime.wav";
     hum->range = 10.0;
+    hum->fade = 0.0; // at once: the levels heard are exact (fades are tested below)
     CHECK(mixer->playing_loops() == 0);
     runtime->step();
     CHECK(mixer->playing_loops() == 1);
@@ -4427,4 +4428,33 @@ TEST_CASE("While testing, files changed during play are read again") {
     runtime->dialogue().say("Hello");
     REQUIRE(runtime->dialogue().current() != nullptr);
     CHECK(*runtime->dialogue().current() == "Bonjour");
+}
+
+TEST_CASE("Sound Sources fade in when they start and out when they stop") {
+    const Project project;
+    const auto runtime = project.open(no_graphics(nullptr));
+    audio::AudioEngine* mixer = runtime->audio();
+    REQUIRE(mixer != nullptr);
+    const world::Entity door = runtime->world().find_named("door").at(0);
+    game::SoundSource* hum = runtime->world().add<game::SoundSource>(door);
+    REQUIRE(hum != nullptr);
+    hum->sound = "sfx/chime.wav";
+    hum->range = 100.0;
+    hum->fade = 0.5; // 30 steps
+    for (int i = 0; i < 40; ++i) {
+        runtime->step(); // faded in
+    }
+    CHECK(mixer->playing_loops() == 1);
+    hum = runtime->world().get<game::SoundSource>(door);
+    REQUIRE(hum != nullptr);
+    hum->playing = false;
+    // Still sounding while it fades out, then stopped.
+    for (int i = 0; i < 10; ++i) {
+        runtime->step();
+    }
+    CHECK(mixer->playing_loops() == 1);
+    for (int i = 0; i < 40; ++i) {
+        runtime->step();
+    }
+    CHECK(mixer->playing_loops() == 0);
 }

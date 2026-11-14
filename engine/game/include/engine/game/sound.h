@@ -48,7 +48,7 @@ public:
     /// when it first plays, louder or quieter and to one side as the player moves, and
     /// stopped when it is turned off or its entity goes. Called once a step. `gain` (0 to 1)
     /// scales them all: they fade with the picture when the scene changes.
-    void update_sources(double gain = 1.0);
+    void update_sources(double gain = 1.0, double seconds = 1.0 / 60.0);
     /// Stops every Sound Source (when the scene is replaced).
     void stop_sources();
 
@@ -73,8 +73,13 @@ private:
     struct Source {
         std::uint64_t loop = 0;
         std::string sound;
+        double faded = 0.0;  ///< 0 to 1: how far it has faded in.
+        double fade = 0.0;   ///< Seconds to fade fully.
+        double volume = 0.0; ///< As last heard, before fading, to fade out from.
+        double pan = 0.0;
     };
     std::map<Guid, Source> sources_;
+    std::vector<Source> fading_out_; ///< Stopped, fading to silence.
 };
 
 /// Registers AudioObject as "audio".
