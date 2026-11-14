@@ -298,7 +298,7 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
             painter.fillRect(at, QColor(230, 232, 240));
             const QRectF inside = at.adjusted(s, s, -s, -s);
             painter.fillRect(inside, QColor(18, 20, 40));
-            QColor fill(
+            const QColor fill(
                 QString::fromUtf8(bar->color.data(), static_cast<qsizetype>(bar->color.size())));
             painter.fillRect(
                 QRectF(inside.topLeft(), QSizeF(inside.width() / 2.0, inside.height())),
