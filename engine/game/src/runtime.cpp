@@ -1011,7 +1011,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         scene2d::register_components(scratch);
         register_behaviour_components(scratch);
         for (const world::Entity entity : serialize::scene_from_json(*other, scratch).entities) {
-            for (const std::string& name : names_of(scratch, entity)) {
+            for (const std::string& name : logic_names(scratch, entity)) {
                 std::vector<const reflect::TypeInfo*>& parts = r.elsewhere[name];
                 for (const reflect::TypeInfo* type : scratch.components(entity)) {
                     if (std::find(parts.begin(), parts.end(), type) == parts.end()) {

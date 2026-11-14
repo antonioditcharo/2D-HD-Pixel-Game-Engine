@@ -140,7 +140,10 @@ public:
     /// Emits an event: every function registered for it with `sx.on` starts as a task, in
     /// registration order, with the payload as its arguments. `object` names a bound
     /// object whose type has the event; the payload must then match the event's
-    /// parameters. An empty `object` emits a game-wide event, such as "game_start".
+    /// parameters. An empty `object` emits a game-wide event, such as "game_start". An
+    /// `object` starting with '#' is a group (the objects with a tag, "#enemy"): after the
+    /// event's values comes one more, the text naming the member whose event it is (for
+    /// a Rule's "it").
     ///
     /// Called while a script runs (from a bound C++ function), the event is delivered at
     /// the start of the next update() instead. Returns false, and does nothing, if the

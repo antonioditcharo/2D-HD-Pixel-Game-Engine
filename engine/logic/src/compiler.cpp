@@ -193,6 +193,10 @@ using common::range_text;
 /// input, and stays below the Luau compiler's own limits.
 constexpr int max_depth = 64;
 
+/// In a Rule about a tag ("When an object tagged enemy is touched"), the name of the tagged
+/// object whose event it is.
+constexpr std::string_view it_name = "it";
+
 /// What a slot accepts. Literals are also checked against `limits`.
 struct Slot {
     reflect::ValueKind kind = reflect::ValueKind::Bool;
@@ -417,16 +421,38 @@ private:
 
     /// The types an object is made of, or nothing after reporting that it does not exist.
     [[nodiscard]] std::optional<Object> object_type(BlockId block, const std::string& object) {
+        // "it": in a Rule about a tag ("#enemy"), the tagged object whose event it is.
+        if (object == it_name && it_object_.empty()) {
+            error(block, "\"it\" is the object in a Rule about a tag, such as \"When an object "
+                         "tagged enemy is touched\"; here it means nothing.");
+            return std::nullopt;
+        }
+        const std::string& name = object == it_name ? it_object_ : object;
+        if (object.starts_with('#') && object != rule_object_) {
+            error(block, "A step cannot act on every object tagged " + quote(object.substr(1)) +
+                             " at once; a Rule about the tag acts on \"it\", the one whose "
+                             "event it is.");
+            return std::nullopt;
+        }
         Object found;
         if (objects_) {
-            found.types = objects_(object);
+            found.types = objects_(name);
             std::erase(found.types, nullptr);
         }
         if (found.types.empty()) {
-            error(block, "There is no object called " + quote(object) + ".");
+            error(block, name.starts_with('#')
+                             ? "No object is tagged " + quote(name.substr(1)) + "."
+                             : "There is no object called " + quote(name) + ".");
             return std::nullopt;
         }
         return found;
+    }
+
+    /// The Lua for naming `object`: its name as a string, or, for "it" in a Rule about a
+    /// tag, the handler's own `it` (the GUID of the object whose event it is), which stays
+    /// right across waits.
+    [[nodiscard]] std::string object_code(const std::string& object) const {
+        return object == it_name && !it_object_.empty() ? std::string("it") : lua_string(object);
     }
 
     // --- Asset-level checks -------------------------------------------------------------
@@ -765,7 +791,7 @@ private:
             return std::nullopt;
         }
         type = Type{property->kind, property->choice};
-        return "sx.get(" + lua_string(expr.object) + ", " + lua_string(expr.member) + ")";
+        return "sx.get(" + object_code(expr.object) + ", " + lua_string(expr.member) + ")";
     }
 
     /// The code for the arguments of `function`, starting with ", ", or nothing.
@@ -818,7 +844,7 @@ private:
             return std::nullopt;
         }
         type = Type{*function->result_kind, function->result_choice};
-        return "sx.call(" + lua_string(expr.object) + ", " + lua_string(expr.member) + *arguments +
+        return "sx.call(" + object_code(expr.object) + ", " + lua_string(expr.member) + *arguments +
                ")";
     }
 
@@ -1047,7 +1073,7 @@ private:
         const std::optional<std::string> arguments =
             arguments_code(stmt.id, *function, stmt.arguments);
         if (arguments) {
-            emit(stmt.id, trace() + "sx.call(" + lua_string(stmt.object) + ", " +
+            emit(stmt.id, trace() + "sx.call(" + object_code(stmt.object) + ", " +
                               lua_string(stmt.member) + *arguments + ")");
         }
     }
@@ -1075,7 +1101,7 @@ private:
         const std::optional<std::string> code = slot_code(
             stmt.id, *value, Slot{property->kind, property->choice, property->limits}, what);
         if (code) {
-            emit(stmt.id, trace() + "sx.set(" + lua_string(stmt.object) + ", " +
+            emit(stmt.id, trace() + "sx.set(" + object_code(stmt.object) + ", " +
                               lua_string(stmt.member) + ", " + *code + ")");
         }
     }
@@ -1153,13 +1179,16 @@ private:
 
     void compile_rule(const Rule& rule) {
         event_ = nullptr;
+        it_object_.clear();
         std::size_t payload = 0;
         if (!reflect::is_valid_id(rule.event)) {
             error(rule.id, "The event name " + quote(rule.event) + " is not valid.");
             return;
         }
         if (!rule.object.empty()) {
+            rule_object_ = rule.object;
             const std::optional<Object> object = object_type(rule.id, rule.object);
+            rule_object_.clear();
             if (!object) {
                 return;
             }
@@ -1178,6 +1207,11 @@ private:
         std::string parameters;
         for (std::size_t i = 0; i < payload; ++i) {
             parameters += (i == 0 ? "p" : ", p") + std::to_string(i + 1);
+        }
+        // About a tag: the tagged object comes after the event's values, as "it".
+        if (rule.object.starts_with('#')) {
+            parameters += parameters.empty() ? "it" : ", it";
+            it_object_ = rule.object;
         }
         emit(rule.id, "sx.on(" + lua_string(event_key(rule.object, rule.event)) + ", function(" +
                           parameters + ")");
@@ -1210,6 +1244,7 @@ private:
         --indent_;
         emit(rule.id, "end)");
         event_ = nullptr;
+        it_object_.clear();
     }
 
     // --- Brains -------------------------------------------------------------------------
@@ -1348,6 +1383,10 @@ private:
     std::set<std::string, std::less<>> sequences_;
     std::map<std::string, VariableInfo, std::less<>> variables_;
     const reflect::EventInfo* event_{nullptr};
+    /// In a Rule about a tag: its object ("#enemy"), which "it" stands for there.
+    std::string it_object_;
+    /// While a Rule's own object is checked: it, which may be a tag ("#enemy").
+    std::string rule_object_;
 };
 
 } // namespace

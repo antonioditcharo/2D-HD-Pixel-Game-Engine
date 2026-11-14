@@ -3394,3 +3394,49 @@ TEST_CASE("A new RPG: a village with an elder, a shop, a slime, menus and a HUD,
     std::error_code ignored;
     fs::remove_all(folder, ignored);
 }
+
+TEST_CASE("Tags in the editor: Rules about every tagged object, acting on it") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view logic = "logic/main.drules";
+    const reflect::TypeInfo* tags = d->registry().find_type<game::Tags>();
+    const reflect::TypeInfo* interactable = d->registry().find_type<game::Interactable>();
+    REQUIRE(tags != nullptr);
+    REQUIRE(interactable != nullptr);
+    // The elder and a new guard are villagers.
+    const Guid elder = d->world().guid(d->world().find_named("elder").at(0));
+    const Guid guard = d->create_entity("guard", 3.0, 4.0);
+    REQUIRE(d->add_component(guard, *interactable));
+    // Villagers walk: a Walker, whose actions ("Stand still") a Rule can give "it".
+    const reflect::TypeInfo* walker = d->registry().find_type<game::Walker>();
+    REQUIRE(walker != nullptr);
+    REQUIRE(d->add_component(guard, *walker));
+    for (const Guid villager : {elder, guard}) {
+        REQUIRE(d->add_component(villager, *tags));
+        REQUIRE(d->set_property(villager, *tags, *tags->find_property("tags"),
+                                reflect::Value{std::string("Villager")}, error));
+    }
+    CHECK(d->logic_tags() == std::vector<std::string>{"#villager"});
+    const std::vector<editor::LogicEvent> events = d->logic_events();
+    CHECK(std::any_of(events.begin(), events.end(), [](const editor::LogicEvent& e) {
+        return e.object == "#villager" && e.event == "interacted";
+    }));
+    // "When an object tagged villager is interacted with: …it…"
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(logic, editor::LogicEvent{"#villager", "interacted", ""}, error);
+    REQUIRE(rule.is_valid());
+    const std::vector<editor::LogicAction> actions = d->logic_actions();
+    const auto on_it =
+        std::find_if(actions.begin(), actions.end(), [](const editor::LogicAction& a) {
+            return a.object == "it" && a.member == "stand";
+        });
+    REQUIRE(on_it != actions.end());
+    REQUIRE(d->add_logic_step(logic, rule, *on_it, error).is_valid());
+    CHECK(d->check_logic(logic).empty());
+    bool shown = false;
+    for (const editor::LogicLine& line : editor::describe(d->logic().at(0).asset, *d)) {
+        shown = shown || line.text == "When [who] interacts with it (any object tagged villager)";
+    }
+    CHECK(shown);
+}

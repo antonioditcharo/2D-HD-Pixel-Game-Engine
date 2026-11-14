@@ -18,6 +18,14 @@ namespace engine::game {
 
 void register_behaviours(reflect::Registry& registry) {
     register_hud(registry);
+    registry.add_type<Tags>("tags")
+        .display_name("Tags")
+        .category("General")
+        .tooltip("Words that group objects, so one Rule can be about all of them: \"When an "
+                 "object tagged enemy is touched\".")
+        .property<&Tags::tags>("tags")
+        .tooltip("Separated by commas: enemy, flying. In a Rule about a tag, \"it\" is the "
+                 "tagged object whose event it is.");
     registry.add_choice_list<Facing>("facing")
         .display_name("Facing")
         .entry(Facing::Down, "down")
@@ -464,7 +472,7 @@ bool register_behaviour_components(world::World& world) {
     const bool simulated = world.register_component<PhysicsBody>();
     const bool sound = world.register_component<SoundSource>();
     const bool jumping = world.register_component<Jumping>();
-    const bool enemy = world.register_component<EnemyOnMap>();
+    const bool enemy = world.register_component<EnemyOnMap>() && world.register_component<Tags>();
     const bool hud = register_hud_components(world);
     return mover && walker && particles && prefab && encounter && walk && body && trigger &&
            interactable && simulated && sound && jumping && enemy && hud;

@@ -1,6 +1,7 @@
 #include "editor/core/logic_text.h"
 
 #include "engine/foundation/text.h"
+#include "engine/game/logic_world.h"
 
 #include <algorithm>
 #include <array>
@@ -43,6 +44,24 @@ public:
                 }
             }
         }
+        // A tag ("#enemy"), or "it" in a Rule about one: what the tagged objects have.
+        if (object.starts_with('#') || object == "it") {
+            for (const std::string& tag : document_.logic_tags()) {
+                if (object != "it" && tag != object) {
+                    continue;
+                }
+                for (const reflect::TypeInfo* type : engine::game::object_types(world)(tag)) {
+                    if (auto* found = find_in(*type)) {
+                        return found;
+                    }
+                }
+                for (const reflect::TypeInfo* type : document_.types_elsewhere(tag)) {
+                    if (auto* found = find_in(*type)) {
+                        return found;
+                    }
+                }
+            }
+        }
         // Not in the open scene: an entity of another scene of the project.
         for (const reflect::TypeInfo* type : document_.types_elsewhere(object)) {
             if (auto* found = find_in(*type)) {
@@ -55,6 +74,11 @@ public:
 private:
     const Document& document_;
 };
+
+/// How an object is named in a line: as it is, or "any object tagged enemy" for "#enemy".
+std::string who(const std::string& object) {
+    return object.starts_with('#') ? "any object tagged " + object.substr(1) : object;
+}
 
 std::string value_text(const reflect::Value& value) {
     if (const bool* yes = std::get_if<bool>(&value)) {
@@ -135,7 +159,7 @@ public:
                 const std::size_t i = parameter_at(*f, name, next);
                 return i < e.operands.size() ? expr(e.operands[i]) : std::string("…");
             });
-            return inside(said) + " (" + e.object + ")";
+            return inside(said) + " (" + who(e.object) + ")";
         }
         case ExprKind::Variable:
             return e.member;
@@ -251,7 +275,7 @@ public:
                              : fill_in(reflect::block_text(*f), [&](const std::string& name) {
                                    return arg(parameter_at(*f, name, next));
                                });
-            line(depth, said + " (" + s.object + ")", s.id);
+            line(depth, said + " (" + who(s.object) + ")", s.id);
             return;
         }
         case StmtKind::Set: {
@@ -307,7 +331,7 @@ public:
             found == nullptr ? "When " + event
                              : fill_in(reflect::block_text(*found),
                                        [](const std::string& id) { return "[" + id + "]"; });
-        return said + " (" + object + ")";
+        return said + " (" + who(object) + ")";
     }
 
 private:

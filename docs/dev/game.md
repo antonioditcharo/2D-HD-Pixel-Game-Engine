@@ -403,6 +403,33 @@ GUIDs never change, so the editor will write them into logic assets. Names are f
 people, and for logic written by hand while they are unique. The runtime also binds the
 `input` object, for conditions such as *"Interact is held"*.
 
+### Tags: one Rule for many objects
+
+A **Tags** component gives an object words that group it with others: *enemy, flying*
+(separated by commas or spaces, any case). A Rule's object may then be a tag, written
+`#enemy` and shown as *"When [who] touches it (any object tagged enemy)"*: it runs for
+each tagged object's event, as GDevelop's object groups and Construct's families do.
+Inside it, **it** is the tagged object whose event it is, for steps, conditions and
+values (*Stand still (it)*, *Speed of it*); each run keeps its own *it*, across waits too,
+so two slimes touched at once are each handled. The editor offers each tag's events in
+*When…*, and *it*'s actions and values beside the objects'; *it* offers what any tagged
+object has, and a step on a part a particular one lacks is reported when it runs.
+
+| Name used in logic | Means |
+|---|---|
+| `#enemy`, as a Rule's object | Any object tagged enemy, in this scene or another |
+| `it`, in a Rule about a tag | The tagged object whose event it is |
+| `#enemy` as a step's object | Refused: *"A step cannot act on every object tagged 'enemy' at once…"* |
+| `it` anywhere else | Refused: *"it" is the object in a Rule about a tag…* |
+| A tag nothing has | Refused: *"No object is tagged 'dragon'."* |
+
+How it works: `game::emit()` delivers each event under the object's names and then as
+`#tag` for each of its tags, with the object's GUID after the event's values
+(`logic::Vm::emit()` accepts that one extra value for a name starting with `#`). The
+compiler gives a Rule about a tag one more parameter, `it`, and compiles steps on *it* to
+use that parameter instead of a fixed name. (`Tags`, `tags_of()`, `tagged()` and
+`logic_names()` in `engine/game`.)
+
 ### The inventory
 
 The **Inventory** object (`inventory`, `inventory.h`) is what the player carries: keys,
@@ -616,7 +643,8 @@ named by path (`maps/cave.dscene`) or GUID.
 
 ## 10. Next increments
 
-1. **"Who" picking** (`plan/05` §2): *"all objects tagged Enemy"*, *"the other object"* in
-   a touch event.
+1. **"Who", further** (`plan/05` §2): *"for each object tagged enemy"* as a step, and
+   *"the other object"* of a touch event as an object to act on (tags and *it* are done:
+   §5).
 2. **Play in the editor** (`plan/03` §8): the runtime inside the editor's own window, as
    well as in `sparxel-player` (F5 today, [player.md](player.md)).

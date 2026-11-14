@@ -202,6 +202,13 @@ struct EncounterArea {
 [[nodiscard]] std::optional<std::string> update_encounters(world::World& world, double walked,
                                                            std::string* background = nullptr);
 
+/// "Tags": words that group objects, "enemy, flying", so one Rule can be about all of them:
+/// "When an object tagged enemy is touched" (logic names the group "#enemy", and the object
+/// whose event it is "it"). As GDevelop's object groups and Construct's families are.
+struct Tags {
+    std::string tags; ///< Separated by commas or spaces; letters, digits and _, any case.
+};
+
 /// "Enemy on the Map": a monster the player sees, as in many RPGs, that starts a battle when
 /// the player walks into it, and is gone once beaten.
 struct EnemyOnMap {

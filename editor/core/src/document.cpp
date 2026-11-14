@@ -239,7 +239,7 @@ void Document::Impl::read_elsewhere() {
         scene2d::register_components(scratch);
         game::register_behaviour_components(scratch);
         for (const world::Entity entity : serialize::scene_from_json(*json, scratch).entities) {
-            for (const std::string& name : game::names_of(scratch, entity)) {
+            for (const std::string& name : game::logic_names(scratch, entity)) {
                 std::vector<const reflect::TypeInfo*>& parts = elsewhere[name];
                 for (const reflect::TypeInfo* type : scratch.components(entity)) {
                     if (std::find(parts.begin(), parts.end(), type) == parts.end()) {

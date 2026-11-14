@@ -1,3 +1,4 @@
+#include "engine/game/behaviours.h"
 #include "engine/game/logic_world.h"
 
 #include <doctest/doctest.h>
@@ -193,4 +194,62 @@ TEST_CASE("Entities can be named by GUID, and missing or ambiguous ones are repo
     REQUIRE(f.vm.errors().size() == 1);
     CHECK(f.vm.errors()[0].message == "There is no object called '" + goblin + "'.");
     CHECK_FALSE(f.vm.emit(goblin, "opened"));
+}
+
+TEST_CASE("Rules about a tag: every tagged object's events, with it as that object") {
+    Fixture f;
+    f.registry.add_type<game::Tags>("tags").property<&game::Tags::tags>("tags");
+    REQUIRE(f.w.register_component<game::Tags>());
+    // The chest and a crate are loot; the goblin is not.
+    f.w.add<game::Tags>(f.chest)->tags = "Loot, wooden";
+    const world::Entity crate = f.w.create("crate");
+    f.w.add<Lock>(crate);
+    f.w.add<Purse>(crate);
+    f.w.add<game::Tags>(crate)->tags = "loot";
+    f.w.add<game::Tags>(f.goblin)->tags = "monster";
+    CHECK(game::tags_of(f.w, f.chest) == std::vector<std::string>{"loot", "wooden"});
+    CHECK(game::tagged(f.w, "LOOT") == std::vector<world::Entity>{f.chest, crate});
+    const logic::ObjectTypes types = game::object_types(f.w);
+    CHECK(types("#loot") == std::vector<const reflect::TypeInfo*>{
+                                f.registry.find_type<Lock>(), f.registry.find_type<Purse>(),
+                                f.registry.find_type<game::Tags>()});
+    CHECK(types("#nothing").empty());
+
+    // "When an object tagged loot is opened: unlock it, wait, then add 10 to it."
+    logic::LogicAsset asset;
+    asset.name = "loot";
+    asset.rules.push_back(logic::Rule{
+        logic::BlockId{1},
+        "#loot",
+        "opened",
+        {},
+        {ir::do_action(2, "it", "unlock"), ir::wait(3, ir::literal(reflect::Value{0.5})),
+         ir::do_action(4, "it", "add", {whole(10)}), ir::log(5, ir::property("it", "gold"))},
+        {}});
+    f.load(asset);
+    CHECK(game::emit(f.vm, f.w, crate, "opened"));
+    CHECK_FALSE(f.w.get<Lock>(crate)->locked);
+    CHECK(f.w.get<Lock>(f.chest)->locked); // only the one opened
+    // The chest opened while the crate's Rule waits: each keeps its own "it".
+    CHECK(game::emit(f.vm, f.w, f.chest, "opened"));
+    f.vm.update(1.0);
+    CHECK(f.w.get<Purse>(crate)->gold == 10);
+    CHECK(f.w.get<Purse>(f.chest)->gold == 15);
+    CHECK(f.log == std::vector<std::string>{"10", "15"});
+    CHECK_FALSE(game::emit(f.vm, f.w, f.goblin, "opened"));
+    CHECK(f.vm.errors().empty());
+
+    // "it" outside a Rule about a tag, and a tag nothing has, are refused plainly.
+    logic::LogicAsset wrong;
+    wrong.name = "wrong";
+    wrong.rules.push_back(logic::Rule{
+        logic::BlockId{1}, "chest", "opened", {}, {ir::do_action(2, "it", "unlock")}, {}});
+    wrong.rules.push_back(
+        logic::Rule{logic::BlockId{3}, "#dragon", "opened", {}, {ir::log(4, whole(1))}, {}});
+    const logic::CompiledLogic compiled =
+        logic::compile(wrong, f.registry, game::object_types(f.w));
+    REQUIRE(compiled.errors.size() == 2);
+    CHECK(compiled.errors[0].message.find("\"it\" is the object in a Rule about a tag") !=
+          std::string::npos);
+    CHECK(compiled.errors[1].message == "No object is tagged 'dragon'.");
 }

@@ -2,6 +2,7 @@
 // moving steps. Every edit is a step of the Document's undo, and checked by the compiler.
 
 #include "engine/foundation/text.h"
+#include "engine/game/behaviours.h"
 #include "engine/game/logic_world.h"
 
 #include <algorithm>
@@ -47,6 +48,32 @@ bool is_game_object(std::string_view object) {
 /// What `object` is made of: one of the game's objects by name, or a named entity's
 /// components, as the game resolves them (game::object_types()).
 std::vector<const reflect::TypeInfo*> types_of(const Lookup& d, std::string_view object) {
+    // "it", in a Rule about a tag: what any tagged object is made of.
+    if (object == "it") {
+        std::vector<const reflect::TypeInfo*> all;
+        const auto add = [&all](const std::vector<const reflect::TypeInfo*>& types) {
+            for (const reflect::TypeInfo* type : types) {
+                if (std::find(all.begin(), all.end(), type) == all.end()) {
+                    all.push_back(type);
+                }
+            }
+        };
+        if (const reflect::TypeInfo* tags = d.registry.find_type<engine::game::Tags>()) {
+            d.world.each(*tags, [&](world::Entity e, reflect::ObjectRef) {
+                for (const std::string& tag : engine::game::tags_of(d.world, e)) {
+                    add(engine::game::object_types(d.world)("#" + tag));
+                }
+            });
+        }
+        if (d.elsewhere != nullptr) {
+            for (const auto& [name, types] : *d.elsewhere) {
+                if (name.starts_with('#')) {
+                    add(types);
+                }
+            }
+        }
+        return all;
+    }
     if (is_game_object(object)) {
         const reflect::TypeInfo* type = d.registry.find_type(object);
         return type != nullptr ? std::vector<const reflect::TypeInfo*>{type}
@@ -1259,6 +1286,22 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
     return true;
 }
 
+std::vector<std::string> Document::logic_tags() const {
+    const Impl& d = *impl_;
+    std::set<std::string> tags;
+    for (const world::Entity e : entities()) {
+        for (const std::string& tag : engine::game::tags_of(*d.world, e)) {
+            tags.emplace("#" + tag);
+        }
+    }
+    for (const auto& [name, types] : d.elsewhere) {
+        if (name.starts_with('#')) {
+            tags.emplace(name);
+        }
+    }
+    return {tags.begin(), tags.end()};
+}
+
 std::vector<std::string> Document::logic_objects() const {
     const Impl& d = *impl_;
     std::set<std::string> objects(game_objects.begin(), game_objects.end());
@@ -1267,6 +1310,13 @@ std::vector<std::string> Document::logic_objects() const {
         if (!name.empty()) {
             objects.emplace(name);
         }
+    }
+    // Each tag, for Rules about all the objects with it, and "it", the tagged object such
+    // a Rule is about.
+    const std::vector<std::string> tags = logic_tags();
+    objects.insert(tags.begin(), tags.end());
+    if (!tags.empty()) {
+        objects.emplace("it");
     }
     return {objects.begin(), objects.end()};
 }

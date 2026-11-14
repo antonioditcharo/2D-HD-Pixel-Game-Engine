@@ -168,6 +168,9 @@ public:
     /// these.
     [[nodiscard]] std::vector<const engine::reflect::TypeInfo*>
     types_elsewhere(std::string_view name) const;
+    /// The project's tags, as logic names them ("#enemy"): of this scene's objects and of
+    /// the other scenes', sorted.
+    [[nodiscard]] std::vector<std::string> logic_tags() const;
 
     /// Every entity, parents before their children, in the scene's order.
     [[nodiscard]] std::vector<engine::world::Entity> entities() const;

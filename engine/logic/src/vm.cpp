@@ -1024,10 +1024,14 @@ bool Vm::emit(std::string_view object, std::string_view event,
                 break;
             }
         }
-        if (info == nullptr || info->parameters.size() != payload.size()) {
+        // A group's events end with the member's name.
+        const bool group = object.starts_with('#');
+        const std::size_t values = payload.size() - (group && !payload.empty() ? 1U : 0U);
+        if (info == nullptr || info->parameters.size() != values ||
+            (group && (payload.empty() || !std::holds_alternative<std::string>(payload.back())))) {
             return false;
         }
-        for (std::size_t i = 0; i < payload.size(); ++i) {
+        for (std::size_t i = 0; i < values; ++i) {
             if (reflect::check_argument(info->parameters[i], payload[i]) !=
                 reflect::SetResult::Ok) {
                 return false;
