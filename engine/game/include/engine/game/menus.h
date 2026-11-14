@@ -12,6 +12,7 @@
 #include "engine/game/localization.h"
 #include "engine/game/quests.h"
 #include "engine/game/save.h"
+#include "engine/game/ui_theme.h"
 #include "engine/input/input.h"
 #include "engine/render/render.h"
 #include "engine/ui/text.h"
@@ -86,6 +87,8 @@ public:
     enum class EquipStep : std::uint8_t { Member, Slot, Item };
     [[nodiscard]] EquipStep equip_step() const noexcept { return equip_step_; }
 
+    /// The colours it is drawn with (the project's); null for the standard ones.
+    void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
     void open_title();
     void open_pause();
     void close() noexcept { page_ = Page::None; }
@@ -132,6 +135,8 @@ private:
     /// `words` translated, if there are translations.
     [[nodiscard]] std::string tr(std::string_view words) const;
     const Translations* translations_ = nullptr;
+    [[nodiscard]] const UiTheme& theme() const noexcept;
+    const UiTheme* theme_ = nullptr;
     PartyObject* party_ = nullptr;
     const TablesObject* tables_ = nullptr;
     InventoryObject* inventory_ = nullptr;

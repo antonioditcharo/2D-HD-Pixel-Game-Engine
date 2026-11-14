@@ -44,7 +44,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 33> known_project_keys{"format",
+constexpr std::array<std::string_view, 34> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -76,7 +76,8 @@ constexpr std::array<std::string_view, 33> known_project_keys{"format",
                                                               "pause_menu",
                                                               "text_speed",
                                                               "language",
-                                                              "languages"};
+                                                              "languages",
+                                                              "ui"};
 
 } // namespace
 
@@ -316,6 +317,27 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     text("start_scene", settings.start_scene, true);
     text("language", settings.language, false);
     text("languages", settings.languages, false);
+    // The menus' and messages' colours: each "#rrggbb"; those missing keep the standard.
+    if (const auto ui = doc.find("ui"); ui != doc.end() && ui->is_object()) {
+        for (const auto& [key, field] :
+             {std::pair{"box", &UiTheme::box}, std::pair{"border", &UiTheme::border},
+              std::pair{"text", &UiTheme::text}, std::pair{"dim", &UiTheme::dim},
+              std::pair{"highlight", &UiTheme::highlight}, std::pair{"plate", &UiTheme::plate}}) {
+            const auto found = ui->find(key);
+            if (found == ui->end()) {
+                continue;
+            }
+            const std::optional<render::Color> colour =
+                found->is_string() ? color_from_hex(found->get<std::string>()) : std::nullopt;
+            if (colour) {
+                settings.ui.*field = *colour;
+            } else {
+                issues.push_back(serialize::Issue{entry_path(file, "ui") + "/" + key,
+                                                  "This must be a colour such as #ffd27a."});
+                ok = false;
+            }
+        }
+    }
     whole("ppu", settings.ppu, 8, 64);
     whole("width", settings.width, 16, 7680);
     whole("height", settings.height, 16, 4320);
@@ -489,6 +511,14 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     if (!settings.languages.empty()) {
         json["languages"] = settings.languages;
     }
+    if (settings.ui != UiTheme{}) {
+        json["ui"] = serialize::Json{{"box", color_to_hex(settings.ui.box)},
+                                     {"border", color_to_hex(settings.ui.border)},
+                                     {"text", color_to_hex(settings.ui.text)},
+                                     {"dim", color_to_hex(settings.ui.dim)},
+                                     {"highlight", color_to_hex(settings.ui.highlight)},
+                                     {"plate", color_to_hex(settings.ui.plate)}};
+    }
     json["render_style"] = settings.style == RenderStyle::Diorama ? "diorama" : "classic_2d";
     json["camera_pitch"] = settings.camera_pitch;
     json["camera_distance"] = settings.camera_distance;
@@ -593,6 +623,20 @@ private:
     double& average_;
     std::chrono::steady_clock::time_point started_;
 };
+
+/// A message's letters in their styles, those in the default white in the theme's text
+/// colour instead, so words show on light boxes too.
+ui::RichText themed_rich(const std::string& message, const UiTheme& theme) {
+    ui::RichText rich = ui::parse_rich(message);
+    constexpr render::Color white{255, 255, 255, 255};
+    for (auto& style : rich.styles) {
+        if (style.color.r == white.r && style.color.g == white.g && style.color.b == white.b &&
+            style.color.a == white.a) {
+            style.color = theme.text;
+        }
+    }
+    return rich;
+}
 
 /// The actions the player may rebind on the Options page.
 constexpr std::array<std::string_view, 7> rebindable{
@@ -948,6 +992,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     r.translations.set_language(r.settings.language);
     r.dialogue.set_translations(&r.translations);
     r.menu.set_translations(&r.translations);
+    r.menu.set_theme(&r.settings.ui);
     if (!r.vm->bind("tables", reflect::ObjectRef::of(r.tables))) {
         issues.push_back(
             serialize::Issue{"", "The tables object could not be made available to logic."});
@@ -1126,7 +1171,7 @@ void Runtime::step() {
     if (const std::string* message = r.dialogue.current()) {
         if (*message != r.typing_for) {
             r.typing_for = *message;
-            r.rich = ui::parse_rich(*message);
+            r.rich = themed_rich(*message, r.settings.ui);
             r.typed = 0.0;
             r.typing_wait = 0.0;
             r.pauses_done = 0;
@@ -1427,6 +1472,7 @@ void Runtime::step() {
                           static_cast<std::uint32_t>((r.steps + 1) * 2654435761ULL), error);
         if (fight) {
             r.battle_screen.emplace(std::move(*fight));
+            r.battle_screen->set_theme(&r.settings.ui);
             r.battle.set_fighting(true);
             r.battle_picture = r.picture_wanted && !r.picture_wanted->empty()
                                    ? *r.picture_wanted
@@ -1448,6 +1494,7 @@ void Runtime::step() {
                                  ": it needs a row in data/items with a price above 0.");
         }
         r.shop_screen.emplace(std::move(wares), items);
+        r.shop_screen->set_theme(&r.settings.ui);
         r.inventory.set_shopping(true);
     }
     if (r.shop_screen && r.shop_screen->closed()) {
@@ -1778,7 +1825,8 @@ bool Runtime::draw() {
     if (const std::string* message = r.dialogue.current()) {
         const MessageLayout box = message_layout(r.target->width(), r.target->height());
         const ui::PixelFont& font = ui::PixelFont::builtin();
-        const ui::RichText rich = *message == r.typing_for ? r.rich : ui::parse_rich(*message);
+        const ui::RichText rich =
+            *message == r.typing_for ? r.rich : themed_rich(*message, r.settings.ui);
         const std::vector<std::string> lines = ui::wrap(font, rich.plain, box.text_width);
         const std::vector<std::size_t> starts = ui::line_starts(rich.plain, lines);
         const auto shown =
@@ -1786,11 +1834,11 @@ bool Runtime::draw() {
         r.sprites->begin_over(*r.target);
         const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
         r.sprites->draw(*r.white, one, render::Rect{box.x, box.y, box.width, box.height},
-                        render::Color{230, 232, 240, 255});
+                        r.settings.ui.border);
         r.sprites->draw(
             *r.white, one,
             render::Rect{box.x + 1.0F, box.y + 1.0F, box.width - 2.0F, box.height - 2.0F},
-            render::Color{18, 20, 40, 240});
+            r.settings.ui.box);
         const SpeakerLook& look = speaker_look(r.dialogue, r.cast);
         // The speaker's portrait, standing on the box's right end, as large as drawn
         // (smaller only if the screen has no room).
@@ -1818,14 +1866,14 @@ bool Runtime::draw() {
                 static_cast<float>(font.line_height()) + (2.0F * message_padding) - 2.0F;
             const float plate_y = std::max(0.0F, box.y - plate_height + 1.0F);
             r.sprites->draw(*r.white, one, render::Rect{box.x, plate_y, plate_width, plate_height},
-                            render::Color{230, 232, 240, 255});
+                            r.settings.ui.border);
             r.sprites->draw(
                 *r.white, one,
                 render::Rect{box.x + 1.0F, plate_y + 1.0F, plate_width - 2.0F, plate_height - 2.0F},
-                render::Color{40, 30, 60, 245});
+                r.settings.ui.plate);
             ui::draw_text(*r.sprites, *r.font, font, speaker, box.x + message_padding,
                           plate_y + message_padding - 1.0F,
-                          hex_color(look.color, render::Color{255, 210, 122, 255}));
+                          hex_color(look.color, r.settings.ui.highlight));
         }
         const std::size_t first = r.page * static_cast<std::size_t>(box.lines);
         for (std::size_t i = first;
@@ -1854,17 +1902,15 @@ bool Runtime::draw() {
                 (2.0F * message_padding);
             const float x = std::max(box.x + box.width - width, message_margin);
             const float y = std::max(box.y - 2.0F - height, message_margin);
-            r.sprites->draw(*r.white, one, render::Rect{x, y, width, height},
-                            render::Color{230, 232, 240, 255});
+            r.sprites->draw(*r.white, one, render::Rect{x, y, width, height}, r.settings.ui.border);
             r.sprites->draw(*r.white, one,
                             render::Rect{x + 1.0F, y + 1.0F, width - 2.0F, height - 2.0F},
-                            render::Color{18, 20, 40, 240});
+                            r.settings.ui.box);
             for (std::size_t i = 0; i < choices.size(); ++i) {
                 const float line_y = y + message_padding +
                                      static_cast<float>(static_cast<int>(i) * font.line_height());
                 const bool chosen = i == r.choice;
-                const render::Color colour =
-                    chosen ? render::Color{255, 255, 255, 255} : render::Color{150, 156, 176, 255};
+                const render::Color colour = chosen ? r.settings.ui.text : r.settings.ui.dim;
                 if (chosen) {
                     ui::draw_text(*r.sprites, *r.font, font, ">", x + message_padding, line_y,
                                   colour);

@@ -8,6 +8,7 @@
 
 #include "engine/game/inventory.h"
 #include "engine/game/tables.h"
+#include "engine/game/ui_theme.h"
 #include "engine/render/render.h"
 #include "engine/ui/text.h"
 
@@ -52,6 +53,8 @@ public:
     /// A pressed action ("move_up", "move_down", "move_left", "move_right", "interact",
     /// "cancel", "menu"). Buying and selling change `inventory`.
     void press(std::string_view action, InventoryObject& inventory);
+    /// The colours it is drawn with (the project's); null for the standard ones.
+    void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
     /// True once the player leaves.
     [[nodiscard]] bool closed() const noexcept { return closed_; }
 
@@ -84,6 +87,8 @@ private:
     std::int64_t quantity_ = 1;
     std::string note_;
     bool closed_ = false;
+    [[nodiscard]] const UiTheme& theme() const noexcept;
+    const UiTheme* theme_ = nullptr;
 };
 
 } // namespace engine::game

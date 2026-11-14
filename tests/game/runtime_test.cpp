@@ -8,6 +8,7 @@
 #include "engine/game/logic_world.h"
 #include "engine/game/runtime.h"
 #include "engine/game/shop.h"
+#include "engine/game/ui_theme.h"
 #include "engine/ui/text.h"
 
 #include <doctest/doctest.h>
@@ -1653,7 +1654,7 @@ TEST_CASE("A question's answers are drawn above the message") {
     std::size_t white_second = 0;
     std::size_t dim_second = 0;
     const render::Color white{255, 255, 255, 255};
-    const render::Color dim{150, 156, 176, 255};
+    const render::Color dim = game::UiTheme{}.dim; // the standard look's hints
     for (std::uint32_t x = 20; x < 59; ++x) {
         for (std::uint32_t y = 18; y < 25; ++y) {
             white_first += pixel(pixels, 64, x, y) == white ? 1 : 0;
@@ -4029,4 +4030,62 @@ TEST_CASE("Testing from the editor: F1's debug menu gives items and goes places;
         game->step();
     }
     CHECK_FALSE(game->debug_menu().is_open());
+}
+
+TEST_CASE("The look of menus and messages: colours read, saved, and drawn") {
+    CHECK(game::color_from_hex("#ffd27a") == render::Color{255, 210, 122, 255});
+    CHECK(game::color_from_hex("#10203080") == render::Color{16, 32, 48, 128});
+    CHECK_FALSE(game::color_from_hex("ffd27a").has_value());
+    CHECK_FALSE(game::color_from_hex("#ggg000").has_value());
+    CHECK(game::color_to_hex(render::Color{255, 210, 122, 255}) == "#ffd27a");
+    CHECK(game::color_to_hex(render::Color{16, 32, 48, 128}) == "#10203080");
+
+    const Project project;
+    const game::UiTheme parchment = game::ui_theme_presets().at(1).theme;
+    {
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->ui = parchment;
+        settings->width = 320;
+        settings->height = 180;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+        // Read back the same.
+        const std::optional<game::ProjectSettings> back =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(back.has_value());
+        const bool same = back && back->ui == parchment;
+        CHECK(same);
+        logic::LogicAsset rules;
+        rules.name = "hi";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "dialogue", "say", {Project::text("Hi")})},
+                        {}});
+        write_json(project.folder.path / "assets/logic/hi.drules", serialize::logic_to_json(rules));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    runtime->step();
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    bool box = false;
+    bool words = false;
+    for (std::size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        // The parchment inside the box (nearly opaque over the world), and its brown words.
+        box = box || (pixels[i] > 225 && pixels[i + 1] > 205 && pixels[i + 2] > 170 &&
+                      pixels[i] < 245 && pixels[i + 2] < 195);
+        words = words || (pixels[i] == 62 && pixels[i + 1] == 40 && pixels[i + 2] == 22);
+    }
+    CHECK(box);
+    CHECK(words);
 }

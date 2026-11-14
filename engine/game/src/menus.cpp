@@ -6,6 +6,11 @@
 
 namespace engine::game {
 
+const UiTheme& GameMenu::theme() const noexcept {
+    static const UiTheme standard;
+    return theme_ != nullptr ? *theme_ : standard;
+}
+
 namespace {
 
 constexpr std::array<const char*, 3> title_choices{"New game", "Continue", "Quit"};
@@ -547,13 +552,13 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
     const auto h = static_cast<float>(surface.height());
     const auto line = static_cast<float>(font.line_height());
     constexpr float pad = 5.0F;
-    const render::Color text{255, 255, 255, 255};
-    const render::Color dim{150, 155, 170, 255};
-    const render::Color gold{255, 210, 122, 255};
+    const UiTheme& ui = theme();
+    const render::Color text = ui.text;
+    const render::Color dim = ui.dim;
+    const render::Color gold = ui.highlight;
     const auto box = [&](float x, float y, float bw, float bh) {
-        sprites.draw(white, one, render::Rect{x, y, bw, bh}, render::Color{230, 232, 240, 255});
-        sprites.draw(white, one, render::Rect{x + 1, y + 1, bw - 2, bh - 2},
-                     render::Color{18, 20, 40, 240});
+        sprites.draw(white, one, render::Rect{x, y, bw, bh}, ui.border);
+        sprites.draw(white, one, render::Rect{x + 1, y + 1, bw - 2, bh - 2}, ui.box);
     };
     const auto write = [&](const std::string& words, float x, float y, render::Color colour) {
         ui::draw_text(sprites, atlas, font, words, x, y, colour);

@@ -1,12 +1,16 @@
 #include "project_panel.h"
 
+#include "engine/game/ui_theme.h"
+
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QTimer>
@@ -239,6 +243,73 @@ void ProjectPanel::build() {
         menus, tr("Pause menu on the Menu key"), "pause_menu",
         [](const Settings& s) { return s.pause_menu; },
         [](Settings& s, bool on) { s.pause_menu = on; });
+    // Their colours: a ready-made look, or each colour on its own.
+    auto* ui_presets = new QComboBox(content_);
+    ui_presets->setObjectName(QStringLiteral("setting:ui_preset"));
+    ui_presets->setToolTip(tr("A ready-made look for every box: messages, menus, shops, battles"));
+    ui_presets->addItem(tr("(your own colours)"));
+    for (const engine::game::UiThemePreset& preset : engine::game::ui_theme_presets()) {
+        ui_presets->addItem(QString::fromUtf8(preset.name));
+        if (preset.theme == now.ui) {
+            ui_presets->setCurrentIndex(ui_presets->count() - 1);
+        }
+    }
+    connect(ui_presets, qOverload<int>(&QComboBox::activated), this, [this](int index) {
+        if (index <= 0) {
+            return;
+        }
+        apply([index](Settings& s) {
+            s.ui = engine::game::ui_theme_presets().at(static_cast<std::size_t>(index - 1)).theme;
+        });
+        if (document_ != nullptr) {
+            document_->end_merge();
+        }
+        QTimer::singleShot(0, this, [this] { refresh(); });
+    });
+    menus->addRow(tr("Look"), ui_presets);
+    auto* swatches = new QWidget(content_);
+    auto* row = new QHBoxLayout(swatches);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(2);
+    for (const auto& [label, field] :
+         {std::pair{tr("Box"), &engine::game::UiTheme::box},
+          std::pair{tr("Border"), &engine::game::UiTheme::border},
+          std::pair{tr("Words"), &engine::game::UiTheme::text},
+          std::pair{tr("Hints"), &engine::game::UiTheme::dim},
+          std::pair{tr("Chosen"), &engine::game::UiTheme::highlight},
+          std::pair{tr("Name plate"), &engine::game::UiTheme::plate}}) {
+        const engine::render::Color c = now.ui.*field;
+        auto* swatch = new QPushButton(swatches);
+        swatch->setObjectName(QStringLiteral("setting:ui_") +
+                              label.toLower().remove(QLatin1Char(' ')));
+        swatch->setToolTip(tr("%1 colour: click to choose").arg(label));
+        swatch->setFixedSize(22, 22);
+        swatch->setStyleSheet(QStringLiteral("background: rgb(%1, %2, %3); border: 1px solid gray;")
+                                  .arg(c.r)
+                                  .arg(c.g)
+                                  .arg(c.b));
+        connect(swatch, &QPushButton::clicked, this, [this, field, c, label] {
+            const QColor picked =
+                QColorDialog::getColor(QColor(c.r, c.g, c.b, c.a), this, tr("%1 colour").arg(label),
+                                       QColorDialog::ShowAlphaChannel);
+            if (!picked.isValid()) {
+                return;
+            }
+            apply([field, picked](Settings& s) {
+                s.ui.*field = engine::render::Color{static_cast<std::uint8_t>(picked.red()),
+                                                    static_cast<std::uint8_t>(picked.green()),
+                                                    static_cast<std::uint8_t>(picked.blue()),
+                                                    static_cast<std::uint8_t>(picked.alpha())};
+            });
+            if (document_ != nullptr) {
+                document_->end_merge();
+            }
+            QTimer::singleShot(0, this, [this] { refresh(); });
+        });
+        row->addWidget(swatch);
+    }
+    row->addStretch();
+    menus->addRow(tr("Colours"), swatches);
 
     QFormLayout* day = group(tr("Day and night"));
     number(

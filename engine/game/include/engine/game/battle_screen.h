@@ -12,6 +12,7 @@
 #include "engine/game/battle.h"
 #include "engine/game/inventory.h"
 #include "engine/game/tables.h"
+#include "engine/game/ui_theme.h"
 #include "engine/render/render.h"
 #include "engine/ui/text.h"
 
@@ -148,6 +149,8 @@ void register_battle_types(reflect::Registry& registry);
 class BattleScreen {
 public:
     explicit BattleScreen(Battle battle);
+    /// The colours it is drawn with (the project's); null for the standard ones.
+    void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
     /// With a picture behind the battle, the screen dims it less than it dims the world.
     void set_backdrop(bool picture) noexcept { backdrop_ = picture; }
 
@@ -187,6 +190,8 @@ private:
     std::vector<std::string> messages_;
     std::string problem_;
     bool backdrop_ = false;
+    [[nodiscard]] const UiTheme& theme() const noexcept;
+    const UiTheme* theme_ = nullptr;
 };
 
 } // namespace engine::game

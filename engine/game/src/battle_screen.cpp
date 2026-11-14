@@ -6,6 +6,11 @@
 
 namespace engine::game {
 
+const UiTheme& BattleScreen::theme() const noexcept {
+    static const UiTheme standard;
+    return theme_ != nullptr ? *theme_ : standard;
+}
+
 namespace {
 
 constexpr std::size_t most_members = 6;
@@ -425,13 +430,13 @@ void BattleScreen::draw(
     const auto h = static_cast<float>(surface.height());
     const auto line = static_cast<float>(font.line_height());
     constexpr float pad = 4.0F;
-    const render::Color text{255, 255, 255, 255};
-    const render::Color dim{150, 155, 170, 255};
-    const render::Color gold{255, 210, 122, 255};
+    const UiTheme& ui = theme();
+    const render::Color text = ui.text;
+    const render::Color dim = ui.dim;
+    const render::Color gold = ui.highlight;
     const auto box = [&](float x, float y, float bw, float bh) {
-        sprites.draw(white, one, render::Rect{x, y, bw, bh}, render::Color{230, 232, 240, 255});
-        sprites.draw(white, one, render::Rect{x + 1, y + 1, bw - 2, bh - 2},
-                     render::Color{18, 20, 40, 240});
+        sprites.draw(white, one, render::Rect{x, y, bw, bh}, ui.border);
+        sprites.draw(white, one, render::Rect{x + 1, y + 1, bw - 2, bh - 2}, ui.box);
     };
     const auto bar = [&](float x, float y, float bw, std::int64_t now, std::int64_t most,
                          render::Color colour) {

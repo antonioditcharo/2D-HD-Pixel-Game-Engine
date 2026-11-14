@@ -24,6 +24,7 @@
 #include "engine/game/save.h"
 #include "engine/game/sound.h"
 #include "engine/game/tables.h"
+#include "engine/game/ui_theme.h"
 #include "engine/input/input.h"
 #include "engine/logic/vm.h"
 #include "engine/render/render.h"
@@ -68,6 +69,8 @@ struct ProjectSettings {
     std::string language;
     /// The languages "Collect texts to translate" makes columns for: "fr, de".
     std::string languages;
+    /// The colours of the menus and messages.
+    UiTheme ui;
     render::Color background{20, 24, 40, 255};
     /// The Diorama camera: how far it looks down (5 to 85 degrees), how far it stands from
     /// the player (1 to 200 tiles), and its vertical field of view (5 to 90 degrees).

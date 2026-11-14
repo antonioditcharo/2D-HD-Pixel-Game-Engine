@@ -61,6 +61,23 @@ They are kept at once in `options.json` beside the save slots (volumes, text spe
 each action's key codes), and read back when the game starts; a broken or missing file
 keeps the defaults.
 
+### The look of menus and messages
+
+The Project view's **Menus and messages** group chooses the colours every ready-made box
+is drawn with: the message box and its answers, the speakers' name plates, the title
+screen and pause menu, shops ([shop.md](shop.md)) and the battle screen
+([battle.md](battle.md)), so games do not all look alike (`plan/02` K1, themes). **Look**
+picks a ready-made one: *Midnight* (the standard navy and gold), *Parchment* (cream with
+brown words), *Forest*, *Crimson* or *Clean* (white boxes, blue choices). **Colours** has a
+swatch for each part, to change one at a time with a colour picker (with see-through):
+*Box*, *Border*, *Words*, *Hints* (and what cannot be chosen), *Chosen* (the cursor's line,
+titles) and *Name plate*. Each change is one undo step.
+
+They are kept in the project file as `ui` (`box`, `border`, `text`, `dim`, `highlight`,
+`plate`, each `#rrggbb` or `#rrggbbaa`; written only when they differ from Midnight).
+Words in a message keep any colour given with `[color=…]` ([ui.md](ui.md)); the rest take
+the look's *Words*.
+
 ## 3. Next increments
 
 1. **The UI designer** (`plan/02` K1): these screens as templates to restyle and rearrange,
