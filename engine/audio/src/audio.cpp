@@ -166,6 +166,7 @@ struct AudioEngine::Impl {
     float sound_volume = 1.0F;
     float player_music = 1.0F;
     float player_sounds = 1.0F;
+    float duck = 1.0F; ///< The music's ducking.
     std::map<std::string, std::shared_ptr<const Pcm>, std::less<>> decoded;
     std::map<std::string, std::shared_ptr<const std::vector<std::uint8_t>>, std::less<>> streams;
     std::vector<std::unique_ptr<Voice>> sounds;
@@ -382,7 +383,7 @@ void AudioEngine::set_volume(Bus bus, double volume) {
     const float v = clamp_volume(volume);
     if (bus == Bus::Music) {
         a.music_volume = v;
-        ma_sound_group_set_volume(&a.music_group, v * a.player_music);
+        ma_sound_group_set_volume(&a.music_group, v * a.player_music * a.duck);
     } else {
         a.sound_volume = v;
         ma_sound_group_set_volume(&a.sound_group, v * a.player_sounds);
@@ -397,6 +398,15 @@ void AudioEngine::set_player_volume(Bus bus, double volume) {
     Impl& a = *impl_;
     (bus == Bus::Music ? a.player_music : a.player_sounds) = clamp_volume(volume);
     set_volume(bus, this->volume(bus));
+}
+
+void AudioEngine::set_music_duck(double level) {
+    impl_->duck = clamp_volume(level);
+    set_volume(Bus::Music, volume(Bus::Music));
+}
+
+double AudioEngine::music_duck() const noexcept {
+    return impl_->duck;
 }
 
 double AudioEngine::player_volume(Bus bus) const noexcept {

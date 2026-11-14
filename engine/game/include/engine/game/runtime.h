@@ -90,6 +90,9 @@ struct ProjectSettings {
     /// Quit). Off by default: Rules then decide what the Menu key does.
     bool title_screen = false;
     bool pause_menu = false;
+    /// The music's volume while a message shows, 0 to 1 of itself: ducking, so words and
+    /// voices come through. 1 leaves it.
+    double music_while_talking = 0.6;
     /// How fast messages are typed out, in letters a second; 0 shows each whole at once.
     double text_speed = 0.0;
     double day_minutes = 0.0;

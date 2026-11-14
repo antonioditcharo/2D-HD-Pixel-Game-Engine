@@ -143,8 +143,18 @@ All mix headless and read the samples, so they run anywhere, with no sound card:
 | Bad sounds | Junk bytes, nothing, and a sound with no samples refused with messages; playing unknown keys refused; unloading stops a playing sound and the music; loading a key again replaces it |
 | In a game | A Rule on game start plays the theme by path; Interact's Rule plays a chime over it (0.5 + 0.25); missing and unreadable sounds reported; volumes in percent clamped; no engine, no problems. A chime at the door 5 tiles west of the hero: left 0.25 × 0.6875, right that × 0.375; out of hearing, nothing; nobody by that name, a problem; music streamed |
 
+
+## Ducking
+
+While a message shows, the music eases down to **Music while a message shows** (the
+Project view's *Menus and messages*, `music_while_talking`, 0.6 of itself by default; 1
+leaves it) over a quarter of a second, and back up the same way when the last message
+closes, so words and speakers' voice blips come through. It works on top of the game's
+music volume and the player's own (Options), without changing either
+(`AudioEngine::set_music_duck()`).
+
 ## 6. Next increments
 
-1. **Snapshots and ducking:** lowering the music while a character speaks.
+1. **Snapshots:** whole mixes to switch between (a cave, underwater).
 2. **Fades for sound sources** as they start and stop, and a falloff curve to choose.
 3. **Footstep surfaces**, **zones** and **adaptive music** (ADR-009).

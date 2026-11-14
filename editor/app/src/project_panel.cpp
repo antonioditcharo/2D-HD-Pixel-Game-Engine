@@ -232,6 +232,10 @@ void ProjectPanel::build() {
 
     QFormLayout* menus = group(tr("Menus and messages"));
     number(
+        menus, tr("Music while a message shows (0 to 1)"), "music_while_talking", 0, 1, 0.05, 2,
+        [](const Settings& s) { return s.music_while_talking; },
+        [](Settings& s, double v) { s.music_while_talking = v; });
+    number(
         menus, tr("Text speed (letters a second, 0: at once)"), "text_speed", 0, 1000, 5, 0,
         [](const Settings& s) { return s.text_speed; },
         [](Settings& s, double v) { s.text_speed = v; });

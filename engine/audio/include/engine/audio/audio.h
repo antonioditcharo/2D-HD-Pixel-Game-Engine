@@ -73,6 +73,10 @@ public:
     /// game's, so logic changing the music volume does not undo the player's choice.
     void set_player_volume(Bus bus, double volume);
     [[nodiscard]] double player_volume(Bus bus) const noexcept;
+    /// Ducking: the music lowered to `level` (0 to 1) of itself on top of the other
+    /// volumes, as while a character speaks; 1 for none.
+    void set_music_duck(double level);
+    [[nodiscard]] double music_duck() const noexcept;
     void set_master_volume(double volume);
     [[nodiscard]] double master_volume() const noexcept;
 

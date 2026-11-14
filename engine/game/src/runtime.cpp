@@ -44,7 +44,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 34> known_project_keys{"format",
+constexpr std::array<std::string_view, 35> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -77,7 +77,8 @@ constexpr std::array<std::string_view, 34> known_project_keys{"format",
                                                               "text_speed",
                                                               "language",
                                                               "languages",
-                                                              "ui"};
+                                                              "ui",
+                                                              "music_while_talking"};
 
 } // namespace
 
@@ -393,6 +394,7 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     number("camera_smoothing", settings.camera_smoothing, 0.0, 2.0);
     number("day_minutes", settings.day_minutes, 0.0, 1440.0);
     number("text_speed", settings.text_speed, 0.0, 1000.0);
+    number("music_while_talking", settings.music_while_talking, 0.0, 1.0);
     number("start_hour", settings.start_hour, 0.0, 24.0);
     number("camera_dead_zone", settings.camera_dead_zone, 0.0, 16.0);
     number("camera_look_ahead", settings.camera_look_ahead, 0.0, 8.0);
@@ -537,6 +539,7 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["camera_smoothing"] = settings.camera_smoothing;
     json["day_minutes"] = settings.day_minutes;
     json["text_speed"] = settings.text_speed;
+    json["music_while_talking"] = settings.music_while_talking;
     json["start_hour"] = settings.start_hour;
     json["camera_dead_zone"] = settings.camera_dead_zone;
     json["camera_look_ahead"] = settings.camera_look_ahead;
@@ -1147,6 +1150,18 @@ void Runtime::step() {
         r.replay->replay(r.steps, r.state);
     } else if (r.window != nullptr) {
         r.keep_running = input::pump_events(r.state) && r.keep_running;
+    }
+
+    // Ducking: the music eases down while a message shows, and back up after (a quarter of
+    // a second either way).
+    if (r.audio_engine != nullptr) {
+        const double target = r.dialogue.is_open() ? r.settings.music_while_talking : 1.0;
+        const double now = r.audio_engine->music_duck();
+        const double step = r.clock.step_seconds() * 4.0;
+        if (now != target) {
+            r.audio_engine->set_music_duck(now < target ? std::min(now + step, target)
+                                                        : std::max(now - step, target));
+        }
     }
 
     // Testing from the editor: F1 opens and closes the debug menu, F3 the timings.

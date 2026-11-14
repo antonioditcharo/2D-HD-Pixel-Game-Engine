@@ -4097,3 +4097,50 @@ TEST_CASE("The look of menus and messages: colours read, saved, and drawn") {
     CHECK(box);
     CHECK(words);
 }
+
+TEST_CASE("The music ducks while a message shows, and comes back after") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->width = 320;
+        settings->height = 180;
+        settings->music_while_talking = 0.5;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+        logic::LogicAsset rules;
+        rules.name = "hi";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "dialogue", "say", {Project::text("Hi")})},
+                        {}});
+        write_json(project.folder.path / "assets/logic/hi.drules", serialize::logic_to_json(rules));
+    }
+    input::Recording replay;
+    replay.record(40, key(input::Key::Z), true); // close it
+    replay.record(41, key(input::Key::Z), false);
+    const auto runtime = project.open(no_graphics(&replay));
+    REQUIRE(runtime->audio() != nullptr);
+    for (int i = 0; i < 2; ++i) {
+        runtime->step();
+    }
+    // Easing down, not at once.
+    CHECK(runtime->audio()->music_duck() < 1.0);
+    CHECK(runtime->audio()->music_duck() > 0.5);
+    for (int i = 0; i < 30; ++i) {
+        runtime->step();
+    }
+    CHECK(runtime->audio()->music_duck() == doctest::Approx(0.5));
+    for (int i = 0; i < 40; ++i) {
+        runtime->step();
+    }
+    CHECK_FALSE(runtime->dialogue().is_open());
+    CHECK(runtime->audio()->music_duck() == doctest::Approx(1.0));
+}
