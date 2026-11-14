@@ -106,6 +106,14 @@ bool emit(logic::Vm& vm, const world::World& world, world::Entity entity, std::s
 }
 
 void attach(logic::Vm& vm, world::World& world) {
+    // "For each object tagged ...": the tagged entities, by GUID.
+    vm.set_group_resolver([&world](std::string_view tag) {
+        std::vector<std::string> names;
+        for (const world::Entity entity : tagged(world, tag)) {
+            names.push_back(world.guid(entity).to_string());
+        }
+        return names;
+    });
     vm.set_object_resolver([&world](std::string_view name) {
         std::vector<reflect::ObjectRef> parts;
         // A tag: its members' parts, for checking the events Rules about it take.

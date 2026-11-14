@@ -419,9 +419,19 @@ object has, and a step on a part a particular one lacks is reported when it runs
 |---|---|
 | `#enemy`, as a Rule's object | Any object tagged enemy, in this scene or another |
 | `it`, in a Rule about a tag | The tagged object whose event it is |
-| `#enemy` as a step's object | Refused: *"A step cannot act on every object tagged 'enemy' at once…"* |
+| `#enemy` as a step's object | Refused: *"A step cannot act on every object tagged 'enemy' at once…"*; use *For each* |
 | `it` anywhere else | Refused: *"it" is the object in a Rule about a tag…* |
 | A tag nothing has | Refused: *"No object is tagged 'dragon'."* |
+
+**For each object tagged enemy** is a step (with *Log*, *Wait* and *Repeat* in the
+editor's list of steps): the steps inside it run once for each object with the tag, in
+turn, each time as *it*, so *"For each object tagged enemy: Stand still (it)"* stops them
+all. Inside a Rule about another tag, the loop's *it* is the loop's, and after the loop
+the Rule's again. Its tag is one the project has (a tag nothing has is refused), and the
+objects are found when the step runs, so ones made since are included. Saved as the step
+kind `for_each_tagged`, its tag as the step's member; compiled to a Lua loop over
+`sx.tagged(tag)`, which the world answers with the tagged objects' GUIDs
+(`Vm::set_group_resolver()`).
 
 How it works: `game::emit()` delivers each event under the object's names and then as
 `#tag` for each of its tags, with the object's GUID after the event's values
@@ -643,8 +653,7 @@ named by path (`maps/cave.dscene`) or GUID.
 
 ## 10. Next increments
 
-1. **"Who", further** (`plan/05` §2): *"for each object tagged enemy"* as a step, and
-   *"the other object"* of a touch event as an object to act on (tags and *it* are done:
-   §5).
+1. **"Who", further** (`plan/05` §2): *"the other object"* of a touch event as an object
+   to act on (tags, *it* and *For each* are done: §5).
 2. **Play in the editor** (`plan/03` §8): the runtime inside the editor's own window, as
    well as in `sparxel-player` (F5 today, [player.md](player.md)).

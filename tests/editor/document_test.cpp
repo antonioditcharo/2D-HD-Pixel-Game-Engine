@@ -3440,3 +3440,55 @@ TEST_CASE("Tags in the editor: Rules about every tagged object, acting on it") {
     }
     CHECK(shown);
 }
+
+TEST_CASE("The For each step in the editor: a tag of the project, steps inside on it") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view logic = "logic/main.drules";
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(logic, editor::LogicEvent{"", "game_start", ""}, error);
+    REQUIRE(rule.is_valid());
+    // With no tags yet, there is nothing to go through.
+    CHECK_FALSE(
+        d->add_logic_step(logic, rule, editor::LogicAction{"", "for_each_tagged", ""}, error)
+            .is_valid());
+    CHECK(error == "No object has a tag yet: give some a Tags component first.");
+
+    const reflect::TypeInfo* tags = d->registry().find_type<game::Tags>();
+    const reflect::TypeInfo* walker = d->registry().find_type<game::Walker>();
+    const Guid guard = d->create_entity("guard", 3.0, 4.0);
+    REQUIRE(d->add_component(guard, *tags));
+    REQUIRE(d->add_component(guard, *walker));
+    REQUIRE(d->set_property(guard, *tags, *tags->find_property("tags"),
+                            reflect::Value{std::string("villager")}, error));
+    const engine::logic::BlockId each =
+        d->add_logic_step(logic, rule, editor::LogicAction{"", "for_each_tagged", ""}, error);
+    REQUIRE(each.is_valid());
+    // Steps added on it go inside it.
+    REQUIRE(
+        d->add_logic_step(logic, each, editor::LogicAction{"it", "stand", ""}, error).is_valid());
+    CHECK(d->check_logic(logic).empty());
+    std::vector<std::string> shown;
+    for (const editor::LogicLine& line : editor::describe(d->logic().at(0).asset, *d)) {
+        shown.push_back(line.text);
+    }
+    const auto at =
+        std::find(shown.begin(), shown.end(), "For each object tagged villager (as it):");
+    REQUIRE(at != shown.end());
+    CHECK(*(at + 1) == "Stand still (it)");
+    // Its tag is one the project has.
+    CHECK_FALSE(d->set_logic_slot(logic, each, 0, reflect::Value{std::string("dragon")}, error));
+    CHECK(error == "No object is tagged dragon.");
+    // Saved and read back as it was.
+    REQUIRE(d->save(error));
+    std::vector<serialize::Issue> issues;
+    const auto again = editor::Document::open(sample.path, issues);
+    REQUIRE(again != nullptr);
+    CHECK(again->check_logic(logic).empty());
+    bool kept = false;
+    for (const editor::LogicLine& line : editor::describe(again->logic().at(0).asset, *again)) {
+        kept = kept || line.text == "For each object tagged villager (as it):";
+    }
+    CHECK(kept);
+}

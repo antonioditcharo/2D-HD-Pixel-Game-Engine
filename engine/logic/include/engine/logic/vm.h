@@ -82,6 +82,7 @@ struct VmLimits {
 /// | `sx.log(...)` | Sends text to the log handler, like `print` |
 /// | `sx.on(event, function)` | Runs the function as a new task each time the event is emitted |
 /// | `sx.trace()` | Reports the current line to the trace handler (live highlighting) |
+/// | `sx.tagged(tag)` | A list of the names of the objects with a tag (set_group_resolver) |
 ///
 /// Objects are named with bind(), or found by an object resolver (set_object_resolver), for
 /// example the entities of a world. An object may have several parts, such as an entity's
@@ -114,6 +115,10 @@ public:
     using ObjectResolver = std::function<std::vector<reflect::ObjectRef>(std::string_view name)>;
     /// Sets the resolver, used for names that bind() does not know.
     void set_object_resolver(ObjectResolver resolver);
+    /// Lists the names of the objects with a tag, for `sx.tagged(tag)` (the "For each
+    /// object tagged" step). Without one, every tag has none.
+    using GroupResolver = std::function<std::vector<std::string>(std::string_view tag)>;
+    void set_group_resolver(GroupResolver resolver);
 
     /// The types an object is made of: its bound type, or the types of the parts the resolver
     /// returns. Empty if there is no such object. Suits the compiler's ObjectTypes.

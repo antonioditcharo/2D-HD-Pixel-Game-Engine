@@ -349,7 +349,7 @@ TEST_CASE("Invalid logic documents are reported with their place") {
              "rules": [{"block": 1, "event": "e", "do": [{"kind": "jump", "block": 2}]}]})",
          false,
          {{"/rules/0/do/0/kind", "'jump' is not one of: do, set, set_variable, wait, wait_until, "
-                                 "if, repeat, run, log."}}},
+                                 "if, repeat, run, log, for_each_tagged."}}},
         {R"({"format": "sparxel.logic", "version": 1, "name": "x",
              "rules": [{"block": 0, "event": "e"}]})",
          false,

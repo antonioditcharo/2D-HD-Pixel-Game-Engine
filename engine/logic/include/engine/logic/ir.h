@@ -72,6 +72,9 @@ enum class StmtKind : std::uint8_t {
     Run,         ///< Run sequence `member` and wait until it ends.
     Log,         ///< Write `arguments[0]` to the log.
     WaitUntil,   ///< Wait until condition `arguments[0]` holds, checked once per update.
+    /// Run `body` once for each object tagged `member` ("enemy"), in turn: inside it, the
+    /// object "it" is that one.
+    ForEachTagged,
 };
 
 struct Stmt {
@@ -203,6 +206,7 @@ namespace ir {
 [[nodiscard]] Stmt repeat(std::uint64_t id, Expr count, std::vector<Stmt> body);
 [[nodiscard]] Stmt run(std::uint64_t id, std::string sequence_name);
 [[nodiscard]] Stmt log(std::uint64_t id, Expr value);
+[[nodiscard]] Stmt for_each_tagged(std::uint64_t id, std::string tag, std::vector<Stmt> body);
 
 } // namespace ir
 

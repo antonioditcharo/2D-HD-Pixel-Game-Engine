@@ -308,6 +308,10 @@ public:
             line(depth, "Repeat " + arg(0) + " times:", s.id);
             steps(s.body, depth + 1);
             return;
+        case StmtKind::ForEachTagged:
+            line(depth, "For each object tagged " + s.member + " (as it):", s.id);
+            steps(s.body, depth + 1);
+            return;
         case StmtKind::Run:
             line(depth, "Run " + s.member + " and wait for it", s.id);
             return;

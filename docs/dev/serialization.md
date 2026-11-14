@@ -111,7 +111,7 @@ Paths are JSON Pointers (RFC 6901): `/` and `~` inside a key are written as `~1`
 | Brain | `block`, `name`, `initial`, `states`, `from_any` (transitions) |
 | Brain state | `block`, `name`, `enter`, `while`, `exit` (steps), `go` (transitions) |
 | Transition | `block`, `to`, `if` (conditions), `after` (seconds in the state) |
-| Step | `kind` (`do`, `set`, `set_variable`, `wait`, `wait_until`, `if`, `repeat`, `run`, `log`), `block`, `object`, `member`, `values`, `body`, `otherwise` |
+| Step | `kind` (`do`, `set`, `set_variable`, `wait`, `wait_until`, `if`, `repeat`, `run`, `log`, `for_each_tagged` with its tag as `member`), `block`, `object`, `member`, `values`, `body`, `otherwise` |
 | Value | `kind` (`literal`, `property`, `call`, `variable`, `event_value`, `not`, `all`, `any`, `compare`, `arithmetic`), `block`, `value`, `object`, `member`, `op`, `operands` |
 
 - **Empty text and empty lists are left out**, which keeps files short; they read back as

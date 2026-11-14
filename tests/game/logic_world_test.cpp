@@ -253,3 +253,67 @@ TEST_CASE("Rules about a tag: every tagged object's events, with it as that obje
           std::string::npos);
     CHECK(compiled.errors[1].message == "No object is tagged 'dragon'.");
 }
+
+TEST_CASE("For each object tagged: every one in turn, as it") {
+    Fixture f;
+    f.registry.add_type<game::Tags>("tags").property<&game::Tags::tags>("tags");
+    REQUIRE(f.w.register_component<game::Tags>());
+    f.w.add<game::Tags>(f.chest)->tags = "loot";
+    const world::Entity crate = f.w.create("crate");
+    f.w.add<Lock>(crate);
+    f.w.add<Purse>(crate)->gold = 2;
+    f.w.add<game::Tags>(crate)->tags = "loot";
+    f.w.add<game::Tags>(f.goblin)->tags = "monster";
+
+    // When the chest is opened: every loot is unlocked and given 1 gold, and every
+    // monster 100.
+    logic::LogicAsset asset;
+    asset.name = "all_loot";
+    asset.rules.push_back(logic::Rule{
+        logic::BlockId{1},
+        "chest",
+        "opened",
+        {},
+        {ir::for_each_tagged(2, "loot",
+                             {ir::do_action(3, "it", "unlock"),
+                              ir::do_action(4, "it", "add", {whole(1)}),
+                              ir::log(5, ir::property("it", "gold"))}),
+         ir::for_each_tagged(6, "monster", {ir::do_action(7, "it", "add", {whole(100)})})},
+        {}});
+    f.load(asset);
+    CHECK(f.vm.emit("chest", "opened"));
+    CHECK_FALSE(f.w.get<Lock>(f.chest)->locked);
+    CHECK_FALSE(f.w.get<Lock>(crate)->locked);
+    CHECK(f.log == std::vector<std::string>{"6", "3"});
+    CHECK(f.w.get<Purse>(f.goblin)->gold == 101);
+    CHECK(f.vm.errors().empty());
+
+    // Inside a Rule about a tag, a loop's "it" is the loop's; after it, the Rule's again.
+    logic::LogicAsset nested;
+    nested.name = "nested";
+    nested.rules.push_back(
+        logic::Rule{logic::BlockId{1},
+                    "#loot",
+                    "opened",
+                    {},
+                    {ir::for_each_tagged(2, "monster", {ir::do_action(3, "it", "add", {whole(5)})}),
+                     ir::do_action(4, "it", "add", {whole(1000)})},
+                    {}});
+    f.load(nested);
+    CHECK(game::emit(f.vm, f.w, crate, "opened"));
+    CHECK(f.w.get<Purse>(f.goblin)->gold == 106);
+    CHECK(f.w.get<Purse>(crate)->gold == 1003);
+
+    // A tag nothing has, or not a tag at all: refused.
+    logic::LogicAsset wrong;
+    wrong.name = "wrong";
+    wrong.rules.push_back(logic::Rule{
+        logic::BlockId{1}, "chest", "opened", {}, {ir::for_each_tagged(2, "dragon", {})}, {}});
+    wrong.rules.push_back(logic::Rule{
+        logic::BlockId{3}, "chest", "opened", {}, {ir::for_each_tagged(4, "Not A Tag", {})}, {}});
+    const logic::CompiledLogic compiled =
+        logic::compile(wrong, f.registry, game::object_types(f.w));
+    REQUIRE(compiled.errors.size() == 2);
+    CHECK(compiled.errors[0].message == "No object is tagged 'dragon'.");
+    CHECK(compiled.errors[1].message.find("is not valid") != std::string::npos);
+}

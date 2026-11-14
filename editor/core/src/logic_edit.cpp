@@ -163,12 +163,14 @@ Place find_step(logic::LogicAsset& asset, BlockId id) {
 
 std::vector<Stmt>* header_list(logic::LogicAsset& asset, BlockId id);
 
-/// Where a step added at `after` goes: first inside it if it is an If or a Repeat, after it
+/// Where a step added at `after` goes: first inside it if it is an If, a Repeat or a For
+/// each, after it
 /// if it is another step, first under it if it is a Rule, Sequence or Brain state.
 Place where_to_add(logic::LogicAsset& asset, BlockId after) {
     if (const Place place = find_step(asset, after); place.list != nullptr) {
         Stmt& s = (*place.list)[place.index];
-        if (s.kind == StmtKind::If || s.kind == StmtKind::Repeat) {
+        if (s.kind == StmtKind::If || s.kind == StmtKind::Repeat ||
+            s.kind == StmtKind::ForEachTagged) {
             return Place{&s.body, 0};
         }
         return Place{place.list, place.index + 1};
@@ -756,6 +758,7 @@ logic::Expr* slot_target(logic::LogicAsset& asset, BlockId block, std::size_t ar
         case StmtKind::WaitUntil:
             return s.arguments.empty() ? nullptr : in_test(s.arguments[0]);
         case StmtKind::Run:
+        case StmtKind::ForEachTagged:
             return nullptr;
         case StmtKind::SetVariable:
             return argument == 0 && !s.arguments.empty() ? &s.arguments[0] : nullptr;
@@ -1104,6 +1107,9 @@ std::vector<LogicSlot> Document::unfilled_slots(std::string_view path, BlockId s
     case StmtKind::Run:
         slots.push_back(slot(0, "Sequence", reflect::ValueKind::Text, s.member));
         break;
+    case StmtKind::ForEachTagged:
+        slots.push_back(slot(0, "Tag", reflect::ValueKind::Text, s.member));
+        break;
     case StmtKind::If:
     case StmtKind::WaitUntil:
         // A variable compared with a value: the operator and the value.
@@ -1160,6 +1166,13 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
                       [text](const logic::Sequence& q) { return q.name == *text; }))) {
         error = "There is no Sequence called " + (text != nullptr ? *text : std::string()) + ".";
         return false;
+    }
+    if (place.list != nullptr && (*place.list)[place.index].kind == StmtKind::ForEachTagged) {
+        const std::vector<std::string> tags = logic_tags();
+        if (text == nullptr || std::find(tags.begin(), tags.end(), "#" + *text) == tags.end()) {
+            error = "No object is tagged " + (text != nullptr ? *text : std::string()) + ".";
+            return false;
+        }
     }
     // A variable set: it must exist. A comparison's operator: one of the signs.
     Stmt* setting =
@@ -1236,7 +1249,9 @@ bool Document::set_logic_slot(std::string_view path, BlockId step, std::size_t a
         if (was == nullptr || was->kind != chosen->kind) {
             setting->arguments.assign(1, logic::ir::literal(zero_of(chosen->kind)));
         }
-    } else if (place.list != nullptr && (*place.list)[place.index].kind == StmtKind::Run) {
+    } else if (place.list != nullptr &&
+               ((*place.list)[place.index].kind == StmtKind::Run ||
+                (*place.list)[place.index].kind == StmtKind::ForEachTagged)) {
         (*place.list)[place.index].member = *text;
     } else if (place.list != nullptr && ((*place.list)[place.index].kind == StmtKind::If ||
                                          (*place.list)[place.index].kind == StmtKind::WaitUntil)) {
@@ -1343,11 +1358,13 @@ std::vector<LogicAction> Document::logic_functions(reflect::FunctionRole role) c
 
 std::vector<LogicAction> Document::logic_actions() const {
     // The built-in steps first (object ""), then the objects' actions.
-    std::vector<LogicAction> actions{LogicAction{"", "log", "Log {text}"},
-                                     LogicAction{"", "repeat", "Repeat {times} times"},
-                                     LogicAction{"", "run", "Run {sequence} and wait for it"},
-                                     LogicAction{"", "set_variable", "Set {variable} to {value}"},
-                                     LogicAction{"", "wait", "Wait {seconds} seconds"}};
+    std::vector<LogicAction> actions{
+        LogicAction{"", "log", "Log {text}"},
+        LogicAction{"", "repeat", "Repeat {times} times"},
+        LogicAction{"", "run", "Run {sequence} and wait for it"},
+        LogicAction{"", "set_variable", "Set {variable} to {value}"},
+        LogicAction{"", "wait", "Wait {seconds} seconds"},
+        LogicAction{"", "for_each_tagged", "For each object tagged {tag}"}};
     std::vector<LogicAction> objects = logic_functions(reflect::FunctionRole::Action);
     actions.insert(actions.end(), objects.begin(), objects.end());
     return actions;
@@ -1365,16 +1382,21 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
                                          ? nullptr
                                          : find_function(Lookup{d.registry, *d.world, &d.elsewhere},
                                                          action.object, action.member);
-    const bool built_in =
-        action.object.empty() &&
-        (action.member == "log" || action.member == "run" || action.member == "wait" ||
-         action.member == "repeat" || action.member == "set_variable");
+    const bool built_in = action.object.empty() &&
+                          (action.member == "log" || action.member == "run" ||
+                           action.member == "wait" || action.member == "repeat" ||
+                           action.member == "set_variable" || action.member == "for_each_tagged");
     if (built_in && action.member == "set_variable" && file->asset.variables.empty()) {
         error = "There is no variable to set yet: add one first.";
         return BlockId{};
     }
     if (!built_in && (f == nullptr || f->role != reflect::FunctionRole::Action)) {
         error = action.object + " cannot " + action.member + ".";
+        return BlockId{};
+    }
+    const std::vector<std::string> tags = logic_tags();
+    if (built_in && action.member == "for_each_tagged" && tags.empty()) {
+        error = "No object has a tag yet: give some a Tags component first.";
         return BlockId{};
     }
     if (built_in && action.member == "run" && file->asset.sequences.empty()) {
@@ -1419,6 +1441,9 @@ BlockId Document::add_logic_step(std::string_view path, BlockId after, const Log
     } else if (built_in && action.member == "run") {
         step = logic::ir::run(next, file->asset.sequences.front().name);
         label = "Run";
+    } else if (built_in && action.member == "for_each_tagged") {
+        step = logic::ir::for_each_tagged(next, tags.front().substr(1), {});
+        label = "For each";
     } else if (built_in) {
         step = logic::ir::wait(next, logic::ir::literal(reflect::Value{1.0}));
         label = "Wait";

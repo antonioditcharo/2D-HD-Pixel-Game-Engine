@@ -164,6 +164,13 @@ Stmt repeat(std::uint64_t id, Expr count, std::vector<Stmt> body) {
     return stmt;
 }
 
+Stmt for_each_tagged(std::uint64_t id, std::string tag, std::vector<Stmt> body) {
+    Stmt stmt = statement(StmtKind::ForEachTagged, id);
+    stmt.member = std::move(tag);
+    stmt.body = std::move(body);
+    return stmt;
+}
+
 Stmt run(std::uint64_t id, std::string sequence_name) {
     Stmt stmt = statement(StmtKind::Run, id);
     stmt.member = std::move(sequence_name);
@@ -1030,6 +1037,9 @@ private:
         case StmtKind::Repeat:
             repeat_statement(stmt);
             return;
+        case StmtKind::ForEachTagged:
+            for_each_tagged_statement(stmt);
+            return;
         case StmtKind::Run:
             if (!sequences_.contains(stmt.member)) {
                 error(stmt.id, "There is no sequence called " + quote(stmt.member) + ".");
@@ -1141,6 +1151,32 @@ private:
             statements(stmt.otherwise);
             --indent_;
         }
+        emit(stmt.id, "end");
+    }
+
+    /// for each object tagged `stmt.member`, in turn as "it" (a Lua local shadowing any
+    /// outer it, so a Rule about a tag may loop over another tag).
+    void for_each_tagged_statement(const Stmt& stmt) {
+        if (!reflect::is_valid_id(stmt.member)) {
+            error(stmt.id, "The tag " + quote(stmt.member) +
+                               " is not valid: use lowercase letters, digits and underscores.");
+            return;
+        }
+        const std::string group = "#" + stmt.member;
+        rule_object_ = group; // checked as a tag may be
+        const std::optional<Object> tagged = object_type(stmt.id, group);
+        rule_object_.clear();
+        if (!tagged) {
+            return;
+        }
+        emit(stmt.id,
+             trace() + "for _, it in ipairs(sx.tagged(" + lua_string(stmt.member) + ")) do");
+        const std::string outer = it_object_;
+        it_object_ = group;
+        ++indent_;
+        statements(stmt.body);
+        --indent_;
+        it_object_ = outer;
         emit(stmt.id, "end");
     }
 

@@ -309,6 +309,7 @@ struct Vm::Impl {
     std::vector<std::unique_ptr<Task>> tasks; ///< In start order.
     std::map<std::string, Binding, std::less<>> bindings;
     Vm::ObjectResolver resolver;
+    Vm::GroupResolver groups;
 
     /// The parts of the object called `name`: its binding, or what the resolver finds.
     /// Empty if there is no such object.
@@ -731,6 +732,22 @@ int script_on(lua_State* state) {
     return 0;
 }
 
+/// sx.tagged(tag): the names of the objects with the tag, as a list.
+int script_tagged(lua_State* state) {
+    const Vm::Impl& impl = impl_of(state);
+    if (lua_gettop(state) != 1 || lua_type(state, 1) != LUA_TSTRING) {
+        raise(state, "sx.tagged needs a tag.");
+    }
+    const std::vector<std::string> names =
+        impl.groups ? impl.groups(string_at(state, 1)) : std::vector<std::string>{};
+    lua_createtable(state, static_cast<int>(names.size()), 0);
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        lua_pushlstring(state, names[i].data(), names[i].size());
+        lua_rawseti(state, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+
 /// sx.trace(): reports the line it is called from to the trace handler.
 int script_trace(lua_State* state) {
     const Vm::Impl& impl = impl_of(state);
@@ -759,7 +776,7 @@ Vm::Vm(const reflect::Registry& registry, VmLimits limits)
     lua_pushcfunction(state, &script_log, "print");
     lua_setglobal(state, "print");
 
-    constexpr std::array<std::pair<const char*, lua_CFunction>, 7> api{{
+    constexpr std::array<std::pair<const char*, lua_CFunction>, 8> api{{
         {"call", &script_call},
         {"get", &script_get},
         {"set", &script_set},
@@ -767,6 +784,7 @@ Vm::Vm(const reflect::Registry& registry, VmLimits limits)
         {"log", &script_log},
         {"on", &script_on},
         {"trace", &script_trace},
+        {"tagged", &script_tagged},
     }};
     lua_createtable(state, 0, static_cast<int>(api.size()));
     for (const auto& [name, function] : api) {
@@ -812,6 +830,10 @@ bool Vm::unbind(std::string_view name) {
 
 void Vm::set_object_resolver(ObjectResolver resolver) {
     impl_->resolver = std::move(resolver);
+}
+
+void Vm::set_group_resolver(GroupResolver resolver) {
+    impl_->groups = std::move(resolver);
 }
 
 std::vector<const reflect::TypeInfo*> Vm::object_types(std::string_view name) const {
