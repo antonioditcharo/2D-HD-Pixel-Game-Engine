@@ -92,6 +92,8 @@ public:
     void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
     void open_title();
     void open_pause();
+    /// The save slots alone, as at a save point: Cancel goes back to the game.
+    void open_save();
     /// Time passing, for opening: the menu fades in, and the credits roll.
     void advance(double seconds) noexcept {
         open_seconds_ += seconds;
@@ -147,7 +149,8 @@ private:
     const Translations* translations_ = nullptr;
     [[nodiscard]] const UiTheme& theme() const noexcept;
     const UiTheme* theme_ = nullptr;
-    double open_seconds_ = 1.0; ///< Since it opened.
+    double open_seconds_ = 1.0;  ///< Since it opened.
+    bool at_save_point_ = false; ///< The save slots opened alone: Cancel closes them.
     std::vector<std::string> credits_;
     double credits_seconds_ = 0.0; ///< Since the credits began to roll.
     PartyObject* party_ = nullptr;

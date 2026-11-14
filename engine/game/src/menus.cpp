@@ -59,7 +59,17 @@ void GameMenu::open_title() {
     note_.clear();
 }
 
+void GameMenu::open_save() {
+    open_seconds_ = 0.0;
+    page_ = Page::Save;
+    from_title_ = false;
+    at_save_point_ = true;
+    cursor_ = 0;
+    note_.clear();
+}
+
 void GameMenu::open_pause() {
+    at_save_point_ = false;
     open_seconds_ = 0.0;
     page_ = Page::Pause;
     from_title_ = false;
@@ -209,6 +219,11 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
         case Page::Equip:
         case Page::Options:
         case Page::Save:
+            if (page_ == Page::Save && at_save_point_) {
+                page_ = Page::None;
+                at_save_point_ = false;
+                return {Result::Kind::Resume, 0};
+            }
             cursor_ = static_cast<std::size_t>(page_) - static_cast<std::size_t>(Page::Pause);
             page_ = Page::Pause;
             return {};
@@ -633,7 +648,7 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
         const bool on_pause = page_ == Page::Pause;
         if (on_pause) {
             list(items, pad, pad, menu_width);
-        } else {
+        } else if (!at_save_point_) {
             std::vector<std::string> pause(pause_choices.begin(), pause_choices.end());
             const float bh = (line * static_cast<float>(pause.size())) + (2 * pad);
             box(pad, pad, menu_width, bh);

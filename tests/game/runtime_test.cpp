@@ -4322,3 +4322,35 @@ TEST_CASE("The minimap shows walls, the player and people to talk to; logic hide
     }
     CHECK(count(look.highlight) == 0); // hidden by logic
 }
+
+TEST_CASE("A save point opens the save slots alone; Cancel goes back to the game") {
+    const Project project;
+    {
+        logic::LogicAsset rules;
+        rules.name = "crystal";
+        rules.rules.push_back(logic::Rule{logic::BlockId{1},
+                                          "",
+                                          "game_start",
+                                          {},
+                                          {ir::do_action(2, "game", "open_save_menu", {})},
+                                          {}});
+        write_json(project.folder.path / "assets/logic/crystal.drules",
+                   serialize::logic_to_json(rules));
+    }
+    input::Recording replay;
+    replay.record(3, key(input::Key::Z), true); // slot 1
+    replay.record(4, key(input::Key::Z), false);
+    replay.record(6, key(input::Key::X), true); // back to the game
+    replay.record(7, key(input::Key::X), false);
+    const auto runtime = project.open(no_graphics(&replay));
+    runtime->step();
+    CHECK(runtime->menu().page() == game::GameMenu::Page::Save);
+    for (int i = 0; i < 5; ++i) {
+        runtime->step();
+    }
+    CHECK(fs::exists(game::save_slot_file(runtime->save_folder(), 1)));
+    for (int i = 0; i < 3; ++i) {
+        runtime->step();
+    }
+    CHECK_FALSE(runtime->menu().open());
+}

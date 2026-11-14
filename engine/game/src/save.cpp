@@ -159,6 +159,10 @@ void register_save_types(reflect::Registry& registry) {
     game.event<std::string>("timer_ended", {"name"})
         .text("When a timer ends ({name})")
         .tooltip("A timer started by logic counted down to 0.");
+    game.action<&SaveObject::open_save_menu>("open_save_menu")
+        .text("Open the save menu")
+        .tooltip("The save slots, as at a save point: a crystal the player talks to. "
+                 "Cancel goes back to the game.");
     game.action<&SaveObject::show_minimap>("show_minimap")
         .text("Show the minimap")
         .tooltip("The small map of the tiles around the player, top right.");

@@ -1678,6 +1678,10 @@ void Runtime::step() {
             r.toasts.pop_front();
         }
     }
+    // A save point: the save slots, over the game.
+    if (r.save_object.take_save_menu() && !r.menu.open()) {
+        r.menu.open_save();
+    }
     // Things created and removed by logic.
     for (const SaveObject::Spawn& spawn : r.save_object.take_spawns()) {
         if (spawn.remove) {

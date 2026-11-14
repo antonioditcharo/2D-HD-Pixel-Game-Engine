@@ -147,6 +147,10 @@ public:
     /// Unlocked since the last call, to announce and keep.
     [[nodiscard]] std::vector<std::string> take_unlocked() { return std::exchange(newly_, {}); }
 
+    /// Opens the save slots, as at a save point; the runtime takes the request.
+    void open_save_menu() { save_menu_ = true; }
+    [[nodiscard]] bool take_save_menu() { return std::exchange(save_menu_, false); }
+
     /// The minimap shown or hidden by logic; nothing keeps the project's setting.
     void show_minimap() { minimap_ = true; }
     void hide_minimap() { minimap_ = false; }
@@ -167,6 +171,7 @@ private:
     std::map<std::string, double, std::less<>> timers_;
     std::vector<std::string> messages_;
     std::optional<bool> minimap_;
+    bool save_menu_ = false;
     std::set<std::string, std::less<>> achievements_;
     std::vector<std::string> newly_;
     std::string last_created_;
