@@ -26,6 +26,8 @@ add_library(editor_app STATIC
     src/main_window.h
     src/project_panel.cpp
     src/project_panel.h
+    src/recolor_dialog.cpp
+    src/recolor_dialog.h
     src/scene_view.cpp
     src/scene_view.h
     src/search.cpp

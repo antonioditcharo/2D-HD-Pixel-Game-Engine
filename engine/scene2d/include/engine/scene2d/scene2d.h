@@ -38,6 +38,9 @@ struct Transform2D {
 /// The image an entity shows.
 struct Sprite {
     std::string image; ///< The GUID of a PNG asset, as 32 hexadecimal digits.
+    /// Colours swapped as it is drawn, "#46b450>#c83c3c, #aaf0a0>#f0b0b0": one picture as
+    /// a red slime and a green one (a palette swap). Empty draws it as it is.
+    std::string recolor;
     /// The point of the image placed at the transform's position, from 0 (left, top) to 1
     /// (right, bottom). The default, bottom centre, puts a character's feet on its
     /// position, which is what y-sorting needs.
@@ -324,6 +327,24 @@ struct Camera2D {
 };
 
 /// GPU textures for image assets, loaded on first use.
+/// One colour of a picture drawn as another (a palette swap). Alpha is kept as it was.
+struct ColorSwap {
+    std::array<std::uint8_t, 3> from{};
+    std::array<std::uint8_t, 3> to{};
+};
+
+/// The swaps of a Sprite's `recolor`: "#rrggbb>#rrggbb" pairs, split by commas or spaces.
+/// Pairs that cannot be read are skipped.
+[[nodiscard]] std::vector<ColorSwap> parse_recolor(std::string_view text);
+/// The text of `swaps`, as parse_recolor() reads it.
+[[nodiscard]] std::string recolor_text(const std::vector<ColorSwap>& swaps);
+/// Swaps the colours of `image` (RGBA, 4 bytes a pixel); see-through pixels stay.
+void recolor_image(assets::Image& image, const std::vector<ColorSwap>& swaps);
+/// The different colours `image` uses, in the order first seen (see-through pixels left
+/// out), at most `most` of them: what a palette swap can change.
+[[nodiscard]] std::vector<std::array<std::uint8_t, 3>> image_colors(const assets::Image& image,
+                                                                    std::size_t most = 64);
+
 class TextureCache {
 public:
     TextureCache(render::Device& device, const assets::AssetDatabase& assets);
@@ -331,6 +352,9 @@ public:
     /// The texture for an image asset, or null if it is unknown, not an image, or cannot
     /// be decoded or uploaded (see last_error()).
     const render::Texture* get(Guid image);
+    /// The same, with its colours swapped by `recolor` (a Sprite's); each recolouring is
+    /// made once and kept. An empty `recolor` is get(image).
+    const render::Texture* get(Guid image, std::string_view recolor);
 
     /// Forgets textures whose assets were modified or removed, so the next get() loads
     /// them again. (A moved asset keeps its GUID and content, so its texture stays.) Call
@@ -343,7 +367,12 @@ public:
 private:
     render::Device& device_;
     const assets::AssetDatabase& assets_;
+    /// The image asset's pixels, or nothing (with last_error()).
+    std::optional<assets::Image> load(Guid image);
+
     std::unordered_map<Guid, std::unique_ptr<render::Texture>, GuidHash> textures_;
+    /// Recoloured textures, by "<guid> <recolor>".
+    std::unordered_map<std::string, std::unique_ptr<render::Texture>> recolored_;
     std::string last_error_;
 };
 

@@ -36,7 +36,7 @@ nothing extra to write ([reflection.md](reflection.md)).
 | Component | Properties | Shown as |
 |---|---|---|
 | `Transform2D` ("transform_2d") | `x`, `y` in **tiles** (world units), `layer` (advanced) | "Position" |
-| `Sprite` ("sprite") | `image` (an asset GUID), `visible`, `rotation` (degrees), `scale_x` and `scale_y` (*Scale across*, *Scale down*); advanced: `pivot_x`, `pivot_y`, tint red, green, blue, and opacity; `frame_width`, `frame_height` and `frame` for sprite sheets | "Sprite" |
+| `Sprite` ("sprite") | `image` (an asset GUID), `visible`, `recolor` (*Recolour*: a palette swap), `rotation` (degrees), `scale_x` and `scale_y` (*Scale across*, *Scale down*); advanced: `pivot_x`, `pivot_y`, tint red, green, blue, and opacity; `frame_width`, `frame_height` and `frame` for sprite sheets | "Sprite" |
 | `SpriteAnimation` ("sprite_animation") | `tag` (a tag of the sheet, such as *walk*: §3), `first_frame`, `frame_count`, `frames_per_second`, `loop`, `playing`; actions *Play*, *Play the animation {name}* (a tag) and *Stop*; event *finished* | "Animation" |
 | `Tilemap` ("tilemap") | `tileset` (an asset GUID), `tiles`, `visible`, `solid`; advanced: `tile_size` | "Tilemap" |
 
@@ -52,6 +52,15 @@ nothing extra to write ([reflection.md](reflection.md)).
   left and top edges on whole pixels, as before; a turned one keeps its pivot on a whole
   pixel, and quarter turns are exact (turned pixel art stays whole pixels). Only the
   picture turns: solid tiles, bodies and areas keep their own shapes.
+- **Palette swaps** (`plan/02` B4). `recolor` draws some of the picture's colours as
+  others: `#46b450>#c83c3c, #aaf0a0>#f0b0b0` makes a green slime red, with no second
+  picture to keep in step. Each exact colour (alpha kept) is swapped once, so swapping two
+  colours both ways works. The texture cache makes each recolouring once, keyed by the
+  picture and the text, and forgets it when the picture changes, so recoloured sprites are
+  as fast as plain ones; the game, the Diorama style and the editor's view all draw it.
+  Logic can change `recolor` like any property (a hurt flash, a team colour).
+  (`parse_recolor()`, `recolor_text()`, `recolor_image()`, `image_colors()`,
+  `TextureCache::get(image, recolor)`.)
 
 ## 3. Sprite sheets and animation
 

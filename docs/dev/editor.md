@@ -99,6 +99,14 @@ back: restoring opens the scene it was made in and puts the work back as one und
 to save when closing. (`Document::write_recovery()`, `restore_recovery()`,
 `discard_recovery()`, `recovery_scene()`; Sprite Studio's sprites are not kept yet.)
 
+**Recolouring a sprite** (a palette swap). A Sprite's *Recolour* field has a
+**Recolour…** button that shows every colour of its picture beside the colour it will be
+drawn as, and the picture before and after. **Shift every colour** turns them all round the
+colour wheel at once, keeping how light each is (greys stay grey); clicking a colour picks
+another for it alone; **As it is** starts again. OK keeps only the colours that change, as
+one undo step; the picture's file is not touched, so one slime picture can be a green slime
+and a red one ([scene2d.md](scene2d.md), Palette swaps).
+
 **Snapshots** (`plan/02` A7). Before trying something big, *File ▸ Take a snapshot…* keeps
 the whole project, saved first, as a named restore point with a picture of the scene, in
 `.sparxel/snapshots/<date and time> <name>/` (never exported). *File ▸ Snapshots…* lists them,

@@ -1,5 +1,6 @@
 #include "inspector.h"
 
+#include "engine/assets/assets.h"
 #include "engine/foundation/reflect.h"
 #include "engine/scene2d/scene2d.h"
 
@@ -17,8 +18,11 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <variant>
+
+#include "recolor_dialog.h"
 
 namespace editor {
 
@@ -55,6 +59,21 @@ std::vector<std::string> sheet_tags(const Document& document, engine::world::Ent
 
 QString text_of(const std::string& s) {
     return QString::fromStdString(s);
+}
+
+/// The pixels of the entity's Sprite picture, if it has one that can be read.
+std::optional<engine::assets::Image> sprite_picture(const Document& document,
+                                                    engine::world::Entity entity) {
+    const auto* sprite = document.world().get<engine::scene2d::Sprite>(entity);
+    const std::optional<engine::Guid> guid =
+        sprite != nullptr ? engine::Guid::parse(sprite->image) : std::nullopt;
+    const std::optional<std::vector<std::uint8_t>> bytes =
+        guid ? document.assets().read(*guid) : std::nullopt;
+    if (!bytes) {
+        return std::nullopt;
+    }
+    std::string error;
+    return engine::assets::decode_png(*bytes, error);
 }
 
 /// The suffix a unit shows after a number, with a space.
@@ -423,6 +442,40 @@ QWidget* Inspector::field(const reflect::TypeInfo& component,
             connect(choose, qOverload<int>(&QComboBox::activated), this, choose_tag);
             connect(choose->lineEdit(), &QLineEdit::editingFinished, this, choose_tag);
             widget = choose;
+            break;
+        }
+        if (component.name == "sprite" && property.id == "recolor") {
+            // The swaps as text, and a button to pick them by eye.
+            auto* row = new QWidget(content_);
+            auto* across = new QHBoxLayout(row);
+            across->setContentsMargins(0, 0, 0, 0);
+            auto* line = new QLineEdit(text_of(value), row);
+            line->setPlaceholderText(tr("(as drawn)"));
+            auto* pick = new QPushButton(tr("Recolour…"), row);
+            pick->setObjectName(QStringLiteral("recolor_button"));
+            across->addWidget(line, 1);
+            across->addWidget(pick);
+            const QString was = text_of(value);
+            connect(line, &QLineEdit::editingFinished, this, [write, end, line, was] {
+                if (line->text() != was) {
+                    write(reflect::Value{line->text().toStdString()});
+                    end();
+                }
+            });
+            connect(pick, &QPushButton::clicked, this, [this, write, end, entity, was] {
+                const std::optional<engine::assets::Image> picture =
+                    sprite_picture(*document_, entity);
+                if (!picture) {
+                    return;
+                }
+                RecolorDialog dialog(*picture, was.toStdString(), this);
+                if (dialog.exec() == QDialog::Accepted &&
+                    QString::fromStdString(dialog.text()) != was) {
+                    write(reflect::Value{dialog.text()});
+                    end();
+                }
+            });
+            widget = row;
             break;
         }
         auto* line = new QLineEdit(text_of(value), content_);

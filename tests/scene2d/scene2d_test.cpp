@@ -1690,3 +1690,52 @@ TEST_CASE("Diorama blocks of different heights show sides down to their lower ne
     CHECK(scene2d::draw_diorama(*w, textures, *renderer, *target, camera, f.background, light)
               .drawn == 9);
 }
+
+TEST_CASE("Palette swaps: colours read, swapped once, and drawn recoloured") {
+    const std::vector<scene2d::ColorSwap> swaps =
+        scene2d::parse_recolor("#ff0000>#00ff00, 0000ff>#ffffff  nonsense #12>#345678");
+    REQUIRE(swaps.size() == 2);
+    CHECK(swaps[0].from == std::array<std::uint8_t, 3>{255, 0, 0});
+    CHECK(swaps[1].to == std::array<std::uint8_t, 3>{255, 255, 255});
+    CHECK(scene2d::recolor_text(swaps) == "#ff0000>#00ff00, #0000ff>#ffffff");
+    CHECK(scene2d::parse_recolor(scene2d::recolor_text(swaps)).size() == 2);
+    CHECK(scene2d::parse_recolor("").empty());
+
+    // Red to blue and blue to red: a swap, each colour changed once.
+    assets::Image image;
+    image.width = 3;
+    image.height = 1;
+    image.rgba = {255, 0, 0, 255, 0, 0, 255, 128, 255, 0, 0, 0};
+    CHECK(scene2d::image_colors(image).size() == 2); // the see-through red is not counted
+    scene2d::recolor_image(image, scene2d::parse_recolor("#ff0000>#0000ff #0000ff>#ff0000"));
+    CHECK(image.rgba == std::vector<std::uint8_t>{0, 0, 255, 255, 255, 0, 0, 128, 255, 0, 0, 0});
+
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    Fixture f;
+    const auto target = device->create_render_target(8, 8);
+    const auto sprites = render::SpriteRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(sprites != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    const scene2d::Camera2D camera{0.0, 0.0, 2, 1};
+    const auto w = f.make_world();
+    const world::Entity green = Fixture::place(*w, "Green slime", 0.0, 0.0, f.red_image);
+    const world::Entity red = Fixture::place(*w, "Red slime", 1.5, 0.0, f.red_image);
+    w->get<scene2d::Sprite>(green)->recolor = "#ff0000>#00ff00";
+    scene2d::draw_world(*w, textures, *sprites, *target, camera, f.background);
+    const std::vector<std::uint8_t> pixels = target->read_pixels();
+    CHECK(pixel(pixels, 8, 4, 3) == Color{0, 255, 0, 255}); // the same picture, recoloured
+    CHECK(pixel(pixels, 8, 6, 3) == f.red);                 // and as it is
+    CHECK(textures.size() == 1); // the plain one; the recoloured one is kept apart
+    static_cast<void>(red);
+
+    // Changing the picture forgets its recolourings too.
+    assets::AssetChanges changes;
+    changes.modified.push_back(f.red_image);
+    textures.apply(changes);
+    CHECK(textures.size() == 0);
+    CHECK(textures.get(f.red_image, "#ff0000>#00ff00") != nullptr);
+}

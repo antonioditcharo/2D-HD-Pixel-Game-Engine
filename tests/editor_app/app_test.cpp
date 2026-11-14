@@ -47,6 +47,7 @@
 #include "logic_panel.h"
 #include "main_window.h"
 #include "project_panel.h"
+#include "recolor_dialog.h"
 #include "scene_view.h"
 #include "search.h"
 #include "start_page.h"
@@ -2286,4 +2287,61 @@ TEST_CASE("File > Snapshots: one taken with a picture of the scene, listed, and 
     REQUIRE(e.window.document() != nullptr);
     CHECK(e.window.outliner()->topLevelItemCount() == 7);
     CHECK(editor::list_snapshots(e.sample.path).size() == 2); // with "Before restoring"
+}
+
+TEST_CASE("Recolour: the hero's colours turned round the wheel, drawn so, in one undo") {
+    Editor e;
+    e.window.outliner()->topLevelItem(2)->setSelected(true); // the hero
+    QApplication::processEvents();
+    const auto sprite = [&] {
+        return e.window.document()->world().get<scene2d::Sprite>(
+            e.window.document()->world().find(e.guid("hero")));
+    };
+    REQUIRE(sprite()->recolor.empty());
+    const QImage before = e.window.scene_view()->image();
+    auto* pick = e.window.inspector()->findChild<QPushButton*>(QStringLiteral("recolor_button"));
+    REQUIRE(pick != nullptr);
+    std::size_t colours = 0;
+    QTimer::singleShot(0, [&] {
+        for (QWidget* top : QApplication::topLevelWidgets()) {
+            if (auto* dialog = qobject_cast<editor::RecolorDialog*>(top)) {
+                colours = dialog->colors().size();
+                dialog->set_hue_shift(120);
+                if (const QString shot = qEnvironmentVariable("SPARXEL_RECOLOR_SCREENSHOT");
+                    !shot.isEmpty()) {
+                    dialog->grab().save(shot);
+                }
+                dialog->accept();
+            }
+        }
+    });
+    pick->click();
+    QApplication::processEvents();
+    CHECK(colours >= 3);
+    const std::vector<scene2d::ColorSwap> swaps = scene2d::parse_recolor(sprite()->recolor);
+    CHECK(swaps.size() >= 2); // greys have no hue to turn
+    CHECK(e.window.scene_view()->image() != before);
+    e.window.undo();
+    QApplication::processEvents();
+    CHECK(sprite()->recolor.empty());
+    CHECK(e.window.scene_view()->image() == before);
+}
+
+TEST_CASE("The Recolour dialog: picked colours, a reset, and only changes kept") {
+    engine::assets::Image picture;
+    picture.width = 2;
+    picture.height = 1;
+    picture.rgba = {200, 40, 40, 255, 128, 128, 128, 255};
+    editor::RecolorDialog dialog(picture, "#c82828>#2828c8");
+    REQUIRE(dialog.colors().size() == 2);
+    CHECK(dialog.target(0) == std::array<std::uint8_t, 3>{40, 40, 200});
+    CHECK(dialog.text() == "#c82828>#2828c8");
+    dialog.set_target(1, {0, 0, 0});
+    CHECK(dialog.text() == "#c82828>#2828c8, #808080>#000000");
+    CHECK(dialog.preview().pixelColor(dialog.preview().width() - 1, 0) == QColor(0, 0, 0));
+    dialog.reset();
+    CHECK(dialog.text().empty());
+    dialog.set_hue_shift(240); // red to blue; the grey stays
+    CHECK(dialog.text().find("#808080") == std::string::npos);
+    CHECK(dialog.target(0)[2] > dialog.target(0)[0]);
 }

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -35,6 +36,10 @@ void register_types(reflect::Registry& registry) {
         registry.add_type<Sprite>("sprite").display_name("Sprite").category("Visuals").tooltip(
             "Shows a picture at the object's position.");
     sprite.property<&Sprite::image>("image").tooltip("The picture to show.");
+    sprite.property<&Sprite::recolor>("recolor")
+        .display_name("Recolour")
+        .tooltip("Colours of the picture drawn as others, as #from>#to pairs: the same "
+                 "picture as a red slime and a green one. The Recolour button picks them.");
     sprite.property<&Sprite::visible>("visible").tooltip("Hide the picture without removing it.");
     sprite.property<&Sprite::pivot_x>("pivot_x").range(0.0, 1.0).step(0.5).flags(advanced).tooltip(
         "Which point of the picture sits on the position: 0 is the left edge, 1 the right.");
@@ -888,34 +893,141 @@ std::vector<world::Entity> animate(world::World& world, double seconds, SheetLib
 TextureCache::TextureCache(render::Device& device, const assets::AssetDatabase& assets)
     : device_(device), assets_(assets) {}
 
+namespace {
+
+std::optional<std::array<std::uint8_t, 3>> hex_rgb(std::string_view text) {
+    if (!text.empty() && text.front() == '#') {
+        text.remove_prefix(1);
+    }
+    if (text.size() != 6) {
+        return std::nullopt;
+    }
+    std::array<std::uint8_t, 3> rgb{};
+    for (std::size_t i = 0; i < 3; ++i) {
+        unsigned value = 0;
+        const char* first = text.data() + (i * 2);
+        const auto [end, failed] = std::from_chars(first, first + 2, value, 16);
+        if (failed != std::errc{} || end != first + 2) {
+            return std::nullopt;
+        }
+        rgb.at(i) = static_cast<std::uint8_t>(value);
+    }
+    return rgb;
+}
+
+std::string hex_of(const std::array<std::uint8_t, 3>& rgb) {
+    constexpr std::string_view digits = "0123456789abcdef";
+    std::string out = "#";
+    for (const std::uint8_t v : rgb) {
+        out += digits[v >> 4U];
+        out += digits[v & 15U];
+    }
+    return out;
+}
+
+} // namespace
+
+std::vector<ColorSwap> parse_recolor(std::string_view text) {
+    std::vector<ColorSwap> swaps;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        const std::size_t end = text.find_first_of(", ", at);
+        const std::string_view pair =
+            text.substr(at, end == std::string_view::npos ? std::string_view::npos : end - at);
+        at = end == std::string_view::npos ? text.size() : end + 1;
+        const std::size_t arrow = pair.find('>');
+        if (arrow == std::string_view::npos) {
+            continue;
+        }
+        const auto from = hex_rgb(pair.substr(0, arrow));
+        const auto to = hex_rgb(pair.substr(arrow + 1));
+        if (from && to) {
+            swaps.push_back(ColorSwap{*from, *to});
+        }
+    }
+    return swaps;
+}
+
+std::string recolor_text(const std::vector<ColorSwap>& swaps) {
+    std::string out;
+    for (const ColorSwap& swap : swaps) {
+        if (!out.empty()) {
+            out += ", ";
+        }
+        out += hex_of(swap.from) + ">" + hex_of(swap.to);
+    }
+    return out;
+}
+
+void recolor_image(assets::Image& image, const std::vector<ColorSwap>& swaps) {
+    if (swaps.empty()) {
+        return;
+    }
+    for (std::size_t i = 0; i + 3 < image.rgba.size(); i += 4) {
+        if (image.rgba[i + 3] == 0) {
+            continue;
+        }
+        const std::array<std::uint8_t, 3> now{image.rgba[i], image.rgba[i + 1], image.rgba[i + 2]};
+        // The first swap of a colour wins, so the colours swapped to are not swapped again.
+        const auto swap =
+            std::ranges::find_if(swaps, [&now](const ColorSwap& s) { return s.from == now; });
+        if (swap != swaps.end()) {
+            std::ranges::copy(swap->to, image.rgba.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
+}
+
+std::vector<std::array<std::uint8_t, 3>> image_colors(const assets::Image& image,
+                                                      std::size_t most) {
+    std::vector<std::array<std::uint8_t, 3>> colors;
+    for (std::size_t i = 0; i + 3 < image.rgba.size() && colors.size() < most; i += 4) {
+        if (image.rgba[i + 3] == 0) {
+            continue;
+        }
+        const std::array<std::uint8_t, 3> rgb{image.rgba[i], image.rgba[i + 1], image.rgba[i + 2]};
+        if (std::ranges::find(colors, rgb) == colors.end()) {
+            colors.push_back(rgb);
+        }
+    }
+    return colors;
+}
+
+const render::Texture* TextureCache::get(Guid image, std::string_view recolor) {
+    if (recolor.empty()) {
+        return get(image);
+    }
+    const std::string key = image.to_string() + " " + std::string(recolor);
+    if (const auto found = recolored_.find(key); found != recolored_.end()) {
+        return found->second.get();
+    }
+    std::optional<assets::Image> pixels = load(image);
+    if (!pixels) {
+        return nullptr;
+    }
+    recolor_image(*pixels, parse_recolor(recolor));
+    std::unique_ptr<render::Texture> texture =
+        device_.create_texture(pixels->width, pixels->height, pixels->rgba);
+    if (texture == nullptr) {
+        last_error_ = device_.last_error();
+        return nullptr;
+    }
+    const render::Texture* result = texture.get();
+    recolored_.emplace(key, std::move(texture));
+    return result;
+}
+
 const render::Texture* TextureCache::get(Guid image) {
     if (const auto found = textures_.find(image); found != textures_.end()) {
         return found->second.get();
     }
-    const assets::AssetRecord* record = assets_.find(image);
-    if (record == nullptr) {
-        last_error_ = "There is no asset " + image.to_string() + ".";
-        return nullptr;
-    }
-    if (record->importer != "image") {
-        last_error_ = record->path + " is not an image.";
-        return nullptr;
-    }
-    const std::optional<std::vector<std::uint8_t>> bytes = assets_.read(image);
-    if (!bytes) {
-        last_error_ = record->path + " cannot be read.";
-        return nullptr;
-    }
-    std::string error;
-    const std::optional<assets::Image> decoded = assets::decode_png(*bytes, error);
+    const std::optional<assets::Image> decoded = load(image);
     if (!decoded) {
-        last_error_ = record->path + ": " + error;
         return nullptr;
     }
     std::unique_ptr<render::Texture> texture =
         device_.create_texture(decoded->width, decoded->height, decoded->rgba);
     if (texture == nullptr) {
-        last_error_ = record->path + ": " + device_.last_error();
+        last_error_ = assets_.find(image)->path + ": " + device_.last_error();
         return nullptr;
     }
     const render::Texture* result = texture.get();
@@ -923,12 +1035,41 @@ const render::Texture* TextureCache::get(Guid image) {
     return result;
 }
 
+std::optional<assets::Image> TextureCache::load(Guid image) {
+    const assets::AssetRecord* record = assets_.find(image);
+    if (record == nullptr) {
+        last_error_ = "There is no asset " + image.to_string() + ".";
+        return std::nullopt;
+    }
+    if (record->importer != "image") {
+        last_error_ = record->path + " is not an image.";
+        return std::nullopt;
+    }
+    const std::optional<std::vector<std::uint8_t>> bytes = assets_.read(image);
+    if (!bytes) {
+        last_error_ = record->path + " cannot be read.";
+        return std::nullopt;
+    }
+    std::string error;
+    std::optional<assets::Image> decoded = assets::decode_png(*bytes, error);
+    if (!decoded) {
+        last_error_ = record->path + ": " + error;
+    }
+    return decoded;
+}
+
 void TextureCache::apply(const assets::AssetChanges& changes) {
-    for (const Guid guid : changes.modified) {
+    const auto forget = [this](Guid guid) {
         textures_.erase(guid);
+        const std::string prefix = guid.to_string() + " ";
+        std::erase_if(recolored_,
+                      [&prefix](const auto& entry) { return entry.first.starts_with(prefix); });
+    };
+    for (const Guid guid : changes.modified) {
+        forget(guid);
     }
     for (const Guid guid : changes.removed) {
-        textures_.erase(guid);
+        forget(guid);
     }
 }
 
@@ -1184,7 +1325,8 @@ DrawStats draw_world(const world::World& world, TextureCache& textures,
             if (const Sprite* sprite = world.get<Sprite>(entity);
                 sprite != nullptr && sprite->visible) {
                 const std::optional<Guid> image = Guid::parse(sprite->image);
-                const render::Texture* texture = image ? textures.get(*image) : nullptr;
+                const render::Texture* texture =
+                    image ? textures.get(*image, sprite->recolor) : nullptr;
                 if (texture == nullptr) {
                     ++stats.missing;
                     return;
@@ -1697,7 +1839,8 @@ DrawStats draw_diorama(const world::World& world, TextureCache& textures,
         if (const Sprite* sprite = world.get<Sprite>(entity);
             sprite != nullptr && sprite->visible) {
             const std::optional<Guid> image = Guid::parse(sprite->image);
-            const render::Texture* texture = image ? textures.get(*image) : nullptr;
+            const render::Texture* texture =
+                image ? textures.get(*image, sprite->recolor) : nullptr;
             if (texture == nullptr) {
                 ++stats.missing;
                 return;
