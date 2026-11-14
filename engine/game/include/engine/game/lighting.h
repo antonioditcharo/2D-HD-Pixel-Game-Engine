@@ -10,6 +10,8 @@
 #include "engine/foundation/reflect.h"
 #include "engine/scene2d/scene2d.h"
 
+#include <string>
+
 namespace engine::game {
 
 struct LightingObject {
@@ -30,7 +32,15 @@ struct LightingObject {
     /// Whether the light (the sun, its strength, the ambient light and the tint) follows the
     /// time of day; otherwise logic sets them itself.
     bool follows_time = false;
+    /// The weather: "clear", "rain", "snow" or "fog", and how strong, 0 to 1.
+    std::string weather = "clear";
+    double weather_strength = 0.0;
 
+    /// Sets the weather; it eases in over a few seconds. Unknown kinds are clear.
+    void set_weather(const std::string& kind, double strength);
+    [[nodiscard]] bool raining() const noexcept {
+        return weather == "rain" && weather_strength > 0.0;
+    }
     /// Sets the time of day and lets the light follow it.
     void set_time(double hours);
     /// Sets the light's colour; logic's own, not following the time.

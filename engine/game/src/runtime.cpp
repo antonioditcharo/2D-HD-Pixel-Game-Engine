@@ -824,8 +824,19 @@ struct Runtime::Impl {
     double message_seconds = 0.0; ///< How long it has shown, for waves and shakes.
     double box_seconds = 0.0;     ///< How long the message box has been open, to open it.
     double stepped = 0.0;         ///< Tiles the player walked since the last footstep.
-    std::size_t blipped = 0;      ///< Bytes of rich.plain the voice has gone past.
-    std::size_t letters = 0;      ///< Letters (not spaces) typed, for every other blip.
+    /// The weather on screen: drops (or flakes) in screen fractions, 0 to 1 across and
+    /// down, each with its speed; the strength eases towards the lighting's.
+    struct Drop {
+        double x = 0.0;
+        double y = 0.0;
+        double speed = 1.0;
+    };
+    std::vector<Drop> drops;
+    double weather_now = 0.0;
+    std::string weather_shown = "clear";
+    std::uint32_t weather_seed = 2463534242U;
+    std::size_t blipped = 0; ///< Bytes of rich.plain the voice has gone past.
+    std::size_t letters = 0; ///< Letters (not spaces) typed, for every other blip.
     /// Every speaker of the project's conversations, by name: how Rules' "{speaker} says"
     /// shows them too.
     std::map<std::string, SpeakerLook, std::less<>> cast;
@@ -1184,6 +1195,48 @@ void Runtime::step() {
     r.menu.advance(r.clock.step_seconds());
     // The message box opens over a moment, the first time a message shows after none.
     r.box_seconds = r.dialogue.is_open() ? r.box_seconds + r.clock.step_seconds() : 0.0;
+
+    // The weather: the strength eases towards the lighting's (over about two seconds; a
+    // change of kind fades the old one out first), and the drops fall.
+    {
+        const double dt = r.clock.step_seconds();
+        const bool same = r.lighting.weather == r.weather_shown;
+        const double target = same ? r.lighting.weather_strength : 0.0;
+        r.weather_now += std::clamp(target - r.weather_now, -dt * 0.5, dt * 0.5);
+        if (!same && r.weather_now <= 0.0) {
+            r.weather_shown = r.lighting.weather;
+            r.drops.clear();
+        }
+        const auto random = [&r] {
+            r.weather_seed ^= r.weather_seed << 13U;
+            r.weather_seed ^= r.weather_seed >> 17U;
+            r.weather_seed ^= r.weather_seed << 5U;
+            return static_cast<double>(r.weather_seed % 10000U) / 10000.0;
+        };
+        const bool rain = r.weather_shown == "rain";
+        const bool snow = r.weather_shown == "snow";
+        const auto wanted = static_cast<std::size_t>((rain   ? 220.0
+                                                      : snow ? 140.0
+                                                             : 0.0) *
+                                                     r.weather_now);
+        while (r.drops.size() < wanted) {
+            r.drops.push_back(Impl::Drop{random(), random(),
+                                         rain ? 1.4 + (random() * 0.6) : 0.08 + (random() * 0.08)});
+        }
+        if (r.drops.size() > wanted) {
+            r.drops.resize(wanted);
+        }
+        for (Impl::Drop& drop : r.drops) {
+            drop.y += drop.speed * dt;
+            drop.x +=
+                rain ? -0.15 * dt : std::sin((drop.y * 12.0) + (drop.speed * 40.0)) * 0.02 * dt;
+            if (drop.y > 1.0) {
+                drop.y -= 1.0;
+                drop.x = random();
+            }
+            drop.x -= std::floor(drop.x);
+        }
+    }
 
     // Ducking: the music eases down while a message shows, and back up after (a quarter of
     // a second either way).
@@ -1859,6 +1912,41 @@ bool Runtime::draw() {
         return false;
     }
 
+    // The weather, over the world: rain darkens a little and falls in streaks, snow
+    // drifts down, fog veils.
+    if (r.weather_now > 0.0 && !r.battle_screen) {
+        const auto sw = static_cast<float>(r.target->width());
+        const auto sh = static_cast<float>(r.target->height());
+        const auto strength = static_cast<float>(r.weather_now);
+        const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
+        r.sprites->begin_over(*r.target);
+        if (r.weather_shown == "rain") {
+            r.sprites->draw(*r.white, one, render::Rect{0.0F, 0.0F, sw, sh},
+                            render::Color{20, 30, 60, static_cast<std::uint8_t>(60.0F * strength)});
+            for (const Impl::Drop& drop : r.drops) {
+                r.sprites->draw(*r.white, one,
+                                render::Rect{std::floor(static_cast<float>(drop.x) * sw),
+                                             std::floor(static_cast<float>(drop.y) * sh), 1.0F,
+                                             4.0F},
+                                render::Color{170, 190, 230, 150});
+            }
+        } else if (r.weather_shown == "snow") {
+            for (const Impl::Drop& drop : r.drops) {
+                const float size = drop.speed > 0.12 ? 2.0F : 1.0F; // nearer flakes are larger
+                r.sprites->draw(*r.white, one,
+                                render::Rect{std::floor(static_cast<float>(drop.x) * sw),
+                                             std::floor(static_cast<float>(drop.y) * sh), size,
+                                             size},
+                                render::Color{245, 248, 255, 230});
+            }
+        } else if (r.weather_shown == "fog") {
+            r.sprites->draw(
+                *r.white, one, render::Rect{0.0F, 0.0F, sw, sh},
+                render::Color{210, 215, 225, static_cast<std::uint8_t>(150.0F * strength)});
+        }
+        static_cast<void>(r.sprites->end());
+    }
+
     // A battle, over the world, or over its background picture.
     if (r.battle_screen && !r.battle_picture.empty()) {
         const assets::AssetRecord* record = r.assets.find(r.battle_picture);
@@ -2262,7 +2350,9 @@ serialize::Json Runtime::save() const {
         {"ambient", r.lighting.ambient},
         {"sun", r.lighting.sun},
         {"sun_angle", r.lighting.sun_angle},
-        {"sun_height", r.lighting.sun_height}};
+        {"sun_height", r.lighting.sun_height},
+        {"weather", r.lighting.weather},
+        {"weather_strength", r.lighting.weather_strength}};
     serialize::Json carried = serialize::Json::object();
     for (const auto& [item, count] : r.inventory.items()) {
         carried[item] = count;
@@ -2545,6 +2635,13 @@ bool Runtime::load(const serialize::Json& json, std::vector<serialize::Issue>& i
                 *entry.target = std::clamp(value->get<double>(), entry.min, entry.max);
             }
         }
+        // The weather (saves made before it was kept are clear).
+        const auto kind = lighting->find("weather");
+        const auto strength = lighting->find("weather_strength");
+        r.lighting.set_weather(
+            kind != lighting->end() && kind->is_string() ? kind->get<std::string>()
+                                                         : std::string("clear"),
+            strength != lighting->end() && strength->is_number() ? strength->get<double>() : 0.0);
     }
     r.steps = step->get<std::uint64_t>();
     // The scene the save was made in (saves made before scenes changed are in the first).

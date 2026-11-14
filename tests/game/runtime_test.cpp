@@ -4458,3 +4458,62 @@ TEST_CASE("Sound Sources fade in when they start and out when they stop") {
     }
     CHECK(mixer->playing_loops() == 0);
 }
+
+TEST_CASE("Weather: rain eases in and falls in streaks; saves keep it") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->width = 320;
+        settings->height = 180;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+        logic::LogicAsset rules;
+        rules.name = "storm";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "lighting", "set_weather",
+                                       {Project::text("rain"), ir::literal(reflect::Value{1.0})})},
+                        {}});
+        write_json(project.folder.path / "assets/logic/storm.drules",
+                   serialize::logic_to_json(rules));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    const auto streaks = [&runtime] {
+        REQUIRE(runtime->draw());
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        int n = 0;
+        for (std::size_t i = 0; i + 3 < pixels.size(); i += 4) {
+            n += pixels[i + 2] > 140 && pixels[i + 2] > pixels[i] + 30 ? 1 : 0;
+        }
+        return n;
+    };
+    runtime->step();
+    const int first = streaks();
+    for (int i = 0; i < 150; ++i) {
+        runtime->step();
+    }
+    const int later = streaks();
+    CHECK(later > first + 100); // it eased in
+    {
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        const assets::Image image{320, 180, pixels};
+        const std::vector<std::uint8_t> png = assets::encode_png(image);
+        std::ofstream(std::filesystem::temp_directory_path() / "sparxel-rain.png", std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+    }
+    const serialize::Json saved = runtime->save();
+    CHECK(saved["lighting"]["weather"] == "rain");
+    CHECK(saved["lighting"]["weather_strength"].get<double>() == doctest::Approx(1.0));
+}

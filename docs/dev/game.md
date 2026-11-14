@@ -298,6 +298,17 @@ turns it back on), and reads or sets *Time of day*, *Day length*, and the tint's
 Saved games keep the time, the clock, and the colour. The editor's scene view shows the
 starting hour's colour.
 
+### Weather
+
+Logic sets the weather on the lighting object: *Set the weather to {kind}, {strength}
+strong*, with *rain*, *snow*, *fog* or *clear*, strength 0 to 1 (and the condition *It is
+raining*). It covers the whole screen, over the world and under messages and menus: rain
+darkens the scene a little and falls in slanting streaks; snow drifts down, nearer flakes
+larger; fog veils everything in pale grey. Changes ease in and out over about two seconds
+(a change of kind fades the old one out first). Saved with games. The drops are worked out
+from a seed, so a recorded game replays the same. Pair it with sounds (a Sound Source of
+rain) and Look changes for a storm.
+
 ### Particles
 
 **Particles** (`particles`, [`particles.h`](../../engine/game/include/engine/game/particles.h))

@@ -129,6 +129,13 @@ bool DialogueObject::choose(std::size_t index) {
     return true;
 }
 
+void LightingObject::set_weather(const std::string& kind, double strength) {
+    const bool known = kind == "rain" || kind == "snow" || kind == "fog" || kind == "clear";
+    weather = known ? kind : std::string("clear");
+    weather_strength =
+        weather == "clear" || !std::isfinite(strength) ? 0.0 : std::clamp(strength, 0.0, 1.0);
+}
+
 void register_dialogue_types(reflect::Registry& registry) {
     auto dialogue = registry.add_type<DialogueObject>("dialogue")
                         .display_name("Dialogue")
@@ -332,6 +339,16 @@ void register_lighting_types(reflect::Registry& registry) {
                  "light follows it.")
         .param("hours")
         .range(0.0, 24.0);
+    lighting.action<&LightingObject::set_weather>("set_weather", {"kind", "strength"})
+        .text("Set the weather to {kind}, {strength} strong")
+        .tooltip("rain, snow, fog or clear; strength from 0 to 1. It eases in over a few "
+                 "seconds, over the whole screen.")
+        .param("strength")
+        .range(0.0, 1.0)
+        .default_value(reflect::Value{0.7});
+    lighting.condition<&LightingObject::raining>("raining")
+        .text("It is raining")
+        .tooltip("Whether the weather is rain.");
     lighting.action<&LightingObject::set_tint>("set_tint", {"red", "green", "blue"})
         .text("Tint the light {red}, {green}, {blue}")
         .tooltip("Colours the light, each channel 0 to 2 (1 unchanged): a red alarm, a green "
