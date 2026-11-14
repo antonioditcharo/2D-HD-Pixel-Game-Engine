@@ -798,10 +798,8 @@ struct Runtime::Impl {
     /// Achievements just unlocked, shown one after another at the top: the text, and how
     /// long it has shown.
     std::deque<std::pair<std::string, double>> toasts;
-    // Testing from the editor.
-    bool debug = false;
+    // Testing from the editor (and the flags `debug` and `show_performance` below).
     DebugMenu debug_menu;
-    bool show_performance = false;
     double step_ms = 0.0; ///< How long steps and frames take, smoothed.
     double draw_ms = 0.0;
     double frame_gap_ms = 0.0; ///< Between frames drawn: 1000 / frames a second.
@@ -826,9 +824,8 @@ struct Runtime::Impl {
     double message_seconds = 0.0; ///< How long it has shown, for waves and shakes.
     double box_seconds = 0.0;     ///< How long the message box has been open, to open it.
     double stepped = 0.0;         ///< Tiles the player walked since the last footstep.
-    std::uint32_t steps_taken = 0;
-    std::size_t blipped = 0; ///< Bytes of rich.plain the voice has gone past.
-    std::size_t letters = 0; ///< Letters (not spaces) typed, for every other blip.
+    std::size_t blipped = 0;      ///< Bytes of rich.plain the voice has gone past.
+    std::size_t letters = 0;      ///< Letters (not spaces) typed, for every other blip.
     /// Every speaker of the project's conversations, by name: how Rules' "{speaker} says"
     /// shows them too.
     std::map<std::string, SpeakerLook, std::less<>> cast;
@@ -845,6 +842,9 @@ struct Runtime::Impl {
     std::optional<SaveObject::SceneRequest> leaving;
     std::uint32_t fade_steps = 0;
     std::uint32_t fade_length = 0;
+    std::uint32_t steps_taken = 0; ///< Footsteps taken, for each one's pitch.
+    bool debug = false;            ///< Testing from the editor: the debug menu and timings.
+    bool show_performance = false;
     std::unique_ptr<logic::Vm> vm;
     FixedStepClock clock;
     const input::Recording* replay{nullptr};
