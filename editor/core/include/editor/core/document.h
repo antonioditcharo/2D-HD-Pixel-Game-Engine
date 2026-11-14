@@ -237,6 +237,19 @@ public:
     /// undo step; the file stays. Refused, with `error`, for a name taken or not a plain file
     /// name.
     bool make_prefab(engine::Guid entity, std::string_view name, std::string& error);
+    /// `entities` (each with everything under it) as text for the clipboard: a scene
+    /// document of them. Those under another of them come with it, once.
+    [[nodiscard]] std::string copy_entities(const std::vector<engine::Guid>& entities) const;
+    /// Adds the entities of copy_entities() text (from this project or another), moved by
+    /// (dx, dy) units, as one undo step ("Paste hero", "Paste 3 entities"). Each gets a new
+    /// GUID, and a name no other entity has ("hero_2"), so logic tells them apart. Returns
+    /// the pasted top ones; none, with `error`, if the text is not entities.
+    std::vector<engine::Guid> paste_entities(std::string_view text, double dx, double dy,
+                                             std::string& error);
+    /// Copies `entities` beside where they are (a tile right and down), each under the same
+    /// parent as its original: "Duplicate hero". Returns the copies.
+    std::vector<engine::Guid> duplicate(const std::vector<engine::Guid>& entities,
+                                        std::string& error);
     /// Places a copy of a prefab (its path in assets/) at map point (x, y), snapped to whole
     /// pixels: its entities with new GUIDs, the root linked to the prefab. One undo step.
     engine::Guid place_prefab(std::string_view prefab, double x, double y, std::string& error);

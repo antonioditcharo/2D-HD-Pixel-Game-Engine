@@ -8,8 +8,10 @@
 
 #include <doctest/doctest.h>
 
+#include <QAction>
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDialog>
 #include <QDockWidget>
@@ -18,6 +20,7 @@
 #include <QDropEvent>
 #include <QFileSystemModel>
 #include <QGroupBox>
+#include <QGuiApplication>
 #include <QIcon>
 #include <QImage>
 #include <QKeyEvent>
@@ -2540,4 +2543,39 @@ TEST_CASE("Tile shapes from the palette: a wall tile made a half, then whole aga
     e.window.select(e.guid("ground"));
     QApplication::processEvents();
     CHECK_FALSE(palette->set_tile_shape(1, scene2d::TileShape::Top));
+}
+
+TEST_CASE("Edit commands: copy and paste where the camera looks, duplicate, select all, frame") {
+    Editor e;
+    editor::Document& d = *e.window.document();
+    const Guid hero = e.guid("hero");
+    e.window.select(hero);
+    REQUIRE(e.window.copy_selection());
+    CHECK(QGuiApplication::clipboard()->mimeData()->hasFormat(
+        QStringLiteral("application/x-sparxel-entities")));
+    // Pasted where the camera looks, and selected.
+    e.window.scene_view()->set_camera(4.0, 3.0);
+    const std::vector<Guid> pasted = e.window.paste();
+    REQUIRE(pasted.size() == 1);
+    CHECK(e.window.selection() == pasted[0]);
+    const auto* at = d.world().get<scene2d::Transform2D>(d.world().find(pasted[0]));
+    CHECK(at->x == 4.0);
+    CHECK(at->y == 3.0);
+    // Duplicate: a copy of what is selected, selected in turn.
+    const std::vector<Guid> twins = e.window.duplicate_selection();
+    REQUIRE(twins.size() == 1);
+    CHECK(e.window.selection() == twins[0]);
+    CHECK(d.world().name(d.world().find(twins[0])) == "hero_3");
+    // Select all, then F frames them.
+    e.window.findChild<QAction*>(QStringLiteral("select_all"))->trigger();
+    CHECK(e.window.selected().size() == d.entities().size());
+    e.window.select(hero);
+    e.window.findChild<QAction*>(QStringLiteral("frame_selection"))->trigger();
+    const auto* hero_at = d.world().get<scene2d::Transform2D>(d.world().find(hero));
+    CHECK(e.window.scene_view()->camera_x() == hero_at->x);
+    CHECK(e.window.scene_view()->camera_y() == hero_at->y);
+    // Cut: copied, then gone.
+    e.window.select(twins[0]);
+    e.window.findChild<QAction*>(QStringLiteral("cut"))->trigger();
+    CHECK_FALSE(d.world().find(twins[0]).is_valid());
 }

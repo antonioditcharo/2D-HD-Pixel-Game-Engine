@@ -3523,3 +3523,47 @@ TEST_CASE("Who in the editor: steps on the object an event names") {
     REQUIRE(problems.size() == 1);
     CHECK(problems[0].message.find("names none") != std::string::npos);
 }
+
+TEST_CASE("Copy, paste and duplicate: whole entities, new names, one undo step each") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    const world::World& w = d->world();
+    const Guid hero = w.guid(w.find_named("hero").at(0));
+    const Guid elder = w.guid(w.find_named("elder").at(0));
+    // A lantern under the elder comes with it.
+    const Guid lantern = d->create_entity("held_lantern", 0.0, 0.0);
+    REQUIRE(d->set_parent(lantern, elder));
+    const std::size_t before = d->entities().size();
+
+    const std::string text = d->copy_entities({elder, lantern, hero}); // the lantern once
+    const std::vector<Guid> pasted = d->paste_entities(text, 2.0, 0.0, error);
+    REQUIRE(pasted.size() == 2); // the elder and the hero, the lantern under the copy
+    CHECK(d->entities().size() == before + 3);
+    CHECK(d->undo_label() == "Paste 2 entities");
+    const world::Entity copy = w.find(pasted[0]);
+    CHECK(w.name(copy) == "elder_2");
+    CHECK(pasted[0] != elder);
+    REQUIRE(w.children(copy).size() == 1);
+    CHECK(w.name(w.children(copy).front()) == "held_lantern_2");
+    CHECK(w.get<scene2d::Transform2D>(copy)->x ==
+          w.get<scene2d::Transform2D>(w.find(elder))->x + 2.0);
+    CHECK(w.components(copy).size() == w.components(w.find(elder)).size());
+    // Pasted again: the next free number.
+    CHECK(w.name(w.find(d->paste_entities(text, 0.0, 0.0, error).at(0))) == "elder_3");
+    REQUIRE(d->undo());
+    REQUIRE(d->undo());
+    CHECK(d->entities().size() == before);
+    CHECK(d->paste_entities("not entities", 0.0, 0.0, error).empty());
+    CHECK(error == "There are no entities to paste.");
+
+    // Duplicate: beside it, under the same parent, as one step.
+    const std::vector<Guid> twins = d->duplicate({lantern}, error);
+    REQUIRE(twins.size() == 1);
+    CHECK(d->undo_label() == "Duplicate held_lantern");
+    CHECK(w.parent(w.find(twins[0])) == w.find(elder));
+    CHECK(w.get<scene2d::Transform2D>(w.find(twins[0]))->x == 1.0);
+    REQUIRE(d->undo());
+    CHECK(d->entities().size() == before);
+    CHECK(d->duplicate({}, error).empty());
+}

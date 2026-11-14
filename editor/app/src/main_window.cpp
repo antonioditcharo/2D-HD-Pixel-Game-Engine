@@ -1,10 +1,13 @@
 #include "main_window.h"
 
+#include "engine/serialize/json.h"
+
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
 #include <QBuffer>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -13,6 +16,7 @@
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFormLayout>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
@@ -24,6 +28,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPixmap>
 #include <QProcess>
 #include <QPushButton>
@@ -1251,6 +1256,45 @@ void MainWindow::build_actions() {
     edit->addSeparator();
     new_entity_ = edit->addAction(tr("&New entity"), this, [this] { new_entity(); });
     delete_ = edit->addAction(tr("&Delete"), this, [this] { delete_selection(); });
+    // The clipboard: entities with everything under them, as in any engine.
+    QAction* cut_action = edit->addAction(tr("Cu&t"), this, [this] {
+        if (copy_selection()) {
+            delete_selection();
+        }
+    });
+    cut_action->setShortcut(QKeySequence::Cut);
+    cut_action->setObjectName(QStringLiteral("cut"));
+    QAction* copy_action = edit->addAction(tr("&Copy"), this, [this] { copy_selection(); });
+    copy_action->setShortcut(QKeySequence::Copy);
+    copy_action->setObjectName(QStringLiteral("copy"));
+    QAction* paste_action =
+        edit->addAction(tr("&Paste"), this, [this] { static_cast<void>(paste()); });
+    paste_action->setShortcut(QKeySequence::Paste);
+    paste_action->setObjectName(QStringLiteral("paste"));
+    QAction* twin = edit->addAction(tr("D&uplicate"), this,
+                                    [this] { static_cast<void>(duplicate_selection()); });
+    twin->setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
+    twin->setObjectName(QStringLiteral("duplicate"));
+    QAction* everything = edit->addAction(tr("Select &all"), this, [this] {
+        if (document_ == nullptr) {
+            return;
+        }
+        std::vector<engine::Guid> all;
+        for (const engine::world::Entity e : document_->entities()) {
+            all.push_back(document_->world().guid(e));
+        }
+        select_many(std::move(all));
+    });
+    everything->setShortcut(QKeySequence::SelectAll);
+    everything->setObjectName(QStringLiteral("select_all"));
+    // F, while the scene has the keyboard: the camera to what is selected.
+    auto* frame = new QAction(tr("&Frame the selection"), this);
+    frame->setObjectName(QStringLiteral("frame_selection"));
+    frame->setShortcut(QKeySequence(QStringLiteral("F")));
+    frame->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(frame, &QAction::triggered, this, [this] { frame_selection(); });
+    view_->addAction(frame);
+    edit->addAction(frame);
     QAction* prefab = edit->addAction(tr("Make a &prefab…"), this, [this] {
         if (document_ == nullptr || !selection_.is_valid()) {
             return;
@@ -1829,6 +1873,96 @@ engine::Guid MainWindow::new_entity() {
     select(guid);
     view_->refresh();
     return guid;
+}
+
+bool MainWindow::copy_selection() {
+    if (document_ == nullptr || selected_.empty()) {
+        return false;
+    }
+    const std::string text = document_->copy_entities(selected_);
+    auto* clip = new QMimeData();
+    const QByteArray bytes(text.data(), static_cast<qsizetype>(text.size()));
+    clip->setData(QStringLiteral("application/x-sparxel-entities"), bytes);
+    clip->setText(QString::fromUtf8(bytes));
+    QGuiApplication::clipboard()->setMimeData(clip);
+    statusBar()->showMessage(tr("Copied %n entity(s)", nullptr, static_cast<int>(selected_.size())),
+                             3000);
+    return true;
+}
+
+std::vector<engine::Guid> MainWindow::paste() {
+    if (document_ == nullptr) {
+        return {};
+    }
+    const QMimeData* clip = QGuiApplication::clipboard()->mimeData();
+    const QByteArray bytes = clip == nullptr ? QByteArray()
+                             : clip->hasFormat(QStringLiteral("application/x-sparxel-entities"))
+                                 ? clip->data(QStringLiteral("application/x-sparxel-entities"))
+                                 : clip->text().toUtf8();
+    const std::string text(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+    // Where the camera looks: the first of them lands there, the rest around it.
+    double dx = 0.0;
+    double dy = 0.0;
+    std::vector<engine::serialize::Issue> ignored;
+    if (const std::optional<engine::serialize::Json> json = engine::serialize::parse(text, ignored);
+        json && json->is_object() && json->contains("entities") && (*json)["entities"].is_array() &&
+        !(*json)["entities"].empty()) {
+        const engine::serialize::Json& first = (*json)["entities"][0];
+        if (first.contains("components") && first["components"].contains("transform_2d")) {
+            const engine::serialize::Json& at = first["components"]["transform_2d"];
+            const double x = at.contains("x") && at["x"].is_number() ? at["x"].get<double>() : 0.0;
+            const double y = at.contains("y") && at["y"].is_number() ? at["y"].get<double>() : 0.0;
+            const double ppu = std::max(1U, document_->settings().ppu);
+            dx = (std::round(view_->camera_x() * ppu) / ppu) - x;
+            dy = (std::round(view_->camera_y() * ppu) / ppu) - y;
+        }
+    }
+    std::string error;
+    std::vector<engine::Guid> pasted = document_->paste_entities(text, dx, dy, error);
+    if (pasted.empty()) {
+        statusBar()->showMessage(text_of(error), 4000);
+        return pasted;
+    }
+    changed(true);
+    select_many(pasted);
+    return pasted;
+}
+
+std::vector<engine::Guid> MainWindow::duplicate_selection() {
+    if (document_ == nullptr) {
+        return {};
+    }
+    std::string error;
+    std::vector<engine::Guid> copies = document_->duplicate(selected_, error);
+    if (copies.empty()) {
+        statusBar()->showMessage(text_of(error), 4000);
+        return copies;
+    }
+    changed(true);
+    select_many(copies);
+    return copies;
+}
+
+void MainWindow::frame_selection() {
+    if (document_ == nullptr || selected_.empty()) {
+        return;
+    }
+    // The middle of what is selected and has a place.
+    double x = 0.0;
+    double y = 0.0;
+    int placed = 0;
+    for (const engine::Guid guid : selected_) {
+        const engine::world::Entity e = document_->world().find(guid);
+        if (const auto* at =
+                e.is_valid() ? document_->world().get<engine::scene2d::Transform2D>(e) : nullptr) {
+            x += at->x;
+            y += at->y;
+            ++placed;
+        }
+    }
+    if (placed > 0) {
+        view_->set_camera(x / placed, y / placed);
+    }
 }
 
 void MainWindow::delete_selection() {

@@ -158,6 +158,14 @@ public:
     /// Puts entity under `parent` (or at the top, for an invalid one), as the outliner's
     /// right-click menu does. False, saying why, if it cannot.
     bool put_under(engine::Guid entity, engine::Guid parent);
+    /// Edit > Copy: the selected entities, with everything under them, to the clipboard.
+    bool copy_selection();
+    /// Edit > Paste: the clipboard's entities, the first where the camera looks; selected.
+    std::vector<engine::Guid> paste();
+    /// Edit > Duplicate (Ctrl+D): copies beside the selected ones; selected.
+    std::vector<engine::Guid> duplicate_selection();
+    /// F: the camera to the middle of what is selected.
+    void frame_selection();
     /// Makes a conversation as assets/talk/<name>.dtalk, with one node, and opens it.
     StoryWindow* new_story(const QString& name);
     /// Opens a data table of the project (its path in assets/, a .dtable), or brings its

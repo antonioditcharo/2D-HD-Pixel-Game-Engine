@@ -1538,6 +1538,134 @@ read_prefab(const fs::path& folder, const engine::assets::AssetRecord* record, s
 
 } // namespace
 
+std::string Document::copy_entities(const std::vector<Guid>& entities) const {
+    const Impl& d = *impl_;
+    serialize::Json all = serialize::subtree_to_json(*d.world, world::Entity{});
+    all["entities"] = serialize::Json::array();
+    for (const Guid guid : entities) {
+        const world::Entity e = d.find(guid);
+        if (!e.is_valid()) {
+            continue;
+        }
+        // Under another of them: it comes with that one.
+        bool inside = false;
+        for (world::Entity up = d.world->parent(e); up.is_valid() && !inside;
+             up = d.world->parent(up)) {
+            inside =
+                std::find(entities.begin(), entities.end(), d.world->guid(up)) != entities.end();
+        }
+        if (inside) {
+            continue;
+        }
+        // Kept whole while its entities are taken: a temporary's member would not outlive
+        // the loop's start.
+        serialize::Json subtree = serialize::subtree_to_json(*d.world, e);
+        for (serialize::Json& item : subtree["entities"]) {
+            all["entities"].push_back(std::move(item));
+        }
+    }
+    return serialize::to_text(all);
+}
+
+std::vector<Guid> Document::paste_entities(std::string_view text, double dx, double dy,
+                                           std::string& error) {
+    Impl& d = *impl_;
+    std::vector<serialize::Issue> issues;
+    const std::optional<serialize::Json> json = serialize::parse(text, issues);
+    if (!json || !json->is_object() || !json->contains("entities") || (*json)["entities"].empty() ||
+        !std::isfinite(dx) || !std::isfinite(dy)) {
+        error = "There are no entities to paste.";
+        return {};
+    }
+    const serialize::Json copy = serialize::with_new_guids(*json);
+    serialize::Json before = d.snapshot();
+    const serialize::SceneLoad loaded = serialize::scene_from_json(copy, *d.world);
+    if (loaded.entities.empty()) {
+        error = loaded.issues.empty() ? std::string("There are no entities to paste.")
+                                      : loaded.issues.front().message;
+        return {};
+    }
+    std::vector<Guid> roots;
+    for (const world::Entity e : loaded.entities) {
+        // A name no other entity has: hero, hero_2, hero_3...
+        const std::string name(d.world->name(e));
+        if (!name.empty() && d.world->find_named(name).size() > 1) {
+            std::string base = name;
+            if (const std::size_t under = base.find_last_of('_');
+                under != std::string::npos && under + 1 < base.size() &&
+                std::all_of(base.begin() + static_cast<std::ptrdiff_t>(under) + 1, base.end(),
+                            [](unsigned char c) { return std::isdigit(c) != 0; })) {
+                base.erase(under);
+            }
+            for (int n = 2;; ++n) {
+                const std::string candidate = base + "_" + std::to_string(n);
+                if (d.world->find_named(candidate).empty()) {
+                    d.world->set_name(e, candidate);
+                    break;
+                }
+            }
+        }
+        if (d.world->parent(e).is_valid()) {
+            continue;
+        }
+        if (auto* at = d.world->get<scene2d::Transform2D>(e)) {
+            at->x += dx;
+            at->y += dy;
+        }
+        roots.push_back(d.world->guid(e));
+    }
+    const std::string label = roots.size() == 1
+                                  ? "Paste " + d.name_of(roots.front())
+                                  : "Paste " + std::to_string(roots.size()) + " entities";
+    d.record(label, std::move(before));
+    return roots;
+}
+
+std::vector<Guid> Document::duplicate(const std::vector<Guid>& entities, std::string& error) {
+    Impl& d = *impl_;
+    std::vector<Guid> kept;
+    for (const Guid guid : entities) {
+        if (const world::Entity e = d.find(guid); e.is_valid()) {
+            kept.push_back(guid);
+        }
+    }
+    if (kept.empty()) {
+        error = "Nothing is selected.";
+        return {};
+    }
+    const std::string label = kept.size() == 1
+                                  ? "Duplicate " + d.name_of(kept.front())
+                                  : "Duplicate " + std::to_string(kept.size()) + " entities";
+    serialize::Json before = d.snapshot();
+    std::vector<Guid> copies = paste_entities(copy_entities(kept), 1.0, 1.0, error);
+    if (copies.empty()) {
+        return copies;
+    }
+    // Each beside its original, under the same parent. (The paste's own step is replaced.)
+    std::size_t i = 0;
+    for (const Guid original : kept) {
+        const world::Entity e = d.find(original);
+        bool inside = false;
+        for (world::Entity up = d.world->parent(e); up.is_valid() && !inside;
+             up = d.world->parent(up)) {
+            inside = std::find(kept.begin(), kept.end(), d.world->guid(up)) != kept.end();
+        }
+        if (inside || i >= copies.size()) {
+            continue;
+        }
+        if (const world::Entity parent = d.world->parent(e); parent.is_valid()) {
+            d.world->set_parent(d.find(copies[i]), parent);
+        }
+        ++i;
+    }
+    // One step for all of it: the paste's own step gives way to this one.
+    if (!d.undo.empty()) {
+        d.undo.pop_back();
+    }
+    d.record(label, std::move(before));
+    return copies;
+}
+
 Guid Document::place_prefab(std::string_view prefab, double x, double y, std::string& error) {
     Impl& d = *impl_;
     const engine::assets::AssetRecord* record = d.assets->find(prefab);
