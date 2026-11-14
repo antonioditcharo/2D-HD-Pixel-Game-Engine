@@ -1,0 +1,65 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "displayName": "Windows, MSVC",
+      "description": "The primary product build. Run from a Visual Studio developer prompt.",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "cl"
+      }
+    },
+    {
+      "name": "windows-clang-cl",
+      "displayName": "Windows, clang-cl",
+      "description": "A second compiler for extra diagnostics. Run from a Visual Studio developer prompt.",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang-cl"
+      }
+    },
+    {
+      "name": "linux-dev",
+      "displayName": "Linux, default compiler",
+      "description": "Development and CI convenience for the platform-independent modules. Not a product target.",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-msvc", "configurePreset": "windows-msvc" },
+    { "name": "windows-clang-cl", "configurePreset": "windows-clang-cl" },
+    { "name": "linux-dev", "configurePreset": "linux-dev" }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-msvc",
+      "configurePreset": "windows-msvc",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "windows-clang-cl",
+      "configurePreset": "windows-clang-cl",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-dev",
+      "configurePreset": "linux-dev",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

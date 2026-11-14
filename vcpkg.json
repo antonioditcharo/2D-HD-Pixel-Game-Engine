@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "builtin-baseline": "9eec002df1cd109f8f104cd966a763daf9751489",
+  "dependencies": [
+    "box2d",
+    "doctest",
+    "flecs",
+    "luau",
+    "miniaudio",
+    "nlohmann-json",
+    {
+      "name": "sdl3",
+      "default-features": false,
+      "features": [
+        "vulkan"
+      ]
+    },
+    {
+      "name": "sdl3-shadercross",
+      "host": true
+    },
+    "stb"
+  ],
+  "overrides": [
+    {
+      "name": "directx-dxc",
+      "version": "2026-05-27"
+    },
+    {
+      "name": "sdl3",
+      "version": "3.4.18"
+    },
+    {
+      "name": "spirv-cross",
+      "version": "1.4.363.0"
+    }
+  ]
+}

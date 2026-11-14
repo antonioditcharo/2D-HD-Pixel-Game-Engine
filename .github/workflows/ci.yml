@@ -1,0 +1,258 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # vcpkg tag 2026.10.16. Keep in sync with "builtin-baseline" in vcpkg.json
+  # and with docs/dev/building.md.
+  VCPKG_COMMIT: 9eec002df1cd109f8f104cd966a763daf9751489
+  VCPKG_DISABLE_METRICS: "1"
+
+jobs:
+  docs:
+    name: Docs check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check citations and links
+        run: python3 tools/check_docs.py
+
+  format:
+    name: Format check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install clang-format 18
+        run: |
+          if ! command -v clang-format-18 >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y clang-format-18
+          fi
+          clang-format-18 --version
+      - name: Check formatting
+        run: git ls-files '*.h' '*.cpp' | xargs clang-format-18 --dry-run -Werror
+
+  linux:
+    name: Linux build, tests and static analysis
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install build tools
+        run: |
+          missing=""
+          command -v ninja >/dev/null || missing="$missing ninja-build"
+          command -v clang-tidy-18 >/dev/null || missing="$missing clang-tidy-18"
+          if [ -n "$missing" ]; then
+            sudo apt-get update
+            sudo apt-get install -y $missing
+          fi
+          cmake --version
+          ninja --version
+
+      - name: Install a software GPU and Qt
+        # Mesa's lavapipe is a Vulkan driver that runs on the CPU, so the renderer's
+        # golden-pixel tests run here without a graphics card. Qt 6 is for the editor.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers \
+            qt6-base-dev qt6-base-dev-tools libgl-dev
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-linux-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Set up vcpkg
+        run: |
+          mkdir -p "$RUNNER_TEMP/vcpkg" "$RUNNER_TEMP/vcpkg-cache"
+          cd "$RUNNER_TEMP/vcpkg"
+          git init -q
+          git remote add origin https://github.com/microsoft/vcpkg
+          git fetch -q --depth 1 origin "$VCPKG_COMMIT"
+          git checkout -q FETCH_HEAD
+          ./bootstrap-vcpkg.sh -disableMetrics
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$RUNNER_TEMP/vcpkg-cache" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: cmake --preset linux-dev -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DSPARXEL_REQUIRE_EDITOR=ON
+      - name: Build
+        # Compiler errors are also annotations on the run, readable without its log.
+        run: |
+          set +e
+          cmake --build --preset linux-dev 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          grep -E '^[^ ]+:[0-9]+:[0-9]+: (fatal )?error: ' build.log | sort -u | head -10 |
+            sed -E "s#^${GITHUB_WORKSPACE}/##; s#^([^:]+):([0-9]+):([0-9]+): (fatal )?error: (.*)#::error file=\1,line=\2,col=\3::\5#" || true
+          exit $status
+      - name: Test
+        # Fail, rather than skip, the renderer tests if no GPU is found.
+        env:
+          SPARXEL_REQUIRE_GPU: "1"
+        run: ctest --preset linux-dev
+      - name: Static analysis
+        # In parallel; each finding is also an annotation on the run, so it can be read
+        # without opening the log.
+        run: |
+          set +e
+          git ls-files '*.cpp' | xargs -P "$(nproc)" -n 4 clang-tidy-18 -p build/linux-dev --quiet > tidy.log 2>&1
+          status=$?
+          set -e
+          cat tidy.log
+          # GitHub shows at most 10 error and 10 warning annotations a step: the first
+          # findings as errors, the next as warnings.
+          grep -E '^[^ ]+:[0-9]+:[0-9]+: (error|warning): ' tidy.log | sort -u |
+            sed -E "s#^${GITHUB_WORKSPACE}/##; s#^([^:]+):([0-9]+):([0-9]+): (error|warning): (.*)#file=\1,line=\2,col=\3::\5#" > findings.txt || true
+          head -10 findings.txt | sed 's/^/::error /' || true
+          sed -n '11,20p' findings.txt | sed 's/^/::warning /' || true
+          echo "$(wc -l < findings.txt) findings"
+          exit $status
+
+  windows:
+    name: Windows build and tests (${{ matrix.preset }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [windows-msvc, windows-clang-cl]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\vcpkg-cache
+          key: vcpkg-windows-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Set up vcpkg
+        shell: cmd
+        run: |
+          mkdir "%RUNNER_TEMP%\vcpkg" || exit /b 1
+          if not exist "%RUNNER_TEMP%\vcpkg-cache" mkdir "%RUNNER_TEMP%\vcpkg-cache"
+          cd /d "%RUNNER_TEMP%\vcpkg" || exit /b 1
+          git init -q || exit /b 1
+          git remote add origin https://github.com/microsoft/vcpkg || exit /b 1
+          git fetch -q --depth 1 origin %VCPKG_COMMIT% || exit /b 1
+          git checkout -q FETCH_HEAD || exit /b 1
+          call bootstrap-vcpkg.bat -disableMetrics || exit /b 1
+          echo VCPKG_ROOT=%RUNNER_TEMP%\vcpkg>> "%GITHUB_ENV%"
+          echo VCPKG_DEFAULT_BINARY_CACHE=%RUNNER_TEMP%\vcpkg-cache>> "%GITHUB_ENV%"
+
+      - name: Restore Qt
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\Qt
+          key: qt-windows-6.8.3-msvc2022_64-aqt3.2.1
+
+      - name: Install Qt 6 for the editor
+        # The official prebuilt Qt, downloaded by aqtinstall (a pinned PyPI package).
+        shell: cmd
+        run: |
+          if exist "%RUNNER_TEMP%\Qt\6.8.3\msvc2022_64\bin\Qt6Core.dll" goto installed
+          python -m pip install --disable-pip-version-check aqtinstall==3.2.1 || exit /b 1
+          python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --outputdir "%RUNNER_TEMP%\Qt" || exit /b 1
+          :installed
+          echo CMAKE_PREFIX_PATH=%RUNNER_TEMP%\Qt\6.8.3\msvc2022_64>> "%GITHUB_ENV%"
+          echo QT_PLUGIN_PATH=%RUNNER_TEMP%\Qt\6.8.3\msvc2022_64\plugins>> "%GITHUB_ENV%"
+          echo %RUNNER_TEMP%\Qt\6.8.3\msvc2022_64\bin>> "%GITHUB_PATH%"
+
+      - name: Configure, build and test
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
+          if not defined VSINSTALL (echo Visual Studio with C++ tools was not found & exit /b 1)
+          call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cmake --preset ${{ matrix.preset }} -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DSPARXEL_REQUIRE_EDITOR=ON || exit /b 1
+          cmake --build --preset ${{ matrix.preset }} || exit /b 1
+          ctest --preset ${{ matrix.preset }} || exit /b 1
+
+      # The editor as a creator gets it: one folder that needs nothing installed.
+      - name: Package the editor
+        if: matrix.preset == 'windows-msvc'
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
+          call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cmake -DBUILD=build/windows-msvc -DSOURCE=. -DOUT=package/Sparxel -DQT="%CMAKE_PREFIX_PATH%" -P tools/package_windows.cmake || exit /b 1
+
+      - name: Check the package starts with nothing else on the path
+        # No Qt, no build folder: only Windows itself. The editor opens the sample and
+        # leaves; the packaged player plays it for half a second.
+        if: matrix.preset == 'windows-msvc'
+        timeout-minutes: 5
+        shell: cmd
+        run: |
+          set "PATH=%SystemRoot%\system32;%SystemRoot%"
+          set QT_PLUGIN_PATH=
+          set QT_QPA_PLATFORM=
+          cd /d package\Sparxel || exit /b 1
+          start /wait "" sparxel-editor.exe samples\hello --check
+          if errorlevel 1 (echo The packaged editor did not start or could not open the sample. & exit /b 1)
+          player\sparxel-player.exe samples\hello --headless --frames 30 --no-audio || exit /b 1
+
+      - name: Upload the package
+        if: matrix.preset == 'windows-msvc'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Sparxel-windows
+          path: package
+          if-no-files-found: error
+
+      # The same folder as an installer (Inno Setup, which the runner image has). It is
+      # installed silently for this user, the installed editor opens the sample, and it is
+      # uninstalled again, leaving nothing of it behind.
+      - name: Build and check the installer
+        if: matrix.preset == 'windows-msvc'
+        timeout-minutes: 10
+        shell: cmd
+        run: |
+          set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+          if not exist "%ISCC%" (echo Inno Setup was not found at "%ISCC%". & exit /b 1)
+          "%ISCC%" /Q "/DSourceDir=%CD%\package\Sparxel" "/DOutputDir=%CD%\installer" tools\sparxel.iss || exit /b 1
+          set "SETUP=%CD%\installer\Sparxel-Setup-0.0.1.exe"
+          if not exist "%SETUP%" (echo The installer was not made. & exit /b 1)
+          set "TARGET=%RUNNER_TEMP%\SparxelInstalled"
+          start /wait "" "%SETUP%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER "/DIR=%TARGET%" "/LOG=%RUNNER_TEMP%\setup.log"
+          if errorlevel 1 (type "%RUNNER_TEMP%\setup.log" & echo The installer failed. & exit /b 1)
+          if not exist "%TARGET%\sparxel-editor.exe" (type "%RUNNER_TEMP%\setup.log" & echo Nothing was installed. & exit /b 1)
+          if not exist "%TARGET%\unins000.exe" (echo No uninstaller was installed. & exit /b 1)
+          setlocal
+          set "PATH=%SystemRoot%\system32;%SystemRoot%"
+          set QT_PLUGIN_PATH=
+          set QT_QPA_PLATFORM=
+          pushd "%TARGET%" || exit /b 1
+          start /wait "" sparxel-editor.exe samples\hello --check
+          if errorlevel 1 (echo The installed editor did not start or could not open the sample. & exit /b 1)
+          player\sparxel-player.exe samples\hello --headless --frames 30 --no-audio || exit /b 1
+          popd
+          endlocal
+          start /wait "" "%TARGET%\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          rem The uninstaller finishes from a copy of itself: wait up to a minute for it.
+          for /l %%i in (1,1,60) do (
+            if not exist "%TARGET%\sparxel-editor.exe" goto uninstalled
+            ping -n 2 127.0.0.1 >nul
+          )
+          echo The uninstaller left the editor behind. & exit /b 1
+          :uninstalled
+          echo Installed, started and uninstalled.
+
+      - name: Upload the installer
+        if: matrix.preset == 'windows-msvc'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Sparxel-windows-installer
+          path: installer
+          if-no-files-found: error

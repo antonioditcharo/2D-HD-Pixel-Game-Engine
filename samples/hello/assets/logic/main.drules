@@ -1,0 +1,285 @@
+{
+  "brains": [
+    {
+      "block": 20,
+      "name": "weather",
+      "states": [
+        {
+          "block": 21,
+          "enter": [
+            {
+              "block": 22,
+              "kind": "log",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": "The sun is out."
+                }
+              ]
+            },
+            {
+              "block": 27,
+              "kind": "set",
+              "member": "ambient",
+              "object": "lighting",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": 0.55
+                }
+              ]
+            },
+            {
+              "block": 28,
+              "kind": "set",
+              "member": "sun",
+              "object": "lighting",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": 0.45
+                }
+              ]
+            }
+          ],
+          "go": [
+            {
+              "after": 30,
+              "block": 23,
+              "to": "rain"
+            }
+          ],
+          "name": "sunny"
+        },
+        {
+          "block": 24,
+          "enter": [
+            {
+              "block": 25,
+              "kind": "log",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": "It starts to rain."
+                }
+              ]
+            },
+            {
+              "block": 29,
+              "kind": "set",
+              "member": "ambient",
+              "object": "lighting",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": 0.25
+                }
+              ]
+            },
+            {
+              "block": 30,
+              "kind": "set",
+              "member": "sun",
+              "object": "lighting",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": 0.1
+                }
+              ]
+            }
+          ],
+          "go": [
+            {
+              "after": 15,
+              "block": 26,
+              "to": "sunny"
+            }
+          ],
+          "name": "rain"
+        }
+      ]
+    }
+  ],
+  "format": "sparxel.logic",
+  "name": "main",
+  "rules": [
+    {
+      "block": 1,
+      "do": [
+        {
+          "block": 2,
+          "kind": "do",
+          "member": "say",
+          "object": "dialogue",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "Welcome to the village! Arrow keys to walk, Z to talk."
+            }
+          ]
+        }
+      ],
+      "event": "game_start"
+    },
+    {
+      "block": 3,
+      "do": [
+        {
+          "block": 4,
+          "kind": "do",
+          "member": "say",
+          "object": "dialogue",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "Elder: Welcome, traveller. The road east leads home."
+            }
+          ]
+        },
+        {
+          "block": 5,
+          "kind": "do",
+          "member": "play_sound",
+          "object": "audio",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "sfx/chime.wav"
+            }
+          ]
+        },
+        {
+          "block": 6,
+          "kind": "set_variable",
+          "member": "talks",
+          "values": [
+            {
+              "kind": "arithmetic",
+              "op": "add",
+              "operands": [
+                {
+                  "kind": "variable",
+                  "member": "talks"
+                },
+                {
+                  "kind": "literal",
+                  "value": 1
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "block": 9,
+          "kind": "do",
+          "member": "ask",
+          "object": "dialogue",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "Elder: Shall I tell you about the road?"
+            },
+            {
+              "kind": "literal",
+              "value": "Yes, please|No, thanks"
+            }
+          ]
+        },
+        {
+          "block": 10,
+          "kind": "wait_until",
+          "values": [
+            {
+              "kind": "not",
+              "operands": [
+                {
+                  "kind": "call",
+                  "member": "is_open",
+                  "object": "dialogue"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "block": 11,
+          "body": [
+            {
+              "block": 12,
+              "kind": "do",
+              "member": "say",
+              "object": "dialogue",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": "Elder: Follow the path east, through the gate. Home is not far."
+                }
+              ]
+            }
+          ],
+          "kind": "if",
+          "otherwise": [
+            {
+              "block": 13,
+              "kind": "do",
+              "member": "say",
+              "object": "dialogue",
+              "values": [
+                {
+                  "kind": "literal",
+                  "value": "Elder: Safe travels, then."
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "compare",
+              "op": "equal",
+              "operands": [
+                {
+                  "kind": "call",
+                  "member": "answer",
+                  "object": "dialogue"
+                },
+                {
+                  "kind": "literal",
+                  "value": 1
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "event": "interacted",
+      "object": "elder"
+    },
+    {
+      "block": 7,
+      "do": [
+        {
+          "block": 8,
+          "kind": "do",
+          "member": "say",
+          "object": "dialogue",
+          "values": [
+            {
+              "kind": "literal",
+              "value": "The gate creaks. Beyond it, the road home."
+            }
+          ]
+        }
+      ],
+      "event": "entered",
+      "object": "gate"
+    }
+  ],
+  "variables": [
+    {
+      "id": "talks",
+      "kind": "whole_number"
+    }
+  ],
+  "version": 1
+}

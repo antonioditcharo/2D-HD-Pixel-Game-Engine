@@ -1,0 +1,21 @@
+# Text files are stored with LF line endings on every platform.
+* text=auto eol=lf
+
+# Windows scripts need CRLF to run reliably.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.iss text eol=crlf
+
+# Binary assets are never converted or diffed as text.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.wav binary
+*.ogg binary
+*.flac binary
+*.mp3 binary
+*.aseprite binary
+*.glb binary

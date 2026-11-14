@@ -1,0 +1,31 @@
+{
+  "background": [
+    24,
+    28,
+    44
+  ],
+  "camera_distance": 12,
+  "camera_fov": 30,
+  "camera_pitch": 35,
+  "format": "sparxel.project",
+  "height": 180,
+  "look": {
+    "bloom": 0.35,
+    "bloom_radius": 5,
+    "bloom_threshold": 0.7,
+    "blur": 2.5,
+    "blur_ramp": 0.3,
+    "contrast": 1.05,
+    "focus_center": 0.55,
+    "focus_height": 0.4,
+    "saturation": 1.1,
+    "tilt_shift": true,
+    "vignette": 0.3
+  },
+  "name": "Hello Sparxel",
+  "ppu": 16,
+  "render_style": "classic_2d",
+  "start_scene": "maps/village.dscene",
+  "version": 1,
+  "width": 320
+}
