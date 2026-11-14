@@ -46,6 +46,10 @@ sparxel-player samples/hello --headless --frames 120 --no-audio --screenshot fra
   **Quests** (each with how it stands: Interact completes it), **Go to…** (everything
   named, by name: Interact puts the player just below it and closes the menu), **Heal the
   party**, and **Close**. Up and Down choose; Cancel goes back. F1 again closes it.
+- **Live editing**: once a second the game reads again what changed in `assets/` while it
+  plays (`Runtime::reload_changed()`, `plan/02` N2): pictures and sprite sheets (saved in
+  Sprite Studio, or imported from Aseprite) show at once, and data tables and translations
+  are read again. Logic and scenes still need the game started again.
 - **F3** shows how long frames take, in plain language (`plan/02` N5): frames a second,
   milliseconds of logic and of drawing, how much of a 60-a-second frame that is (*plenty
   of room*, *close to the limit*, or, in red, *too slow, it will stutter*), and how many

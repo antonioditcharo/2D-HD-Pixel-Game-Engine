@@ -257,6 +257,10 @@ public:
     /// The title screen or pause menu, open or not.
     [[nodiscard]] const GameMenu& menu() const noexcept;
     [[nodiscard]] const DebugMenu& debug_menu() const noexcept;
+    /// Reads again what changed in assets/ while playing: pictures, sprite sheets, data
+    /// tables and translations. Done once a second when testing from the editor. Returns
+    /// how many files changed.
+    std::size_t reload_changed();
     /// The battle being fought, if any.
     [[nodiscard]] const BattleScreen* battle_screen() const noexcept;
     [[nodiscard]] DialogueObject& dialogue() noexcept;

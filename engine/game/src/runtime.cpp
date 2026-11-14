@@ -1197,6 +1197,11 @@ void Runtime::step() {
         }
     }
 
+    // Testing from the editor: once a second, files changed while playing (pictures saved in
+    // Sprite Studio or Aseprite, tables, translations) are read again.
+    if (r.debug && r.steps % 60 == 59) {
+        reload_changed();
+    }
     // Testing from the editor: F1 opens and closes the debug menu, F3 the timings.
     if (r.debug) {
         for (const input::Binding binding : r.state.pressed_bindings()) {
@@ -2701,6 +2706,25 @@ void Runtime::footsteps(double walked, std::array<double, 2> at) {
         const std::array<double, 3> pitches{1.0, 0.94, 1.06};
         r.audio_object.play_voice(sound, pitches.at(r.steps_taken++ % pitches.size()));
     }
+}
+
+std::size_t Runtime::reload_changed() {
+    Impl& r = *impl_;
+    const assets::AssetChanges changes = r.assets.refresh();
+    if (changes.empty()) {
+        return 0;
+    }
+    if (r.textures != nullptr) {
+        r.textures->apply(changes);
+    }
+    if (r.sheets != nullptr) {
+        r.sheets->apply(changes);
+    }
+    r.tables.forget(); // read again on next use
+    r.translations = Translations(r.tables.find(translations_table));
+    apply_options();
+    return changes.added.size() + changes.modified.size() + changes.moved.size() +
+           changes.removed.size();
 }
 
 void Runtime::save_achievements() {

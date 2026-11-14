@@ -4396,3 +4396,35 @@ TEST_CASE("Footsteps sound as the player walks, from the ground under their feet
     CHECK(heard); // 4 tiles a second: a step every 0.5 tiles, on the ground's chime
     CHECK(runtime->problems().empty());
 }
+
+TEST_CASE("While testing, files changed during play are read again") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->language = "fr";
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+    }
+    game::RuntimeOptions options = no_graphics(nullptr);
+    options.debug = true;
+    const auto runtime = project.open(options);
+    runtime->step();
+    CHECK(runtime->reload_changed() == 0); // nothing changed yet
+    // A translation saved while the game runs.
+    game::Table table;
+    table.columns = {{"source", game::ColumnKind::Text}, {"fr", game::ColumnKind::Text}};
+    table.rows.push_back(
+        {game::translation_key("Hello"), {{"source", "Hello"}, {"fr", "Bonjour"}}});
+    std::filesystem::create_directories(project.folder.path / "assets/data");
+    std::ofstream(project.folder.path / "assets/data/translations.dtable", std::ios::binary)
+        << game::table_to_text(table);
+    CHECK(runtime->reload_changed() > 0);
+    runtime->dialogue().say("Hello");
+    REQUIRE(runtime->dialogue().current() != nullptr);
+    CHECK(*runtime->dialogue().current() == "Bonjour");
+}
