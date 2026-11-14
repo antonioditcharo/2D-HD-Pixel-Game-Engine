@@ -80,6 +80,9 @@ In the game:
 
 - **The player stands still** while a message is open. Movement and physics see no
   controls held, so the hero stops walking and pushes nothing.
+- **Opening.** When a message shows after none, the box opens over a tenth of a second,
+  growing from its middle line as it fades in, as RPG windows open; its words come once it
+  is open (`plan/02` K7). Messages one after another do not open it again.
 - **Which button goes on.** Once a page is all shown (and it is not a question's answers),
   the button that turns it blinks on the box's bottom edge, named for the device the player
   used last: *[Z]* on a keyboard, *[Pad A]* after a gamepad (`InputState::prompt()`,

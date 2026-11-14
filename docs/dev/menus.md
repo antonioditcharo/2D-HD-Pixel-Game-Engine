@@ -62,6 +62,9 @@ They are kept at once in `options.json` beside the save slots (volumes, text spe
 each action's key codes), and read back when the game starts; a broken or missing file
 keeps the defaults.
 
+The title screen and the pause menu fade in over an eighth of a second when they open
+(`plan/02` K7); moving between pages does not fade.
+
 ### The look of menus and messages
 
 The Project view's **Menus and messages** group chooses the colours every ready-made box

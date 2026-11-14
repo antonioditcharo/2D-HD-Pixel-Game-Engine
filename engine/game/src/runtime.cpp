@@ -817,6 +817,7 @@ struct Runtime::Impl {
     double typing_wait = 0.0; ///< Seconds a [pause] still holds typing.
     std::size_t pauses_done = 0;
     double message_seconds = 0.0; ///< How long it has shown, for waves and shakes.
+    double box_seconds = 0.0;     ///< How long the message box has been open, to open it.
     std::size_t blipped = 0;      ///< Bytes of rich.plain the voice has gone past.
     std::size_t letters = 0;      ///< Letters (not spaces) typed, for every other blip.
     /// Every speaker of the project's conversations, by name: how Rules' "{speaker} says"
@@ -1151,6 +1152,10 @@ void Runtime::step() {
     } else if (r.window != nullptr) {
         r.keep_running = input::pump_events(r.state) && r.keep_running;
     }
+
+    r.menu.advance(r.clock.step_seconds());
+    // The message box opens over a moment, the first time a message shows after none.
+    r.box_seconds = r.dialogue.is_open() ? r.box_seconds + r.clock.step_seconds() : 0.0;
 
     // Ducking: the music eases down while a message shows, and back up after (a quarter of
     // a second either way).
@@ -1848,6 +1853,25 @@ bool Runtime::draw() {
             *message == r.typing_for ? static_cast<std::size_t>(r.typed) : rich.plain.size();
         r.sprites->begin_over(*r.target);
         const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
+        // Opening (a tenth of a second): the box grows from its middle line, fading in;
+        // its words come once it is open, as RPG windows open.
+        if (constexpr double opening = 0.1; r.box_seconds < opening) {
+            const auto open = static_cast<float>(std::clamp(r.box_seconds / opening, 0.0, 1.0));
+            const float h = std::max(2.0F, std::floor(box.height * open));
+            const float y = std::floor(box.y + ((box.height - h) / 2.0F));
+            const auto faded = [open](render::Color c) {
+                c.a = static_cast<std::uint8_t>(static_cast<float>(c.a) * open);
+                return c;
+            };
+            r.sprites->draw(*r.white, one, render::Rect{box.x, y, box.width, h},
+                            faded(r.settings.ui.border));
+            r.sprites->draw(
+                *r.white, one,
+                render::Rect{box.x + 1.0F, y + 1.0F, box.width - 2.0F, std::max(0.0F, h - 2.0F)},
+                faded(r.settings.ui.box));
+            static_cast<void>(r.sprites->end());
+            return true;
+        }
         r.sprites->draw(*r.white, one, render::Rect{box.x, box.y, box.width, box.height},
                         r.settings.ui.border);
         r.sprites->draw(

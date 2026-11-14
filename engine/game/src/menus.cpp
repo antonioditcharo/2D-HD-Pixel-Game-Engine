@@ -52,6 +52,7 @@ std::vector<std::string> menu_words() {
 }
 
 void GameMenu::open_title() {
+    open_seconds_ = 0.0;
     page_ = Page::Title;
     from_title_ = true;
     cursor_ = 0;
@@ -59,6 +60,7 @@ void GameMenu::open_title() {
 }
 
 void GameMenu::open_pause() {
+    open_seconds_ = 0.0;
     page_ = Page::Pause;
     from_title_ = false;
     cursor_ = 0;
@@ -556,12 +558,18 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
     const render::Color text = ui.text;
     const render::Color dim = ui.dim;
     const render::Color gold = ui.highlight;
+    // Opening, the menu fades in over an eighth of a second.
+    const auto appear = static_cast<float>(std::clamp(open_seconds_ / 0.125, 0.0, 1.0));
+    const auto fade = [appear](render::Color c) {
+        c.a = static_cast<std::uint8_t>(static_cast<float>(c.a) * appear);
+        return c;
+    };
     const auto box = [&](float x, float y, float bw, float bh) {
-        sprites.draw(white, one, render::Rect{x, y, bw, bh}, ui.border);
-        sprites.draw(white, one, render::Rect{x + 1, y + 1, bw - 2, bh - 2}, ui.box);
+        sprites.draw(white, one, render::Rect{x, y, bw, bh}, fade(ui.border));
+        sprites.draw(white, one, render::Rect{x + 1, y + 1, bw - 2, bh - 2}, fade(ui.box));
     };
     const auto write = [&](const std::string& words, float x, float y, render::Color colour) {
-        ui::draw_text(sprites, atlas, font, words, x, y, colour);
+        ui::draw_text(sprites, atlas, font, words, x, y, fade(colour));
     };
     const auto list = [&](const std::vector<std::string>& items, float x, float y, float bw) {
         const float bh =
@@ -576,7 +584,7 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
     sprites.begin_over(surface);
     sprites.draw(
         white, one, render::Rect{0, 0, w, h},
-        render::Color{0, 0, 10, static_cast<std::uint8_t>(page_ == Page::Title ? 120 : 150)});
+        fade(render::Color{0, 0, 10, static_cast<std::uint8_t>(page_ == Page::Title ? 120 : 150)}));
     const std::vector<std::string> items = choices(saves);
     if (page_ == Page::Title || (page_ == Page::Load && from_title_)) {
         // The game's name, in the upper third, and the choices below it, centred.
@@ -584,7 +592,7 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
         const int big = static_cast<float>(ui::measure(font, title) * 2) <= w - 8.0F ? 2 : 1;
         const float tw = static_cast<float>(ui::measure(font, title) * big);
         ui::draw_text(sprites, atlas, font, title, std::floor((w - tw) / 2.0F),
-                      std::floor(h * 0.25F), gold, big);
+                      std::floor(h * 0.25F), fade(gold), big);
         const float bw = 80.0F;
         list(items, std::floor((w - bw) / 2.0F), std::floor(h * 0.5F), bw);
     } else {

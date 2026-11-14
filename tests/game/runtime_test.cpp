@@ -1476,6 +1476,9 @@ TEST_CASE("The message box is drawn over the game") {
     CHECK(game::emit(runtime->vm(), runtime->world(), runtime->world().find_named("elder").at(0),
                      "interacted", by));
     REQUIRE(runtime->dialogue().is_open());
+    for (int i = 0; i < 8; ++i) {
+        runtime->step(); // the box opens over a tenth of a second
+    }
     REQUIRE(runtime->draw());
     const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
     // In a 32 x 32 game the box holds one line: 18 high, from (4, 10) to (28, 28).
@@ -1638,6 +1641,9 @@ TEST_CASE("A question's answers are drawn above the message") {
     options.headless = true;
     const auto runtime = project.open(options);
     runtime->dialogue().ask("Go?", "Yes|No");
+    for (int i = 0; i < 8; ++i) {
+        runtime->step(); // the box opens over a tenth of a second
+    }
     REQUIRE(runtime->draw());
     const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
     // The message box: one line, from y = 42 to 60. Two answers: 27 high, ending 2 above
@@ -1869,6 +1875,9 @@ TEST_CASE("The project's look: read and written, checked, and applied under the 
     CHECK((near(hero, doubled(hero_colour)) || near(hero, doubled(rock_colour))));
     CHECK(near(pixel(pixels, 32, 0, 0), doubled(background)));
     runtime->dialogue().say("Hi");
+    for (int i = 0; i < 8; ++i) {
+        runtime->step(); // the box opens over a tenth of a second
+    }
     REQUIRE(runtime->draw());
     pixels = runtime->target()->read_pixels();
     CHECK(pixel(pixels, 32, 4, 10) == render::Color{230, 232, 240, 255}); // the box's border
@@ -2907,22 +2916,22 @@ TEST_CASE("The title screen and the pause menu are drawn over the game") {
     settings["height"] = 180;
     write_json(project.folder.path / game::project_file, settings);
     input::Recording replay;
-    replay.record(3, key(input::Key::Z), true); // New game
-    replay.record(4, key(input::Key::Z), false);
-    replay.record(6, key(input::Key::Escape), true); // the pause menu
-    replay.record(7, key(input::Key::Escape), false);
-    replay.record(9, key(input::Key::Down), true); // Items
-    replay.record(10, key(input::Key::Down), false);
-    replay.record(12, key(input::Key::Z), true);
-    replay.record(13, key(input::Key::Z), false);
-    replay.record(16, key(input::Key::X), true); // back to the pause menu
-    replay.record(17, key(input::Key::X), false);
+    replay.record(11, key(input::Key::Z), true); // New game
+    replay.record(12, key(input::Key::Z), false);
+    replay.record(14, key(input::Key::Escape), true); // the pause menu
+    replay.record(15, key(input::Key::Escape), false);
+    replay.record(17, key(input::Key::Down), true); // Items
+    replay.record(18, key(input::Key::Down), false);
+    replay.record(20, key(input::Key::Z), true);
+    replay.record(21, key(input::Key::Z), false);
+    replay.record(24, key(input::Key::X), true); // back to the pause menu
+    replay.record(25, key(input::Key::X), false);
     for (std::uint64_t s = 0; s < 5; ++s) { // to Options
-        replay.record(19 + (s * 3), key(input::Key::Down), true);
-        replay.record(20 + (s * 3), key(input::Key::Down), false);
+        replay.record(27 + (s * 3), key(input::Key::Down), true);
+        replay.record(28 + (s * 3), key(input::Key::Down), false);
     }
-    replay.record(34, key(input::Key::Z), true);
-    replay.record(35, key(input::Key::Z), false);
+    replay.record(42, key(input::Key::Z), true);
+    replay.record(43, key(input::Key::Z), false);
     game::RuntimeOptions options;
     options.headless = true;
     options.replay = &replay;
@@ -2942,7 +2951,9 @@ TEST_CASE("The title screen and the pause menu are drawn over the game") {
             .write(reinterpret_cast<const char*>(png.data()), // NOLINT
                    static_cast<std::streamsize>(png.size()));
     };
-    runtime->step();
+    for (int i = 0; i < 9; ++i) {
+        runtime->step(); // the title fades in
+    }
     shot("sparxel-title.png");
     for (int i = 0; i < 14; ++i) {
         runtime->step();
@@ -4075,7 +4086,9 @@ TEST_CASE("The look of menus and messages: colours read, saved, and drawn") {
     options.headless = true;
     const auto runtime = project.open(options);
     REQUIRE(runtime->target() != nullptr);
-    runtime->step();
+    for (int i = 0; i < 8; ++i) {
+        runtime->step(); // the box opens over a tenth of a second
+    }
     REQUIRE(runtime->draw());
     const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
     {

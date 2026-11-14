@@ -91,6 +91,8 @@ public:
     void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
     void open_title();
     void open_pause();
+    /// Time passing, for opening: the menu fades in.
+    void advance(double seconds) noexcept { open_seconds_ += seconds; }
     void close() noexcept { page_ = Page::None; }
     [[nodiscard]] bool open() const noexcept { return page_ != Page::None; }
     [[nodiscard]] Page page() const noexcept { return page_; }
@@ -137,6 +139,7 @@ private:
     const Translations* translations_ = nullptr;
     [[nodiscard]] const UiTheme& theme() const noexcept;
     const UiTheme* theme_ = nullptr;
+    double open_seconds_ = 1.0; ///< Since it opened.
     PartyObject* party_ = nullptr;
     const TablesObject* tables_ = nullptr;
     InventoryObject* inventory_ = nullptr;
