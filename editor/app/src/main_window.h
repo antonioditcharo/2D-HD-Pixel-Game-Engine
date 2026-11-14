@@ -155,6 +155,9 @@ public:
     /// Saves, then renames the asset at `asset` (with its companions) to `name`, updating
     /// what names it, and opens the project again. False, saying why, if it cannot.
     bool rename_asset(const QString& asset, const QString& name);
+    /// Puts entity under `parent` (or at the top, for an invalid one), as the outliner's
+    /// right-click menu does. False, saying why, if it cannot.
+    bool put_under(engine::Guid entity, engine::Guid parent);
     /// Makes a conversation as assets/talk/<name>.dtalk, with one node, and opens it.
     StoryWindow* new_story(const QString& name);
     /// Opens a data table of the project (its path in assets/, a .dtable), or brings its

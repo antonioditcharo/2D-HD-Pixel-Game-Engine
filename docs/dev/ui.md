@@ -191,6 +191,19 @@ menus or battles.
 | **Screen Bar** (`screen_bar`) | *Value* and *Most* (each a value in braces or a number), filled that far in its *Colour* (`#rrggbb`) inside a frame in the look's colours, its *Place*, *X*, *Y*, *Width*, *Height* and *Visible* |
 | **Screen Picture** (`screen_picture`) | A *Picture* (an icon, a portrait, a panel), its *Place*, *X* and *Y*, *Width* and *Height* (0 keeps the picture's own), *Frame edge* and *Opacity* (0 to 1). Pictures are drawn under the bars and words, so a panel can sit behind them |
 
+**Layouts.** A **Screen Layout** on an object lines up the Screen Text, Bars and Pictures
+of the objects under it, in the order they are listed: **Down** (one under another: a
+party's names and HP bars), **Across** (side by side: hearts, icons) or **Grid** (rows of
+*Columns*, each cell as large as the largest, things centred in it), *Spacing* pixels
+apart. The block is fixed to the screen by the layout's own *Place*, *X* and *Y*; in a
+column, things line up on the side of its Place (on the right for a layout on the right),
+and in a row likewise. The children's own Places are not used, and one hidden is left out
+(the rest close up); a hidden layout hides them all. Put an object under another with a
+right-click in the Entities list, *Put under ▸* (or *Put at the top*), one undo step. In
+the scene view, clicking one of a layout's things selects the layout, and dragging moves
+it. (`ScreenLayout`, `lay_out()` and `screen_place()` in `engine/game/hud.h`, shared by
+the game and the editor.)
+
 **Frames that stretch (9-slice).** With a *Frame edge* of, say, 2, a picture's outer two
 pixels on each side are drawn as they are while the middle stretches to the *Width* and
 *Height*: an 8-pixel frame makes a panel of any size whose corners and rim stay crisp,
@@ -226,5 +239,5 @@ like any other property.
 1. **Vector fonts** through FreeType and HarfBuzz (ADR-010), with fallbacks per language
    (feature G7); pixel fonts from a picture are done (§2). The editor's scene view still
    shows Screen Text in the system's font.
-2. **Layouts for on-screen elements:** stacks and grids that place Screen Text, Bars and
-   Pictures together, so a party's HP bars line up by themselves (feature K1).
+2. **Layouts, further:** layouts inside layouts, and a list made from a table's rows (a
+   party's members, the items carried) without one object per row (feature K1).

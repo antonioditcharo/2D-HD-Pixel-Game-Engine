@@ -2469,3 +2469,49 @@ TEST_CASE("On-screen elements: clicked to select, dragged from their Place, in o
     std::error_code ignored;
     fs::remove_all(folder, ignored);
 }
+
+TEST_CASE("Screen Layouts in the editor: children put under it, stacked, dragged as one") {
+    Editor e;
+    editor::Document& d = *e.window.document();
+    const reflect::TypeInfo* layout_type = d.registry().find_type<game::ScreenLayout>();
+    const reflect::TypeInfo* bar_type = d.registry().find_type<game::ScreenBar>();
+    REQUIRE(layout_type != nullptr);
+    REQUIRE(bar_type != nullptr);
+    const Guid party = d.create_entity("party", 0.0, 0.0);
+    REQUIRE(d.add_component(party, *layout_type));
+    std::vector<Guid> bars;
+    for (const char* name : {"hp_one", "hp_two"}) {
+        const Guid bar = d.create_entity(name, 0.0, 0.0);
+        REQUIRE(d.add_component(bar, *bar_type));
+        REQUIRE(e.window.put_under(bar, party));
+        bars.push_back(bar);
+    }
+    CHECK(d.undo_label() == "Put hp_two under party");
+    CHECK_FALSE(e.window.put_under(party, bars[0])); // not under its own child
+    e.window.scene_view()->refresh();
+    static_cast<void>(e.window.scene_view()->grab());
+    // Both bars, one under the other, each clicked as the layout.
+    std::vector<QRectF> at;
+    for (const editor::SceneView::HudItem& item : e.window.scene_view()->hud_items()) {
+        if (item.entity == party) {
+            at.push_back(item.at);
+        }
+    }
+    REQUIRE(at.size() == 2);
+    CHECK(at[0].left() == at[1].left());
+    CHECK(at[1].top() > at[0].bottom());
+    // Dragging one moves the layout.
+    const QPoint on = at[1].center().toPoint();
+    editor::SceneView* view = e.window.scene_view();
+    const int s = static_cast<int>(std::lround(at[0].width() / 50.0));
+    REQUIRE(s >= 1);
+    mouse(view, QEvent::MouseButtonPress, on, Qt::LeftButton);
+    mouse(view, QEvent::MouseMove, on + QPoint(10 * s, 0), Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, on + QPoint(10 * s, 0), Qt::LeftButton);
+    CHECK(e.window.selection() == party);
+    CHECK(d.world().get<game::ScreenLayout>(d.world().find(party))->x == 14.0);
+    // Undo, twice: the drag, then the second bar back at the top.
+    e.window.undo();
+    e.window.undo();
+    CHECK_FALSE(d.world().parent(d.world().find(bars[1])).is_valid());
+}

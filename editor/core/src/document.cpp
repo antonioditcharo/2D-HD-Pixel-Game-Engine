@@ -1744,6 +1744,24 @@ bool Document::rename(Guid entity, std::string_view name) {
     return true;
 }
 
+bool Document::set_parent(Guid entity, Guid parent) {
+    Impl& d = *impl_;
+    const world::Entity e = d.find(entity);
+    const world::Entity p = parent.is_valid() ? d.find(parent) : world::Entity{};
+    if (!e.is_valid() || (parent.is_valid() && !p.is_valid()) || d.world->parent(e) == p) {
+        return false;
+    }
+    const std::string label = parent.is_valid()
+                                  ? "Put " + d.name_of(entity) + " under " + d.name_of(parent)
+                                  : "Put " + d.name_of(entity) + " at the top";
+    serialize::Json before = d.snapshot();
+    if (!d.world->set_parent(e, p)) {
+        return false;
+    }
+    d.record(label, std::move(before));
+    return true;
+}
+
 bool Document::rename_many(const std::vector<Guid>& entities, std::string_view base) {
     Impl& d = *impl_;
     if (base.empty()) {

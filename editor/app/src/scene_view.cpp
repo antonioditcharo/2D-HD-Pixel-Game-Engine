@@ -14,9 +14,13 @@
 #include <QPen>
 #include <QUrl>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace editor {
 
@@ -273,9 +277,95 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
         const double py = row == 0 ? y : row == 1 ? std::floor((sh - h) / 2.0) + y : sh - h - y;
         return QRectF(origin_at.x() + (px * s), origin_at.y() + (py * s), w * s, h * s);
     };
+    QFont font = painter.font();
+    font.setPixelSize(std::max(8, 7 * s));
+    // Hard-edged, as the game's pixel font is.
+    font.setStyleStrategy(QFont::NoAntialias);
+    painter.setFont(font);
+    const QFontMetricsF metrics(font);
+
+    // Screen Layouts: where their children's elements go (engine/game/hud.h's lay_out(), as
+    // the game places them), or that they are hidden. Such an element is clicked and
+    // dragged as its layout.
+    const auto size_of = [&](engine::world::Entity e) -> std::optional<std::array<float, 2>> {
+        if (const auto* picture = world.get<engine::game::ScreenPicture>(e);
+            picture != nullptr && picture->visible) {
+            const QImage source = hud_picture(picture->image);
+            if (!source.isNull()) {
+                return std::array<float, 2>{
+                    static_cast<float>(picture->width > 0.0 ? picture->width : source.width()),
+                    static_cast<float>(picture->height > 0.0 ? picture->height : source.height())};
+            }
+        }
+        if (const auto* bar = world.get<engine::game::ScreenBar>(e);
+            bar != nullptr && bar->visible) {
+            return std::array<float, 2>{static_cast<float>(bar->width + 2.0),
+                                        static_cast<float>(bar->height + 2.0)};
+        }
+        if (const auto* label = world.get<engine::game::ScreenText>(e);
+            label != nullptr && label->visible) {
+            const QString words =
+                QString::fromUtf8(label->text.data(), static_cast<qsizetype>(label->text.size()));
+            const double size = label->size >= 2 ? 2.0 : 1.0;
+            return std::array<float, 2>{
+                static_cast<float>(metrics.horizontalAdvance(words) * size / s),
+                static_cast<float>(9.0 * size)};
+        }
+        return std::nullopt;
+    };
+    struct Laid {
+        std::array<float, 2> at;
+        engine::world::Entity layout;
+    };
+    std::unordered_map<std::uint64_t, Laid> laid;
+    std::unordered_set<std::uint64_t> hidden;
+    const auto* layout_type = world.registry().find_type<engine::game::ScreenLayout>();
+    if (layout_type != nullptr) {
+        world.each(*layout_type, [&](engine::world::Entity e, engine::reflect::ObjectRef ref) {
+            const auto* layout = ref.as<engine::game::ScreenLayout>();
+            if (layout == nullptr) {
+                return;
+            }
+            std::vector<std::uint64_t> members;
+            std::vector<std::array<float, 2>> sizes;
+            for (const engine::world::Entity child : world.children(e)) {
+                if (!layout->visible) {
+                    hidden.insert(child.id);
+                } else if (const std::optional<std::array<float, 2>> size = size_of(child)) {
+                    members.push_back(child.id);
+                    sizes.push_back(*size);
+                }
+            }
+            const std::vector<std::array<float, 2>> at = engine::game::lay_out(
+                *layout, sizes, static_cast<float>(sw), static_cast<float>(sh));
+            for (std::size_t i = 0; i < members.size(); ++i) {
+                laid[members[i]] = Laid{at[i], e};
+            }
+        });
+    }
+    // Where an element is drawn, and remembered for clicking: by its layout, if it has one.
+    const auto position = [&](engine::world::Entity e, const engine::reflect::TypeInfo* type,
+                              engine::game::ScreenAnchor anchor, double x, double y, double w,
+                              double h) {
+        if (const auto found = laid.find(e.id); found != laid.end()) {
+            const QRectF at(origin_at.x() + (static_cast<double>(found->second.at[0]) * s),
+                            origin_at.y() + (static_cast<double>(found->second.at[1]) * s), w * s,
+                            h * s);
+            const auto* layout = world.get<engine::game::ScreenLayout>(found->second.layout);
+            remember(found->second.layout, layout_type, at, layout->anchor, layout->x, layout->y);
+            return at;
+        }
+        const QRectF at = place(anchor, x, y, w, h);
+        remember(e, type, at, anchor, x, y);
+        return at;
+    };
+
     // Screen Pictures first, under the bars and words, as the game draws them.
     if (const auto* type = world.registry().find_type<engine::game::ScreenPicture>()) {
         world.each(*type, [&](engine::world::Entity e, engine::reflect::ObjectRef ref) {
+            if (hidden.contains(e.id)) {
+                return;
+            }
             const auto* picture = ref.as<engine::game::ScreenPicture>();
             if (picture == nullptr || !picture->visible) {
                 return;
@@ -288,8 +378,7 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
             const auto ph = static_cast<float>(source.height());
             const double w = picture->width > 0.0 ? picture->width : pw;
             const double h = picture->height > 0.0 ? picture->height : ph;
-            const QRectF at = place(picture->anchor, picture->x, picture->y, w, h);
-            remember(e, type, at, picture->anchor, picture->x, picture->y);
+            const QRectF at = position(e, type, picture->anchor, picture->x, picture->y, w, h);
             painter.save();
             painter.setOpacity(std::clamp(picture->opacity, 0.0, 1.0));
             // The same pieces as the game's (engine/game/hud.h), in screen pixels.
@@ -308,14 +397,11 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
             painter.restore();
         });
     }
-    QFont font = painter.font();
-    font.setPixelSize(std::max(8, 7 * s));
-    // Hard-edged, as the game's pixel font is.
-    font.setStyleStrategy(QFont::NoAntialias);
-    painter.setFont(font);
-    const QFontMetricsF metrics(font);
     if (const auto* type = world.registry().find_type<engine::game::ScreenText>()) {
         world.each(*type, [&](engine::world::Entity e, engine::reflect::ObjectRef ref) {
+            if (hidden.contains(e.id)) {
+                return;
+            }
             const auto* label = ref.as<engine::game::ScreenText>();
             if (label == nullptr || !label->visible) {
                 return;
@@ -323,9 +409,8 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
             const QString words =
                 QString::fromUtf8(label->text.data(), static_cast<qsizetype>(label->text.size()));
             const double size = label->size >= 2 ? 2.0 : 1.0;
-            const QRectF at = place(label->anchor, label->x, label->y,
-                                    metrics.horizontalAdvance(words) * size / s, 9.0 * size);
-            remember(e, type, at, label->anchor, label->x, label->y);
+            const QRectF at = position(e, type, label->anchor, label->x, label->y,
+                                       metrics.horizontalAdvance(words) * size / s, 9.0 * size);
             painter.setPen(QColor(0, 0, 0, 180));
             painter.drawText(at.translated(s, s), Qt::AlignLeft | Qt::AlignVCenter, words);
             painter.setPen(Qt::white);
@@ -334,13 +419,15 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
     }
     if (const auto* type = world.registry().find_type<engine::game::ScreenBar>()) {
         world.each(*type, [&](engine::world::Entity e, engine::reflect::ObjectRef ref) {
+            if (hidden.contains(e.id)) {
+                return;
+            }
             const auto* bar = ref.as<engine::game::ScreenBar>();
             if (bar == nullptr || !bar->visible) {
                 return;
             }
             const QRectF at =
-                place(bar->anchor, bar->x, bar->y, bar->width + 2.0, bar->height + 2.0);
-            remember(e, type, at, bar->anchor, bar->x, bar->y);
+                position(e, type, bar->anchor, bar->x, bar->y, bar->width + 2.0, bar->height + 2.0);
             painter.fillRect(at, QColor(230, 232, 240));
             const QRectF inside = at.adjusted(s, s, -s, -s);
             painter.fillRect(inside, QColor(18, 20, 40));

@@ -1,6 +1,7 @@
 #include "engine/game/hud.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace engine::game {
 
@@ -68,6 +69,81 @@ std::vector<SlicePiece> nine_slice(float width, float height, render::Rect desti
     return pieces;
 }
 
+std::array<float, 2> screen_place(ScreenAnchor anchor, double x, double y, float w, float h,
+                                  float screen_w, float screen_h) {
+    const auto column = static_cast<int>(anchor) % 3;
+    const auto row = static_cast<int>(anchor) / 3;
+    const auto fx = static_cast<float>(x);
+    const auto fy = static_cast<float>(y);
+    const float px = column == 0   ? fx
+                     : column == 1 ? std::floor((screen_w - w) / 2.0F) + fx
+                                   : screen_w - w - fx;
+    const float py = row == 0   ? fy
+                     : row == 1 ? std::floor((screen_h - h) / 2.0F) + fy
+                                : screen_h - h - fy;
+    return {std::floor(px), std::floor(py)};
+}
+
+std::vector<std::array<float, 2>> lay_out(const ScreenLayout& layout,
+                                          const std::vector<std::array<float, 2>>& sizes,
+                                          float screen_w, float screen_h) {
+    std::vector<std::array<float, 2>> at(sizes.size(), std::array<float, 2>{0.0F, 0.0F});
+    if (sizes.empty()) {
+        return at;
+    }
+    const float gap = std::max(0.0F, static_cast<float>(layout.spacing));
+    float widest = 0.0F;
+    float tallest = 0.0F;
+    for (const auto& [w, h] : sizes) {
+        widest = std::max(widest, w);
+        tallest = std::max(tallest, h);
+    }
+    const auto column_side = static_cast<int>(layout.anchor) % 3;
+    const auto row_side = static_cast<int>(layout.anchor) / 3;
+    // Within the block, a thing lines up with the block's side on its Place.
+    const auto align = [](int side, float room, float size) {
+        return side == 0 ? 0.0F : side == 1 ? std::floor((room - size) / 2.0F) : room - size;
+    };
+    float block_w = 0.0F;
+    float block_h = 0.0F;
+    if (layout.direction == LayoutDirection::Grid) {
+        const auto columns = static_cast<std::size_t>(std::max<std::int64_t>(layout.columns, 1));
+        const std::size_t rows = (sizes.size() + columns - 1) / columns;
+        const std::size_t used = std::min(columns, sizes.size());
+        block_w = (static_cast<float>(used) * (widest + gap)) - gap;
+        block_h = (static_cast<float>(rows) * (tallest + gap)) - gap;
+        for (std::size_t i = 0; i < sizes.size(); ++i) {
+            const std::size_t column = i % columns;
+            const std::size_t row = i / columns; // whole rows: the integer division is meant
+            at[i] = {(static_cast<float>(column) * (widest + gap)) + align(1, widest, sizes[i][0]),
+                     (static_cast<float>(row) * (tallest + gap)) + align(1, tallest, sizes[i][1])};
+        }
+    } else if (layout.direction == LayoutDirection::Across) {
+        float x = 0.0F;
+        for (std::size_t i = 0; i < sizes.size(); ++i) {
+            at[i] = {x, align(row_side, tallest, sizes[i][1])};
+            x += sizes[i][0] + gap;
+        }
+        block_w = x - gap;
+        block_h = tallest;
+    } else {
+        float y = 0.0F;
+        for (std::size_t i = 0; i < sizes.size(); ++i) {
+            at[i] = {align(column_side, widest, sizes[i][0]), y};
+            y += sizes[i][1] + gap;
+        }
+        block_w = widest;
+        block_h = y - gap;
+    }
+    const auto [left, top] =
+        screen_place(layout.anchor, layout.x, layout.y, block_w, block_h, screen_w, screen_h);
+    for (auto& [x, y] : at) {
+        x = std::floor(left + x);
+        y = std::floor(top + y);
+    }
+    return at;
+}
+
 void register_hud(reflect::Registry& registry) {
     registry.add_choice_list<ScreenAnchor>("screen_anchor")
         .display_name("Place on the screen")
@@ -125,6 +201,36 @@ void register_hud(reflect::Registry& registry) {
     bar.property<&ScreenBar::color>("color").display_name("Colour").tooltip(
         "The fill, as #rrggbb.");
     bar.property<&ScreenBar::visible>("visible").tooltip("Hidden, for logic to show later.");
+    registry.add_choice_list<LayoutDirection>("layout_direction")
+        .display_name("Direction")
+        .entry(LayoutDirection::Down, "down")
+        .entry(LayoutDirection::Across, "across")
+        .entry(LayoutDirection::Grid, "grid");
+    auto layout = registry.add_type<ScreenLayout>("screen_layout")
+                      .display_name("Screen Layout")
+                      .category("Interface")
+                      .tooltip("Lines up the Screen Text, Bars and Pictures of the objects "
+                               "under it: one under another, side by side, or in a grid.");
+    layout.property<&ScreenLayout::anchor>("anchor").display_name("Place").tooltip(
+        "The corner, side or middle of the screen the block is fixed to.");
+    layout.property<&ScreenLayout::x>("x")
+        .range(-1000.0, 1000.0)
+        .step(1.0)
+        .tooltip("Pixels in from the place's side.");
+    layout.property<&ScreenLayout::y>("y")
+        .range(-1000.0, 1000.0)
+        .step(1.0)
+        .tooltip("Pixels in from the place's top or bottom.");
+    layout.property<&ScreenLayout::direction>("direction")
+        .tooltip("Down: one under another. Across: side by side. Grid: in rows.");
+    layout.property<&ScreenLayout::spacing>("spacing")
+        .range(0.0, 100.0)
+        .step(1.0)
+        .tooltip("Pixels between them.");
+    layout.property<&ScreenLayout::columns>("columns").range(1, 64).tooltip(
+        "For a grid: how many in a row.");
+    layout.property<&ScreenLayout::visible>("visible").tooltip(
+        "Hidden, with everything under it, for logic to show later.");
     auto picture = registry.add_type<ScreenPicture>("screen_picture")
                        .display_name("Screen Picture")
                        .category("Interface")
@@ -166,7 +272,8 @@ bool register_hud_components(world::World& world) {
     const bool text = world.register_component<ScreenText>();
     const bool bar = world.register_component<ScreenBar>();
     const bool picture = world.register_component<ScreenPicture>();
-    return text && bar && picture;
+    const bool layout = world.register_component<ScreenLayout>();
+    return text && bar && picture && layout;
 }
 
 } // namespace engine::game

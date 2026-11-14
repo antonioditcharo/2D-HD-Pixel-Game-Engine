@@ -22,6 +22,8 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 
@@ -2992,15 +2994,7 @@ void Runtime::draw_hud() {
     const auto sh = static_cast<float>(r.target->height());
     // Where a thing of w x h pixels goes for `anchor`, `x` and `y` in from it.
     const auto place = [&](ScreenAnchor anchor, double x, double y, float w, float h) {
-        const auto column = static_cast<int>(anchor) % 3;
-        const auto row = static_cast<int>(anchor) / 3;
-        const float px = column == 0   ? static_cast<float>(x)
-                         : column == 1 ? std::floor((sw - w) / 2.0F) + static_cast<float>(x)
-                                       : sw - w - static_cast<float>(x);
-        const float py = row == 0   ? static_cast<float>(y)
-                         : row == 1 ? std::floor((sh - h) / 2.0F) + static_cast<float>(y)
-                                    : sh - h - static_cast<float>(y);
-        return std::array<float, 2>{std::floor(px), std::floor(py)};
+        return screen_place(anchor, x, y, w, h, sw, sh);
     };
     const auto fill = [this](const std::string& text) {
         return fill_values(text, [this](std::string_view name) { return hud_value(name); });
@@ -3013,10 +3007,72 @@ void Runtime::draw_hud() {
         }
     };
     const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
+
+    // Screen Layouts first: where their children's elements go, or that they are hidden.
+    // An element's size, as drawn below: a picture's, a bar's with its frame, words'.
+    const auto picture_texture = [&r](const ScreenPicture& picture) -> const render::Texture* {
+        const std::optional<Guid> guid =
+            picture.visible ? Guid::parse(picture.image) : std::nullopt;
+        return guid && r.textures != nullptr ? r.textures->get(*guid) : nullptr;
+    };
+    const auto size_of = [&](world::Entity e) -> std::optional<std::array<float, 2>> {
+        if (const auto* picture = r.world->get<ScreenPicture>(e)) {
+            if (const render::Texture* texture = picture_texture(*picture)) {
+                return std::array<float, 2>{
+                    picture->width > 0.0 ? static_cast<float>(picture->width)
+                                         : static_cast<float>(texture->width()),
+                    picture->height > 0.0 ? static_cast<float>(picture->height)
+                                          : static_cast<float>(texture->height())};
+            }
+        }
+        if (const auto* bar = r.world->get<ScreenBar>(e); bar != nullptr && bar->visible) {
+            return std::array<float, 2>{static_cast<float>(bar->width) + 2.0F,
+                                        static_cast<float>(bar->height) + 2.0F};
+        }
+        if (const auto* label = r.world->get<ScreenText>(e); label != nullptr && label->visible) {
+            const std::string words = r.translations.translate(fill(label->text));
+            const int size = label->size >= 2 ? 2 : 1;
+            return std::array<float, 2>{static_cast<float>(ui::measure(font, words) * size),
+                                        static_cast<float>(font.line_height() * size)};
+        }
+        return std::nullopt;
+    };
+    std::unordered_map<std::uint64_t, std::array<float, 2>> laid;
+    std::unordered_set<std::uint64_t> hidden;
+    if (const reflect::TypeInfo* type = r.world->registry().find_type<ScreenLayout>()) {
+        r.world->each(*type, [&](world::Entity e, reflect::ObjectRef ref) {
+            const auto* layout = ref.as<ScreenLayout>();
+            if (layout == nullptr) {
+                return;
+            }
+            std::vector<std::uint64_t> members;
+            std::vector<std::array<float, 2>> sizes;
+            for (const world::Entity child : r.world->children(e)) {
+                if (!layout->visible) {
+                    hidden.insert(child.id);
+                } else if (const std::optional<std::array<float, 2>> size = size_of(child)) {
+                    members.push_back(child.id);
+                    sizes.push_back(*size);
+                }
+            }
+            const std::vector<std::array<float, 2>> at = lay_out(*layout, sizes, sw, sh);
+            for (std::size_t i = 0; i < members.size(); ++i) {
+                laid[members[i]] = at[i];
+            }
+        });
+    }
+    // Where an element goes: its layout's place for it, or its own.
+    const auto where = [&laid](world::Entity e, std::array<float, 2> own) {
+        const auto found = laid.find(e.id);
+        return found != laid.end() ? found->second : own;
+    };
     r.sprites->begin_over(*r.target);
     if (const reflect::TypeInfo* type = r.world->registry().find_type<ScreenPicture>();
         type != nullptr && r.textures != nullptr) {
-        r.world->each(*type, [&](world::Entity, reflect::ObjectRef ref) {
+        r.world->each(*type, [&](world::Entity e, reflect::ObjectRef ref) {
+            if (hidden.contains(e.id)) {
+                return;
+            }
             const auto* picture = ref.as<ScreenPicture>();
             const std::optional<Guid> guid =
                 picture != nullptr && picture->visible ? Guid::parse(picture->image) : std::nullopt;
@@ -3028,7 +3084,7 @@ void Runtime::draw_hud() {
             const auto th = static_cast<float>(texture->height());
             const float w = picture->width > 0.0 ? static_cast<float>(picture->width) : tw;
             const float h = picture->height > 0.0 ? static_cast<float>(picture->height) : th;
-            const auto [x, y] = place(picture->anchor, picture->x, picture->y, w, h);
+            const auto [x, y] = where(e, place(picture->anchor, picture->x, picture->y, w, h));
             const auto alpha =
                 static_cast<std::uint8_t>(std::clamp(picture->opacity, 0.0, 1.0) * 255.0);
             for (const SlicePiece& piece : nine_slice(tw, th, render::Rect{x, y, w, h},
@@ -3039,7 +3095,10 @@ void Runtime::draw_hud() {
         });
     }
     if (const reflect::TypeInfo* type = r.world->registry().find_type<ScreenBar>()) {
-        r.world->each(*type, [&](world::Entity, reflect::ObjectRef ref) {
+        r.world->each(*type, [&](world::Entity e, reflect::ObjectRef ref) {
+            if (hidden.contains(e.id)) {
+                return;
+            }
             const auto* bar = ref.as<ScreenBar>();
             if (bar == nullptr || !bar->visible) {
                 return;
@@ -3049,7 +3108,7 @@ void Runtime::draw_hud() {
             const double part = most > 0.0 ? std::clamp(now / most, 0.0, 1.0) : 0.0;
             const auto w = static_cast<float>(bar->width);
             const auto h = static_cast<float>(bar->height);
-            const auto [x, y] = place(bar->anchor, bar->x, bar->y, w + 2.0F, h + 2.0F);
+            const auto [x, y] = where(e, place(bar->anchor, bar->x, bar->y, w + 2.0F, h + 2.0F));
             r.sprites->draw(*r.white, one, render::Rect{x, y, w + 2.0F, h + 2.0F},
                             r.settings.ui.border);
             r.sprites->draw(*r.white, one, render::Rect{x + 1.0F, y + 1.0F, w, h},
@@ -3061,7 +3120,10 @@ void Runtime::draw_hud() {
         });
     }
     if (const reflect::TypeInfo* type = r.world->registry().find_type<ScreenText>()) {
-        r.world->each(*type, [&](world::Entity, reflect::ObjectRef ref) {
+        r.world->each(*type, [&](world::Entity e, reflect::ObjectRef ref) {
+            if (hidden.contains(e.id)) {
+                return;
+            }
             const auto* label = ref.as<ScreenText>();
             if (label == nullptr || !label->visible) {
                 return;
@@ -3070,7 +3132,7 @@ void Runtime::draw_hud() {
             const int size = label->size >= 2 ? 2 : 1;
             const auto w = static_cast<float>(ui::measure(font, words) * size);
             const auto h = static_cast<float>(font.line_height() * size);
-            const auto [x, y] = place(label->anchor, label->x, label->y, w, h);
+            const auto [x, y] = where(e, place(label->anchor, label->x, label->y, w, h));
             // A shadow, so the words read over any ground.
             ui::draw_text(*r.sprites, *r.font, font, words, x + 1.0F, y + 1.0F,
                           render::Color{0, 0, 0, 180}, size);

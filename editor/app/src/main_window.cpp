@@ -126,6 +126,33 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
     outliner_->setHeaderHidden(true);
     outliner_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     outliner_->setAccessibleName(tr("Entities"));
+    // Right-click: put it under another (a Screen Layout lines up what is under it), or
+    // back at the top.
+    outliner_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(outliner_, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
+        const QTreeWidgetItem* item = outliner_->itemAt(at);
+        const std::optional<engine::Guid> guid =
+            item != nullptr ? engine::Guid::parse(utf8_of(item->data(0, Qt::UserRole).toString()))
+                            : std::nullopt;
+        if (document_ == nullptr || !guid) {
+            return;
+        }
+        QMenu menu(this);
+        QMenu* under = menu.addMenu(tr("Put under"));
+        for (QTreeWidgetItemIterator it(outliner_); *it != nullptr; ++it) {
+            const QString text = (*it)->data(0, Qt::UserRole).toString();
+            const std::optional<engine::Guid> other = engine::Guid::parse(utf8_of(text));
+            if (other && *other != *guid) {
+                const engine::Guid holder = *other;
+                const engine::Guid child = *guid;
+                under->addAction((*it)->text(0), this,
+                                 [this, child, holder] { put_under(child, holder); });
+            }
+        }
+        menu.addAction(tr("Put at the top"), this,
+                       [this, child = *guid] { put_under(child, engine::Guid{}); });
+        menu.exec(outliner_->viewport()->mapToGlobal(at));
+    });
     auto* entities = new QDockWidget(tr("Entities"), this);
     entities->setObjectName(QStringLiteral("entities_dock"));
     entities->setWidget(outliner_);
@@ -688,6 +715,16 @@ bool MainWindow::rename_asset(const QString& asset, const QString& name) {
                                        .arg(name)
                                        .arg(changed.size()),
                              8000);
+    return true;
+}
+
+bool MainWindow::put_under(engine::Guid entity, engine::Guid parent) {
+    if (document_ == nullptr || !document_->set_parent(entity, parent)) {
+        statusBar()->showMessage(tr("It cannot go there (not under itself, nor where it is)."),
+                                 5000);
+        return false;
+    }
+    changed(true);
     return true;
 }
 

@@ -71,6 +71,39 @@ struct ScreenPicture {
     bool visible = true;
 };
 
+/// How a Screen Layout places its children's on-screen elements.
+enum class LayoutDirection : std::uint8_t {
+    Down,   ///< One under another: a list, a party's HP bars.
+    Across, ///< Side by side: hearts, a row of icons.
+    Grid,   ///< In rows of `columns`, each cell as large as the largest: an item grid.
+};
+
+/// "Screen Layout": places the Screen Text, Bars and Pictures of its child objects together,
+/// in order, so they line up by themselves (feature K1): a party's names and HP bars one
+/// under another, hearts in a row. The block is fixed to the screen by its own Place, X
+/// and Y; the children's own Places are not used.
+struct ScreenLayout {
+    ScreenAnchor anchor = ScreenAnchor::TopLeft;
+    double x = 4.0;
+    double y = 4.0;
+    LayoutDirection direction = LayoutDirection::Down;
+    double spacing = 2.0;     ///< Pixels between them.
+    std::int64_t columns = 3; ///< For a grid: how many in a row.
+    bool visible = true;      ///< Hidden: its children are hidden too.
+};
+
+/// Where a `w` x `h` thing's top-left goes on a `screen_w` x `screen_h` screen, fixed to
+/// `anchor` and `x`, `y` pixels in from it (as Screen Text, Bars and Pictures are).
+[[nodiscard]] std::array<float, 2> screen_place(ScreenAnchor anchor, double x, double y, float w,
+                                                float h, float screen_w, float screen_h);
+
+/// The top-left of each thing of `sizes` (width, height), placed by `layout` on a
+/// `screen_w` x `screen_h` screen. In a column, things line up on the side of its Place
+/// (right for a Place on the right, the middle for one in the middle), as do rows.
+[[nodiscard]] std::vector<std::array<float, 2>>
+lay_out(const ScreenLayout& layout, const std::vector<std::array<float, 2>>& sizes, float screen_w,
+        float screen_h);
+
 /// One piece of a 9-slice: the source pixels and where they go.
 struct SlicePiece {
     render::Rect source;

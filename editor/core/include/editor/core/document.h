@@ -298,6 +298,10 @@ public:
     /// a Sprite or has a number that is not finite, or for none.
     bool shape_sprites(const std::vector<SpriteShape>& to, bool turning);
     bool rename(engine::Guid entity, std::string_view name);
+    /// Puts `entity` under `parent` (last among its children), or back at the top level
+    /// with an invalid `parent`: "Put hp_bar under party". One step of undo. False,
+    /// changing nothing, if either is gone or `parent` is `entity` or under it.
+    bool set_parent(engine::Guid entity, engine::Guid parent);
     /// Names several entities after `base`, numbered in their order: "tree_1", "tree_2",
     /// ..., skipping names other entities have, so logic can tell each apart. One step
     /// of undo ("Rename 3 entities"). False, changing nothing, for an empty base.

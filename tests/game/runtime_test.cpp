@@ -4933,3 +4933,79 @@ TEST_CASE("Conditions on who: whether the object an event names is tagged") {
     CHECK(std::count(log.begin(), log.end(), "welcome") == 1);
     CHECK(std::count(log.begin(), log.end(), "away") == 2);
 }
+
+TEST_CASE("Screen Layouts: children's elements in a column, a row or a grid") {
+    using Size = std::array<float, 2>;
+    const std::vector<Size> sizes{{10.0F, 4.0F}, {20.0F, 6.0F}, {6.0F, 6.0F}};
+    game::ScreenLayout layout;
+    layout.x = 4.0;
+    layout.y = 5.0;
+    layout.spacing = 2.0;
+    // Down, from the top left: one under another, lined up on the left.
+    CHECK(game::lay_out(layout, sizes, 320.0F, 180.0F) ==
+          std::vector<Size>{{4.0F, 5.0F}, {4.0F, 11.0F}, {4.0F, 19.0F}});
+    // From the top right: lined up on the right, the block 4 in from the edge.
+    layout.anchor = game::ScreenAnchor::TopRight;
+    CHECK(game::lay_out(layout, sizes, 320.0F, 180.0F) ==
+          std::vector<Size>{{306.0F, 5.0F}, {296.0F, 11.0F}, {310.0F, 19.0F}});
+    // Across, from the bottom left: side by side, lined up on the bottom.
+    layout.anchor = game::ScreenAnchor::BottomLeft;
+    layout.direction = game::LayoutDirection::Across;
+    CHECK(game::lay_out(layout, sizes, 320.0F, 180.0F) ==
+          std::vector<Size>{{4.0F, 171.0F}, {16.0F, 169.0F}, {38.0F, 169.0F}});
+    // A grid of 2 columns, each cell as large as the largest (20 x 6), centred in it.
+    layout.anchor = game::ScreenAnchor::TopLeft;
+    layout.direction = game::LayoutDirection::Grid;
+    layout.columns = 2;
+    CHECK(game::lay_out(layout, sizes, 320.0F, 180.0F) ==
+          std::vector<Size>{{9.0F, 6.0F}, {26.0F, 5.0F}, {11.0F, 13.0F}});
+    CHECK(game::lay_out(layout, {}, 320.0F, 180.0F).empty());
+
+    // In a running game: two bars under a layout at the top right, one under the other.
+    const Project project;
+    {
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        const world::Entity block = w.create("party");
+        game::ScreenLayout* stack = w.add<game::ScreenLayout>(block);
+        stack->anchor = game::ScreenAnchor::TopRight;
+        stack->x = 2.0;
+        stack->y = 2.0;
+        for (const char* colour : {"#00ff00", "#0000ff"}) {
+            const world::Entity row = w.create(colour);
+            REQUIRE(w.set_parent(row, block));
+            game::ScreenBar* bar = w.add<game::ScreenBar>(row);
+            bar->value = "1";
+            bar->most = "1";
+            bar->width = 20.0;
+            bar->height = 3.0;
+            bar->color = colour;
+            bar->anchor = game::ScreenAnchor::BottomLeft; // not used under a layout
+        }
+        write_json(project.folder.path / "assets/maps/party.dscene", serialize::scene_to_json(w));
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->start_scene = "maps/party.dscene";
+        settings->width = 64;
+        settings->height = 36;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    runtime->step();
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    // Each 22 x 5 with its frame, 2 apart: x 40 to 61; y 2 to 6, then 9 to 13.
+    CHECK(pixel(pixels, 64, 50, 4) == render::Color{0, 255, 0, 255});
+    CHECK(pixel(pixels, 64, 50, 11) == render::Color{0, 0, 255, 255});
+    CHECK_FALSE(pixel(pixels, 64, 50, 32) == render::Color{0, 255, 0, 255}); // not its own
+}
