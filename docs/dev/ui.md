@@ -210,13 +210,9 @@ like any other property.
 
 ## 5. Next increments
 
-1. **The dialogue graph** (feature G1): lines, choices, conditions and effects drawn as a
-   graph in the editor, compiled to these actions.
-2. **Speakers and portraits:** a name above the box, a face beside it, and the text
-   appearing letter by letter with a blip sound.
-3. **Imported fonts:** pixel fonts from a PNG sheet, then vector fonts through FreeType
+1. **Imported fonts:** pixel fonts from a PNG sheet, then vector fonts through FreeType
    and HarfBuzz (ADR-010), with fallbacks per language (feature G7).
-4. **Box styles** in the project's Style Guide (feature A11): colours, a 9-slice frame,
-   and the position on screen.
-5. **UI widgets** for menus: a title screen, pause, options and the save and load screens
-   (feature K3).
+2. **Box frames:** the message box, menus and shops drawn with a 9-slice frame picture
+   from the UI look (Screen Pictures already stretch one; `nine_slice()`).
+3. **Layouts for on-screen elements:** stacks and grids that place Screen Text, Bars and
+   Pictures together, so a party's HP bars line up by themselves (feature K1).

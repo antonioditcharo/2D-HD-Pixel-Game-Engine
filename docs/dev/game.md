@@ -616,12 +616,7 @@ named by path (`maps/cave.dscene`) or GUID.
 
 ## 10. Next increments
 
-1. **Portraits, speakers and letter-by-letter text** and the rest of [ui.md](ui.md) §5.
-2. **Hot reload while playing:** pass asset changes to the texture cache and reload
-   changed logic.
-3. **Spawning and destroying from logic,** with entities created by Rules addressable by
-   GUID.
-4. **"Who" picking** (`plan/05` §2): *"all objects tagged Enemy"*, *"the other object"* in
+1. **"Who" picking** (`plan/05` §2): *"all objects tagged Enemy"*, *"the other object"* in
    a touch event.
-5. **Play in the editor** (`plan/03` §8), starting the runtime that `sparxel-player`
-   already runs ([player.md](player.md)).
+2. **Play in the editor** (`plan/03` §8): the runtime inside the editor's own window, as
+   well as in `sparxel-player` (F5 today, [player.md](player.md)).

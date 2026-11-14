@@ -335,13 +335,12 @@ the others run anywhere:
 
 ## 9. Next increments
 
-1. **Animation clips from Aseprite tags,** and directional walk animations for the
-   Top-down Mover.
-2. **Per-tile collision shapes** from the tileset (half tiles, slopes), and collisions
+1. **Per-tile collision shapes** from the tileset (half tiles, slopes), and collisions
    between characters, with the physics module.
-3. **Auto-tiles, further**: animated terrains (water from 3 blocks side by side), and
+2. **Auto-tiles, further**: animated terrains (water from 3 blocks side by side), and
    rules for 2D layers in the LDtk style (grass edges by neighbour patterns, random
    variants).
-4. **2D lights** with normal and mask maps (`plan/04` §3, Classic 2D lighting).
-5. **Diorama, further:** shadows from point lights, billboard modes other than Upright,
+3. **2D lights, further:** normal maps, so a light shades a picture's bumps from the
+   side it comes from, and lights that cast shadows (`plan/04` §3).
+4. **Diorama, further:** shadows from point lights, billboard modes other than Upright,
    directional sprite sets, and tilt-shift depth of field (`plan/04` §5 to §8).
