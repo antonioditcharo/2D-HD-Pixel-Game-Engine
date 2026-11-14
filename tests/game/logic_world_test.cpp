@@ -3,6 +3,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -24,6 +25,11 @@ struct Lock {
 struct Purse {
     std::int32_t gold = 0;
     void add(std::int32_t amount) { gold += amount; }
+};
+
+/// A door knocked on: its event names who knocked.
+struct Knocker {
+    std::int32_t knocks = 0;
 };
 
 /// Added later to force the entity's components into new storage.
@@ -316,4 +322,48 @@ TEST_CASE("For each object tagged: every one in turn, as it") {
     REQUIRE(compiled.errors.size() == 2);
     CHECK(compiled.errors[0].message == "No object is tagged 'dragon'.");
     CHECK(compiled.errors[1].message.find("is not valid") != std::string::npos);
+}
+
+TEST_CASE("A step acts on who: the object the Rule's event names") {
+    Fixture f;
+    auto knocker = f.registry.add_type<Knocker>("knocker");
+    knocker.property<&Knocker::knocks>("knocks");
+    knocker.event<std::string>("knocked", {"who"});
+    REQUIRE(f.w.register_component<Knocker>());
+    f.w.add<Knocker>(f.chest);
+
+    // "When [who] knocks on the chest: add 7 to who."
+    logic::LogicAsset asset;
+    asset.name = "knocking";
+    asset.rules.push_back(logic::Rule{
+        logic::BlockId{1},
+        "chest",
+        "knocked",
+        {},
+        {ir::do_action(2, "who", "add", {whole(7)}), ir::log(3, ir::property("who", "gold"))},
+        {}});
+    f.load(asset);
+    const std::array<reflect::Value, 1> goblin{reflect::Value{std::string("goblin")}};
+    CHECK(game::emit(f.vm, f.w, f.chest, "knocked", goblin));
+    CHECK(f.w.get<Purse>(f.goblin)->gold == 8);
+    // By GUID too, as events usually name objects.
+    const std::array<reflect::Value, 1> chest{reflect::Value{f.w.guid(f.chest).to_string()}};
+    CHECK(game::emit(f.vm, f.w, f.chest, "knocked", chest));
+    CHECK(f.w.get<Purse>(f.chest)->gold == 12);
+    CHECK(f.log == std::vector<std::string>{"8", "12"});
+    CHECK(f.vm.errors().empty());
+
+    // An event that names no one has no who.
+    logic::LogicAsset wrong;
+    wrong.name = "wrong";
+    wrong.rules.push_back(logic::Rule{logic::BlockId{1},
+                                      "chest",
+                                      "opened",
+                                      {},
+                                      {ir::do_action(2, "who", "add", {whole(1)})},
+                                      {}});
+    const logic::CompiledLogic compiled =
+        logic::compile(wrong, f.registry, game::object_types(f.w));
+    REQUIRE(compiled.errors.size() == 1);
+    CHECK(compiled.errors[0].message.find("names none") != std::string::npos);
 }

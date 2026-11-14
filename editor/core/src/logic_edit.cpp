@@ -48,6 +48,27 @@ bool is_game_object(std::string_view object) {
 /// What `object` is made of: one of the game's objects by name, or a named entity's
 /// components, as the game resolves them (game::object_types()).
 std::vector<const reflect::TypeInfo*> types_of(const Lookup& d, std::string_view object) {
+    // "who", the object a Rule's event names: what any of the project's objects is made of.
+    if (object == "who") {
+        std::vector<const reflect::TypeInfo*> all;
+        for (const reflect::TypeInfo* type : d.registry.types()) {
+            bool used = false;
+            d.world.each(*type, [&used](world::Entity, reflect::ObjectRef) { used = true; });
+            if (used) {
+                all.push_back(type);
+            }
+        }
+        if (d.elsewhere != nullptr) {
+            for (const auto& [name, types] : *d.elsewhere) {
+                for (const reflect::TypeInfo* type : types) {
+                    if (std::find(all.begin(), all.end(), type) == all.end()) {
+                        all.push_back(type);
+                    }
+                }
+            }
+        }
+        return all;
+    }
     // "it", in a Rule about a tag: what any tagged object is made of.
     if (object == "it") {
         std::vector<const reflect::TypeInfo*> all;
@@ -1333,6 +1354,9 @@ std::vector<std::string> Document::logic_objects() const {
     if (!tags.empty()) {
         objects.emplace("it");
     }
+    // "who": the object an event names (what touched, interacted or walked in), for
+    // Rules on such events.
+    objects.emplace("who");
     return {objects.begin(), objects.end()};
 }
 

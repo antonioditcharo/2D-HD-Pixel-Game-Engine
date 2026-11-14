@@ -3492,3 +3492,34 @@ TEST_CASE("The For each step in the editor: a tag of the project, steps inside o
     }
     CHECK(kept);
 }
+
+TEST_CASE("Who in the editor: steps on the object an event names") {
+    const Sample sample;
+    const auto d = sample.open();
+    std::string error;
+    constexpr std::string_view logic = "logic/main.drules";
+    // A walker, so who has something to do: "When [who] interacts with the elder: who
+    // stands still."
+    const reflect::TypeInfo* walker = d->registry().find_type<game::Walker>();
+    const Guid guard = d->create_entity("guard", 3.0, 4.0);
+    REQUIRE(d->add_component(guard, *walker));
+    const engine::logic::BlockId rule =
+        d->add_logic_rule(logic, editor::LogicEvent{"elder", "interacted", ""}, error);
+    REQUIRE(rule.is_valid());
+    REQUIRE(
+        d->add_logic_step(logic, rule, editor::LogicAction{"who", "stand", ""}, error).is_valid());
+    CHECK(d->check_logic(logic).empty());
+    bool shown = false;
+    for (const editor::LogicLine& line : editor::describe(d->logic().at(0).asset, *d)) {
+        shown = shown || line.text == "Stand still (who)";
+    }
+    CHECK(shown);
+    // On a game-wide event, there is no who.
+    const engine::logic::BlockId start =
+        d->add_logic_rule(logic, editor::LogicEvent{"", "game_start", ""}, error);
+    REQUIRE(
+        d->add_logic_step(logic, start, editor::LogicAction{"who", "stand", ""}, error).is_valid());
+    const std::vector<engine::logic::Diagnostic> problems = d->check_logic(logic);
+    REQUIRE(problems.size() == 1);
+    CHECK(problems[0].message.find("names none") != std::string::npos);
+}

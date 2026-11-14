@@ -44,6 +44,14 @@ public:
                 }
             }
         }
+        // "who", the object an event names: any kind of part.
+        if (object == "who") {
+            for (const reflect::TypeInfo* type : document_.registry().types()) {
+                if (auto* found = find_in(*type)) {
+                    return found;
+                }
+            }
+        }
         // A tag ("#enemy"), or "it" in a Rule about one: what the tagged objects have.
         if (object.starts_with('#') || object == "it") {
             for (const std::string& tag : document_.logic_tags()) {

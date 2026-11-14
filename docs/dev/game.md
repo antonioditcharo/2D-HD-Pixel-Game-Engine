@@ -422,6 +422,17 @@ object has, and a step on a part a particular one lacks is reported when it runs
 | `#enemy` as a step's object | Refused: *"A step cannot act on every object tagged 'enemy' at once…"*; use *For each* |
 | `it` anywhere else | Refused: *"it" is the object in a Rule about a tag…* |
 | A tag nothing has | Refused: *"No object is tagged 'dragon'."* |
+| `who`, in a Rule whose event names an object | That object: what touched, interacted or walked in (the event's *who*) |
+| `who` on an event that names none | Refused: *"who" is the object an event names… this Rule's event names none.* |
+
+**Who.** Events that name another object carry it as their *who* value: a Solid Body's
+*touched*, an Interactable's *interacted*, a Trigger Area's *entered* and *exited*. In a
+Rule on such an event, **who** is also an object to act on: *"When [who] walks into the
+pit: Go to … (game), Stand still (who)"*. It is compiled to the event's value itself, so
+it is right for each run and across waits, and works whether the event names the object
+by its name or its GUID. Since it could be any object, the editor offers what any of the
+project's objects can do, and a step on a part the actual one lacks is reported when it
+runs. `who` (like `it`) is a word logic keeps: an entity named so is reached by its GUID.
 
 **For each object tagged enemy** is a step (with *Log*, *Wait* and *Repeat* in the
 editor's list of steps): the steps inside it run once for each object with the tag, in
@@ -653,7 +664,7 @@ named by path (`maps/cave.dscene`) or GUID.
 
 ## 10. Next increments
 
-1. **"Who", further** (`plan/05` §2): *"the other object"* of a touch event as an object
-   to act on (tags, *it* and *For each* are done: §5).
+1. **"Who", further** (`plan/05` §2): conditions on what *who* is (*"who is tagged
+   enemy"*); tags, *it*, *For each* and *who* are done (§5).
 2. **Play in the editor** (`plan/03` §8): the runtime inside the editor's own window, as
    well as in `sparxel-player` (F5 today, [player.md](player.md)).

@@ -204,6 +204,10 @@ constexpr int max_depth = 64;
 /// object whose event it is.
 constexpr std::string_view it_name = "it";
 
+/// In a Rule whose event names another object (what touched, interacted or walked in), that
+/// object: the event's value of this name.
+constexpr std::string_view who_name = "who";
+
 /// What a slot accepts. Literals are also checked against `limits`.
 struct Slot {
     reflect::ValueKind kind = reflect::ValueKind::Bool;
@@ -427,7 +431,32 @@ private:
     // --- Lookups ------------------------------------------------------------------------
 
     /// The types an object is made of, or nothing after reporting that it does not exist.
+    /// Which of the Rule's event values is "who", the object the event names; none outside
+    /// a Rule, or if its event names no object.
+    [[nodiscard]] std::optional<std::size_t> who_parameter() const {
+        if (event_ == nullptr) {
+            return std::nullopt;
+        }
+        for (std::size_t i = 0; i < event_->parameters.size(); ++i) {
+            if (event_->parameters[i].id == who_name &&
+                event_->parameters[i].kind == reflect::ValueKind::Text) {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] std::optional<Object> object_type(BlockId block, const std::string& object) {
+        // "who": the object the Rule's event names. It could be any, so anything a part
+        // can do is accepted here; what that object lacks is reported when the step runs.
+        if (object == who_name) {
+            if (!who_parameter()) {
+                error(block, "\"who\" is the object an event names, such as what touched or "
+                             "interacted; this Rule's event names none.");
+                return std::nullopt;
+            }
+            return Object{registry_.types()};
+        }
         // "it": in a Rule about a tag ("#enemy"), the tagged object whose event it is.
         if (object == it_name && it_object_.empty()) {
             error(block, "\"it\" is the object in a Rule about a tag, such as \"When an object "
@@ -459,6 +488,11 @@ private:
     /// tag, the handler's own `it` (the GUID of the object whose event it is), which stays
     /// right across waits.
     [[nodiscard]] std::string object_code(const std::string& object) const {
+        if (object == who_name) {
+            if (const std::optional<std::size_t> who = who_parameter()) {
+                return "p" + std::to_string(*who + 1);
+            }
+        }
         return object == it_name && !it_object_.empty() ? std::string("it") : lua_string(object);
     }
 
