@@ -1714,7 +1714,7 @@ TEST_CASE("Palette swaps: colours read, swapped once, and drawn recoloured") {
     if (device == nullptr) {
         return;
     }
-    Fixture f;
+    const Fixture f;
     const auto target = device->create_render_target(8, 8);
     const auto sprites = render::SpriteRenderer::create(*device);
     REQUIRE(target != nullptr);
