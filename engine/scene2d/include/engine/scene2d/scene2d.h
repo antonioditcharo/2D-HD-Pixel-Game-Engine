@@ -200,6 +200,7 @@ struct Tilemap {
     /// per cell (0 to 16, halves and quarters allowed); an empty cell, or a cell past the
     /// text, stands at `height`.
     std::string heights;
+    std::string shapes;          ///< See `solid`: "12 top, 13 bottom, 7 none".
     std::uint32_t tile_size = 0; ///< In pixels, square. 0 uses the camera's PPU.
     /// Animated tiles, for water, lava or flowers in the wind: each tile shows itself and
     /// then the next animation_frames - 1 tiles of the tileset in turn, at animation_fps
@@ -209,6 +210,9 @@ struct Tilemap {
     /// Every tile of this map blocks movement (see sweep()). Paint walls on their own map,
     /// hidden if the art is on another one.
     bool solid = false;
+    /// On a solid map, tiles that block only part of their square, by their number in the
+    /// tileset: "12 top, 13 bottom, 7 none" (full, none, top, bottom, left or right: a
+    /// half). Tiles not named block all of it. See tile_shape().
     /// Painting picks each tile's shape from its neighbours: for a tileset expanded from
     /// auto-tile blocks (assets/autotile.h), where each 48 tiles are one terrain.
     bool autotile = false;
@@ -284,6 +288,18 @@ struct Box {
 };
 
 enum class Axis : std::uint8_t { X, Y };
+
+/// How much of its square a solid tile blocks.
+enum class TileShape : std::uint8_t { Full, None, Top, Bottom, Left, Right };
+
+/// The shapes a Tilemap's `shapes` text gives, by tile number: "12 top, 13 bottom" (pairs
+/// separated by commas, each a tile number then a shape; any case). Pairs that cannot be
+/// read are skipped, and `error` says which (empty if none).
+[[nodiscard]] std::vector<std::pair<std::int32_t, TileShape>>
+parse_tile_shapes(std::string_view text, std::string& error);
+/// The part of a `tile`-sized square (0, 0 at its top-left) that `shape` blocks; nothing
+/// for None.
+[[nodiscard]] std::optional<Box> tile_shape_box(TileShape shape, double tile) noexcept;
 
 /// True if the boxes share more than an edge (or a rounding error of one).
 [[nodiscard]] bool overlaps(const Box& a, const Box& b) noexcept;

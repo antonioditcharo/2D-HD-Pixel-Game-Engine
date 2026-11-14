@@ -2515,3 +2515,29 @@ TEST_CASE("Screen Layouts in the editor: children put under it, stacked, dragged
     e.window.undo();
     CHECK_FALSE(d.world().parent(d.world().find(bars[1])).is_valid());
 }
+
+TEST_CASE("Tile shapes from the palette: a wall tile made a half, then whole again") {
+    Editor e;
+    e.window.select(e.guid("walls"));
+    QApplication::processEvents();
+    editor::TilePalette* palette = e.window.tile_palette();
+    const auto shapes = [&] {
+        return e.window.document()
+            ->world()
+            .get<scene2d::Tilemap>(e.window.document()->world().find(e.guid("walls")))
+            ->shapes;
+    };
+    REQUIRE(palette->set_tile_shape(2, scene2d::TileShape::Top));
+    CHECK(shapes() == "2 top");
+    REQUIRE(palette->set_tile_shape(5, scene2d::TileShape::None));
+    CHECK(shapes() == "2 top, 5 none");
+    REQUIRE(palette->set_tile_shape(2, scene2d::TileShape::Full));
+    CHECK(shapes() == "5 none"); // all of it is left out
+    CHECK(e.window.document()->undo_label() == "Change Tile shapes of walls");
+    e.window.undo();
+    CHECK(shapes() == "2 top, 5 none");
+    // Not on a map that is not solid.
+    e.window.select(e.guid("ground"));
+    QApplication::processEvents();
+    CHECK_FALSE(palette->set_tile_shape(1, scene2d::TileShape::Top));
+}

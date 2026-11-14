@@ -36,15 +36,22 @@ public:
     [[nodiscard]] const std::vector<std::int32_t>& variants() const noexcept { return variants_; }
     /// Ctrl+click: adds a tile to (or takes it from) the variants painted at random.
     void toggle_variant(std::int32_t tile);
+    /// Right-click ▸ Blocks: how much of its square `tile` blocks on the shown map, kept in
+    /// its Tile shapes, one undo step. False if no solid map is shown.
+    bool set_tile_shape(std::int32_t tile, engine::scene2d::TileShape shape);
 
 Q_SIGNALS:
     void chosen_changed(std::optional<std::int32_t> tile);
     void tool_changed(int tool);
     void variants_changed(const std::vector<std::int32_t>& tiles);
     void density_changed(int density);
+    /// The shown map was changed here (a tile's shape).
+    void edited();
 
 private:
     void show_checks();
+    Document* document_ = nullptr;
+    engine::Guid map_;
     std::optional<std::int32_t> chosen_;
     std::vector<std::int32_t> variants_;
     int tool_ = 0;

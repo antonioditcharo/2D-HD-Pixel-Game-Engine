@@ -38,7 +38,7 @@ nothing extra to write ([reflection.md](reflection.md)).
 | `Transform2D` ("transform_2d") | `x`, `y` in **tiles** (world units), `layer` (advanced) | "Position" |
 | `Sprite` ("sprite") | `image` (an asset GUID), `visible`, `recolor` (*Recolour*: a palette swap), `rotation` (degrees), `scale_x` and `scale_y` (*Scale across*, *Scale down*); advanced: `pivot_x`, `pivot_y`, tint red, green, blue, and opacity; `frame_width`, `frame_height` and `frame` for sprite sheets | "Sprite" |
 | `SpriteAnimation` ("sprite_animation") | `tag` (a tag of the sheet, such as *walk*: §3), `first_frame`, `frame_count`, `frames_per_second`, `loop`, `playing`; actions *Play*, *Play the animation {name}* (a tag) and *Stop*; event *finished* | "Animation" |
-| `Tilemap` ("tilemap") | `tileset` (an asset GUID), `tiles`, `visible`, `solid`; advanced: `tile_size` | "Tilemap" |
+| `Tilemap` ("tilemap") | `tileset` (an asset GUID), `tiles`, `visible`, `solid`; advanced: `tile_size`, `shapes` (*Tile shapes*) | "Tilemap" |
 
 - **Units:** one world unit is one tile of `ppu` pixels, the project setting (default 16,
   `plan/04` §2). A sprite's size comes from its image: 1 image pixel is 1 world pixel.
@@ -149,8 +149,18 @@ nothing extra to write ([reflection.md](reflection.md)).
   rounding in the sum of many small steps never lets a box slip into a wall. Tiles the box
   already overlaps do not block, so a character placed inside a wall can walk out. Boxes
   with broken (non-finite) positions and maps with invalid text are ignored.
-- Only the tile lines between the box and its destination are checked, so the cost does
-  not depend on the map's size.
+- Only the tiles between the box and its destination (and one beyond) are checked, so the
+  cost does not depend on the map's size: each is made a box of what it blocks, and the
+  boxes are swept against as `sweep_boxes()` does.
+- **Tile shapes:** a solid map's advanced *Tile shapes* names tiles that block only part
+  of their square, by their number in the tileset: `12 top, 13 bottom, 7 none` (shapes
+  `full`, `none`, `top`, `bottom`, `left`, `right`, any case). A top half is a ledge to
+  walk under, a bottom half a low wall seen from the side, `none` a tile painted on the
+  wall map that blocks nothing (a doorway, a flower). Tiles not named block all of their
+  square. In the editor, right-click a tile in the Tiles palette: *Blocks ▸ All of it /
+  The top half / … / Nothing*, one undo step (the text keeps only the tiles that differ
+  from *All of it*). Unreadable pairs are skipped (`parse_tile_shapes()`,
+  `tile_shape_box()`).
 
 ### Auto-tiles
 
@@ -335,8 +345,8 @@ the others run anywhere:
 
 ## 9. Next increments
 
-1. **Per-tile collision shapes** from the tileset (half tiles, slopes), and collisions
-   between characters, with the physics module.
+1. **Slopes** as tile shapes (half tiles are done: §4), and collisions between characters,
+   with the physics module.
 2. **Auto-tiles, further**: animated terrains (water from 3 blocks side by side), and
    rules for 2D layers in the LDtk style (grass edges by neighbour patterns, random
    variants).

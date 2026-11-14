@@ -1797,3 +1797,48 @@ TEST_CASE("Classic 2D lights brighten what is drawn, in their colour, fading at 
     CHECK(scene2d::draw_lights_2d(*w, textures, *sprites, *target, camera) == 0);
     CHECK(pixel(target->read_pixels(), 64, 32, 24) == grey);
 }
+
+TEST_CASE("Tile shapes: half tiles block half their square, and some tiles none") {
+    std::string error;
+    using Shape = scene2d::TileShape;
+    CHECK(scene2d::parse_tile_shapes("12 top, 13 Bottom,7 none", error) ==
+          std::vector<std::pair<std::int32_t, Shape>>{
+              {12, Shape::Top}, {13, Shape::Bottom}, {7, Shape::None}});
+    CHECK(error.empty());
+    CHECK(scene2d::parse_tile_shapes("5 sideways, x top, 2 left", error) ==
+          std::vector<std::pair<std::int32_t, Shape>>{{2, Shape::Left}});
+    CHECK(error.find("5 sideways") != std::string::npos);
+    CHECK_FALSE(scene2d::tile_shape_box(Shape::None, 1.0).has_value());
+    CHECK(scene2d::tile_shape_box(Shape::Right, 2.0)->left == 1.0);
+
+    reflect::Registry registry;
+    scene2d::register_types(registry);
+    world::World w(registry);
+    REQUIRE(scene2d::register_components(w));
+    // One row: a full tile (0), a top half (1), a bottom half (2), a tile that blocks
+    // nothing (3), each 1 unit square, at the origin.
+    const world::Entity map = w.create("ledges");
+    w.add<scene2d::Transform2D>(map);
+    scene2d::Tilemap* tiles = w.add<scene2d::Tilemap>(map);
+    tiles->tiles = "0,1,2,3";
+    tiles->solid = true;
+    tiles->shapes = "1 top, 2 bottom, 3 none";
+    constexpr std::uint32_t ppu = 16;
+    using scene2d::Axis;
+    // Walking up into each from below (a box 0.5 wide, its top at 2): the full tile stops
+    // it at 1, the top half at 0.5, the bottom half at 1, the "none" tile not at all.
+    const auto up_into = [&](double x) {
+        return scene2d::sweep(w, scene2d::Box{x + 0.25, 2.0, x + 0.75, 2.5}, Axis::Y, -3.0, ppu);
+    };
+    CHECK(up_into(0.0) == doctest::Approx(-1.0));
+    CHECK(up_into(1.0) == doctest::Approx(-1.5));
+    CHECK(up_into(2.0) == doctest::Approx(-1.0));
+    CHECK(up_into(3.0) == doctest::Approx(-3.0));
+    // Falling from above onto the bottom half: stopped half a tile down.
+    CHECK(scene2d::sweep(w, scene2d::Box{2.25, -1.0, 2.75, -0.5}, Axis::Y, 2.0, ppu) ==
+          doctest::Approx(1.0));
+    // Standing in the open half of a tile is allowed; in the blocked half, not.
+    CHECK_FALSE(scene2d::solid_at(w, scene2d::Box{1.25, 0.6, 1.75, 0.9}, ppu));
+    CHECK(scene2d::solid_at(w, scene2d::Box{1.25, 0.1, 1.75, 0.4}, ppu));
+    CHECK_FALSE(scene2d::solid_at(w, scene2d::Box{3.1, 0.1, 3.9, 0.9}, ppu));
+}

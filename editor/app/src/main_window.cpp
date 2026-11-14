@@ -268,6 +268,7 @@ MainWindow::MainWindow(fs::path player, QWidget* parent)
                     document_->set_tile_variants(variants);
                 }
             });
+    connect(palette_, &TilePalette::edited, this, [this] { changed(false); });
     connect(palette_, &TilePalette::density_changed, this,
             [this](int density) { view_->set_scatter_density(density); });
     connect(view_, &SceneView::stop_painting, this, [this] { palette_->choose(std::nullopt); });

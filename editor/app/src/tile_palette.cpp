@@ -10,6 +10,7 @@
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
+#include <QMenu>
 #include <QPixmap>
 #include <QSpinBox>
 #include <QToolButton>
@@ -82,6 +83,44 @@ TilePalette::TilePalette(QWidget* parent) : QWidget(parent) {
     column->addStretch();
 }
 
+bool TilePalette::set_tile_shape(std::int32_t tile, scene2d::TileShape shape) {
+    const engine::world::Entity shown =
+        document_ != nullptr ? document_->world().find(map_) : engine::world::Entity{};
+    const auto* tilemap =
+        shown.is_valid() ? document_->world().get<scene2d::Tilemap>(shown) : nullptr;
+    const engine::reflect::TypeInfo* type =
+        document_ != nullptr ? document_->registry().find_type<scene2d::Tilemap>() : nullptr;
+    if (tilemap == nullptr || type == nullptr || !tilemap->solid || tile < 0) {
+        return false;
+    }
+    // The others as they were, this one changed (left out when it blocks all of it).
+    std::string ignored;
+    std::string text;
+    constexpr std::array<std::string_view, 6> names{"full",   "none", "top",
+                                                    "bottom", "left", "right"};
+    const auto add = [&text, &names](std::int32_t number, scene2d::TileShape given) {
+        if (given == scene2d::TileShape::Full) {
+            return;
+        }
+        text += (text.empty() ? "" : ", ") + std::to_string(number) + " " +
+                std::string(names.at(static_cast<std::size_t>(given)));
+    };
+    for (const auto& [number, given] : scene2d::parse_tile_shapes(tilemap->shapes, ignored)) {
+        if (number != tile) {
+            add(number, given);
+        }
+    }
+    add(tile, shape);
+    std::string error;
+    if (!document_->set_property(map_, *type, *type->find_property("shapes"),
+                                 engine::reflect::Value{text}, error)) {
+        return false;
+    }
+    document_->end_merge();
+    Q_EMIT edited();
+    return true;
+}
+
 void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
     choose(std::nullopt);
     // Later, not now (this may run from a button's own signal), and out of the palette
@@ -94,6 +133,8 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
     }
     buttons_.clear();
     numbers_.clear();
+    document_ = document;
+    map_ = entity;
     const engine::world::Entity e =
         document != nullptr ? document->world().find(entity) : engine::world::Entity{};
     const auto* map = e.is_valid() ? document->world().get<scene2d::Tilemap>(e) : nullptr;
@@ -137,6 +178,53 @@ void TilePalette::show_tilemap(Document* document, engine::Guid entity) {
             }
             choose(chosen_ == tile ? std::nullopt : std::optional<std::int32_t>(tile));
         });
+        // Right-click: how much of its square the tile blocks, on a solid map.
+        if (tile >= 0) {
+            button->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(button, &QWidget::customContextMenuRequested, this,
+                    [this, button, tile](const QPoint& at) {
+                        const engine::world::Entity shown = document_ != nullptr
+                                                                ? document_->world().find(map_)
+                                                                : engine::world::Entity{};
+                        const auto* tilemap = shown.is_valid()
+                                                  ? document_->world().get<scene2d::Tilemap>(shown)
+                                                  : nullptr;
+                        if (tilemap == nullptr) {
+                            return;
+                        }
+                        std::string ignored;
+                        scene2d::TileShape now = scene2d::TileShape::Full;
+                        for (const auto& [number, shape] :
+                             scene2d::parse_tile_shapes(tilemap->shapes, ignored)) {
+                            if (number == tile) {
+                                now = shape;
+                            }
+                        }
+                        QMenu menu(this);
+                        QMenu* blocks = menu.addMenu(tr("Blocks"));
+                        blocks->setEnabled(tilemap->solid);
+                        if (!tilemap->solid) {
+                            blocks->setTitle(tr("Blocks (on a solid map)"));
+                        }
+                        const std::array<std::pair<scene2d::TileShape, QString>, 6> shapes{{
+                            {scene2d::TileShape::Full, tr("All of it")},
+                            {scene2d::TileShape::Top, tr("The top half")},
+                            {scene2d::TileShape::Bottom, tr("The bottom half")},
+                            {scene2d::TileShape::Left, tr("The left half")},
+                            {scene2d::TileShape::Right, tr("The right half")},
+                            {scene2d::TileShape::None, tr("Nothing")},
+                        }};
+                        for (const auto& [shape, label] : shapes) {
+                            QAction* choice = blocks->addAction(label);
+                            choice->setCheckable(true);
+                            choice->setChecked(shape == now);
+                            const scene2d::TileShape picked = shape;
+                            connect(choice, &QAction::triggered, this,
+                                    [this, tile, picked] { set_tile_shape(tile, picked); });
+                        }
+                        menu.exec(button->mapToGlobal(at));
+                    });
+        }
         const int index = static_cast<int>(buttons_.size());
         grid_->addWidget(button, index / per_row, index % per_row);
         buttons_.push_back(button);

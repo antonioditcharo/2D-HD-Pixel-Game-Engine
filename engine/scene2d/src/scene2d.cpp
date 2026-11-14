@@ -3,6 +3,8 @@
 #include "engine/serialize/json.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <iterator>
@@ -155,6 +157,11 @@ void register_types(reflect::Registry& registry) {
                  "Lower brushes; empty cells stand at Height.");
     tilemap.property<&Tilemap::solid>("solid").tooltip(
         "Every tile of this map blocks movement. Paint walls on their own map.");
+    tilemap.property<&Tilemap::shapes>("shapes")
+        .display_name("Tile shapes")
+        .flags(advanced)
+        .tooltip("On a solid map, tiles that block only part of their square: 12 top, 13 "
+                 "bottom, 7 none (full, none, top, bottom, left or right). Others block it all.");
     tilemap.property<&Tilemap::animation_frames>("animation_frames")
         .range(1, 64)
         .display_name("Animation frames")
@@ -480,16 +487,16 @@ double sweep_boxes(const Box& box, Axis axis, double distance, const std::vector
     return allowed;
 }
 
-double sweep(const world::World& world, const Box& box, Axis axis, double distance,
-             std::uint32_t ppu) {
-    if (!std::isfinite(distance) || distance == 0.0) {
-        return 0.0;
-    }
+namespace {
+
+/// The parts of `world`'s solid tiles near `area` (in units), as boxes: each tile's
+/// square, or the part of it its shape blocks.
+std::vector<Box> solid_boxes(const world::World& world, const Box& area, std::uint32_t ppu) {
+    std::vector<Box> boxes;
     const reflect::TypeInfo* type = world.registry().find_type<Tilemap>();
     if (type == nullptr) {
-        return distance;
+        return boxes;
     }
-    double allowed = distance;
     world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
         const Tilemap* tilemap = ref.as<Tilemap>();
         const Transform2D* transform = world.get<Transform2D>(entity);
@@ -504,111 +511,144 @@ double sweep(const world::World& world, const Box& box, Axis axis, double distan
         const std::uint32_t units = std::max<std::uint32_t>(ppu, 1);
         const std::uint32_t pixels = tilemap->tile_size == 0 ? units : tilemap->tile_size;
         const double tile = static_cast<double>(pixels) / static_cast<double>(units);
-        // In the map's own space, "along" the moving axis and "across" the other one.
-        const bool x_axis = axis == Axis::X;
-        const double origin_along = x_axis ? transform->x : transform->y;
-        const double origin_across = x_axis ? transform->y : transform->x;
-        const double low = (x_axis ? box.left : box.top) - origin_along;
-        const double high = (x_axis ? box.right : box.bottom) - origin_along;
-        const double across_low = (x_axis ? box.top : box.left) - origin_across;
-        const double across_high = (x_axis ? box.bottom : box.right) - origin_across;
-        if (!std::isfinite(low) || !std::isfinite(high) || !std::isfinite(across_low) ||
-            !std::isfinite(across_high) || !std::isfinite(tile)) {
+        const Span across = covered(area.left - transform->x, area.right - transform->x, tile);
+        const Span down = covered(area.top - transform->y, area.bottom - transform->y, tile);
+        if (!std::isfinite(across.first) || !std::isfinite(across.end) ||
+            !std::isfinite(down.first) || !std::isfinite(down.end) || !std::isfinite(tile)) {
             return; // a broken position: nothing to compare against
         }
-        const auto along_count = static_cast<double>(x_axis ? grid->width : grid->height);
-        const auto across_count = static_cast<double>(x_axis ? grid->height : grid->width);
-
-        // Tile lines as whole numbers, clamped to the map. The map is at most
-        // max_tilemap_side tiles a side, so these never overflow.
-        const auto clamp_line = [](double line, double count) {
-            return static_cast<std::int64_t>(std::clamp(line, -1.0, count));
-        };
-        const Span across = covered(across_low, across_high, tile);
-        const std::int64_t across_first = clamp_line(std::max(across.first, 0.0), across_count);
-        const std::int64_t across_end =
-            clamp_line(std::min(across.end, across_count), across_count);
-        if (across_first >= across_end) {
-            return; // the box passes beside the map
-        }
-        const auto solid_line = [&](std::int64_t line) {
-            for (std::int64_t other = across_first; other < across_end; ++other) {
-                const auto a = static_cast<std::uint32_t>(line);
-                const auto b = static_cast<std::uint32_t>(other);
-                if ((x_axis ? grid->at(a, b) : grid->at(b, a)) >= 0) {
-                    return true;
+        // One cell more each way, so tiles just beyond an edge are known too.
+        const auto first_x = static_cast<std::int64_t>(std::max(across.first - 1.0, 0.0));
+        const auto end_x =
+            static_cast<std::int64_t>(std::min(across.end + 1.0, static_cast<double>(grid->width)));
+        const auto first_y = static_cast<std::int64_t>(std::max(down.first - 1.0, 0.0));
+        const auto end_y =
+            static_cast<std::int64_t>(std::min(down.end + 1.0, static_cast<double>(grid->height)));
+        std::string ignored;
+        const std::vector<std::pair<std::int32_t, TileShape>> shapes =
+            tilemap->shapes.empty() ? std::vector<std::pair<std::int32_t, TileShape>>{}
+                                    : parse_tile_shapes(tilemap->shapes, ignored);
+        for (std::int64_t y = first_y; y < end_y; ++y) {
+            for (std::int64_t x = first_x; x < end_x; ++x) {
+                const std::int32_t t =
+                    grid->at(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+                if (t < 0) {
+                    continue;
                 }
-            }
-            return false;
-        };
-        const Span now = covered(low, high, tile);
-        if (distance > 0.0) {
-            // The lines entered: from the first one past the box to the last one reached.
-            const std::int64_t first = clamp_line(now.end, along_count);
-            const std::int64_t last = clamp_line(
-                std::ceil((high + distance - edge_tolerance) / tile) - 1.0, along_count - 1.0);
-            for (std::int64_t line = std::max<std::int64_t>(first, 0); line <= last; ++line) {
-                if (solid_line(line)) {
-                    allowed =
-                        std::min(allowed, std::max(0.0, (static_cast<double>(line) * tile) - high));
-                    break;
+                TileShape shape = TileShape::Full;
+                for (const auto& [number, given] : shapes) {
+                    if (number == t) {
+                        shape = given;
+                    }
                 }
-            }
-        } else {
-            const std::int64_t first = clamp_line(now.first - 1.0, along_count - 1.0);
-            const std::int64_t last =
-                clamp_line(std::floor((low + distance + edge_tolerance) / tile), along_count);
-            for (std::int64_t line = first; line >= std::max<std::int64_t>(last, 0); --line) {
-                if (solid_line(line)) {
-                    allowed = std::max(allowed,
-                                       std::min(0.0, (static_cast<double>(line + 1) * tile) - low));
-                    break;
+                if (const std::optional<Box> part = tile_shape_box(shape, tile)) {
+                    const double left = transform->x + (static_cast<double>(x) * tile);
+                    const double top = transform->y + (static_cast<double>(y) * tile);
+                    boxes.push_back(Box{left + part->left, top + part->top, left + part->right,
+                                        top + part->bottom});
                 }
             }
         }
     });
-    return allowed;
+    return boxes;
+}
+
+} // namespace
+
+std::vector<std::pair<std::int32_t, TileShape>> parse_tile_shapes(std::string_view text,
+                                                                  std::string& error) {
+    std::vector<std::pair<std::int32_t, TileShape>> out;
+    error.clear();
+    constexpr std::array<std::pair<std::string_view, TileShape>, 6> names{{
+        {"full", TileShape::Full},
+        {"none", TileShape::None},
+        {"top", TileShape::Top},
+        {"bottom", TileShape::Bottom},
+        {"left", TileShape::Left},
+        {"right", TileShape::Right},
+    }};
+    std::size_t at = 0;
+    while (at <= text.size()) {
+        const std::size_t comma = text.find(',', at);
+        std::string_view pair =
+            text.substr(at, comma == std::string_view::npos ? std::string_view::npos : comma - at);
+        at = comma == std::string_view::npos ? text.size() + 1 : comma + 1;
+        while (!pair.empty() && pair.front() == ' ') {
+            pair.remove_prefix(1);
+        }
+        while (!pair.empty() && pair.back() == ' ') {
+            pair.remove_suffix(1);
+        }
+        if (pair.empty()) {
+            continue;
+        }
+        const std::size_t space = pair.find(' ');
+        std::int32_t number = -1;
+        const std::string_view digits = pair.substr(0, space);
+        const auto [end, failed] =
+            std::from_chars(digits.data(), digits.data() + digits.size(), number);
+        std::string word(space == std::string_view::npos ? std::string_view{}
+                                                         : pair.substr(space + 1));
+        std::transform(word.begin(), word.end(), word.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        while (!word.empty() && word.front() == ' ') {
+            word.erase(word.begin());
+        }
+        const auto found = std::find_if(names.begin(), names.end(),
+                                        [&word](const auto& n) { return n.first == word; });
+        if (failed != std::errc{} || end != digits.data() + digits.size() || number < 0 ||
+            found == names.end()) {
+            if (error.empty()) {
+                error = "\"" + std::string(pair) +
+                        "\" is not a tile and a shape (full, none, top, bottom, left, right).";
+            }
+            continue;
+        }
+        out.emplace_back(number, found->second);
+    }
+    return out;
+}
+
+std::optional<Box> tile_shape_box(TileShape shape, double tile) noexcept {
+    const double half = tile / 2.0;
+    switch (shape) {
+    case TileShape::None:
+        return std::nullopt;
+    case TileShape::Top:
+        return Box{0.0, 0.0, tile, half};
+    case TileShape::Bottom:
+        return Box{0.0, half, tile, tile};
+    case TileShape::Left:
+        return Box{0.0, 0.0, half, tile};
+    case TileShape::Right:
+        return Box{half, 0.0, tile, tile};
+    case TileShape::Full:
+        break;
+    }
+    return Box{0.0, 0.0, tile, tile};
+}
+
+double sweep(const world::World& world, const Box& box, Axis axis, double distance,
+             std::uint32_t ppu) {
+    if (!std::isfinite(distance) || distance == 0.0) {
+        return 0.0;
+    }
+    // Every solid part the box could meet on its way, then the boxes' own sweep.
+    Box area = box;
+    if (axis == Axis::X) {
+        area.left = std::min(box.left, box.left + distance);
+        area.right = std::max(box.right, box.right + distance);
+    } else {
+        area.top = std::min(box.top, box.top + distance);
+        area.bottom = std::max(box.bottom, box.bottom + distance);
+    }
+    return sweep_boxes(box, axis, distance, solid_boxes(world, area, ppu));
 }
 
 bool solid_at(const world::World& world, const Box& box, std::uint32_t ppu) {
-    const reflect::TypeInfo* type = world.registry().find_type<Tilemap>();
-    if (type == nullptr) {
-        return false;
-    }
-    bool hit = false;
-    world.each(*type, [&](world::Entity entity, reflect::ObjectRef ref) {
-        const Tilemap* tilemap = ref.as<Tilemap>();
-        const Transform2D* transform = world.get<Transform2D>(entity);
-        if (hit || tilemap == nullptr || transform == nullptr || !tilemap->solid) {
-            return;
-        }
-        std::string error;
-        const TileGrid* grid = tilemap->grid(error);
-        if (grid == nullptr || grid->width == 0) {
-            return;
-        }
-        const std::uint32_t units = std::max<std::uint32_t>(ppu, 1);
-        const std::uint32_t pixels = tilemap->tile_size == 0 ? units : tilemap->tile_size;
-        const double tile = static_cast<double>(pixels) / static_cast<double>(units);
-        const Span across = covered(box.left - transform->x, box.right - transform->x, tile);
-        const Span down = covered(box.top - transform->y, box.bottom - transform->y, tile);
-        if (!std::isfinite(across.first) || !std::isfinite(across.end) ||
-            !std::isfinite(down.first) || !std::isfinite(down.end)) {
-            return;
-        }
-        const auto first_x = static_cast<std::int64_t>(std::max(across.first, 0.0));
-        const auto end_x =
-            static_cast<std::int64_t>(std::min(across.end, static_cast<double>(grid->width)));
-        const auto first_y = static_cast<std::int64_t>(std::max(down.first, 0.0));
-        const auto end_y =
-            static_cast<std::int64_t>(std::min(down.end, static_cast<double>(grid->height)));
-        for (std::int64_t y = first_y; y < end_y && !hit; ++y) {
-            for (std::int64_t x = first_x; x < end_x && !hit; ++x) {
-                hit = grid->at(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y)) >= 0;
-            }
-        }
-    });
-    return hit;
+    const std::vector<Box> parts = solid_boxes(world, box, ppu);
+    return std::any_of(parts.begin(), parts.end(),
+                       [&box](const Box& part) { return overlaps(box, part); });
 }
 
 // ---------------------------------------------------------------------------------------
