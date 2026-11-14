@@ -72,6 +72,10 @@ std::vector<std::string> GameMenu::choices(const SaveObject& saves) const {
     switch (page_) {
     case Page::Title:
         for (const char* choice : title_choices) {
+            // Credits, before Quit, when the game has some.
+            if (std::string_view(choice) == "Quit" && !credits_.empty()) {
+                out.push_back(tr("Credits"));
+            }
             out.push_back(tr(choice));
         }
         break;
@@ -208,6 +212,10 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
             cursor_ = static_cast<std::size_t>(page_) - static_cast<std::size_t>(Page::Pause);
             page_ = Page::Pause;
             return {};
+        case Page::Credits:
+            page_ = Page::Title;
+            cursor_ = 2;
+            return {};
         case Page::Load:
             // From the title, back to it; from the pause menu, back to that.
             cursor_ = from_title_ ? 1 : 8;
@@ -231,7 +239,16 @@ GameMenu::Result GameMenu::press(std::string_view action, const SaveObject& save
             cursor_ = 0;
             return {};
         }
+        if (cursor_ == 2 && !credits_.empty()) {
+            page_ = Page::Credits;
+            credits_seconds_ = 0.0;
+            return {};
+        }
         return {Result::Kind::Quit, 0};
+    case Page::Credits:
+        page_ = Page::Title; // Interact ends them, as Cancel does
+        cursor_ = 2;
+        return {};
     case Page::Pause: {
         // The page each choice opens, in pause_choices' order; Resume and Quit close it.
         constexpr std::array<Page, 10> opens{Page::None,  Page::Items, Page::Skills,  Page::Quests,
@@ -586,7 +603,22 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
         white, one, render::Rect{0, 0, w, h},
         fade(render::Color{0, 0, 10, static_cast<std::uint8_t>(page_ == Page::Title ? 120 : 150)}));
     const std::vector<std::string> items = choices(saves);
-    if (page_ == Page::Title || (page_ == Page::Load && from_title_)) {
+    if (page_ == Page::Credits) {
+        // The credits roll up the screen, centred, then start again.
+        constexpr double speed = 20.0; // pixels a second
+        const float total = line * static_cast<float>(credits_.size() + 1);
+        const float travel = h + total;
+        const auto offset =
+            static_cast<float>(std::fmod(credits_seconds_ * speed, static_cast<double>(travel)));
+        for (std::size_t k = 0; k < credits_.size(); ++k) {
+            const float y = std::floor(h - offset + (line * static_cast<float>(k)));
+            if (y < -line || y > h) {
+                continue;
+            }
+            const auto tw = static_cast<float>(ui::measure(font, credits_[k]));
+            write(credits_[k], std::floor((w - tw) / 2.0F), y, k == 0 ? gold : text);
+        }
+    } else if (page_ == Page::Title || (page_ == Page::Load && from_title_)) {
         // The game's name, in the upper third, and the choices below it, centred.
         // Twice the size while it fits, as titles are.
         const int big = static_cast<float>(ui::measure(font, title) * 2) <= w - 8.0F ? 2 : 1;

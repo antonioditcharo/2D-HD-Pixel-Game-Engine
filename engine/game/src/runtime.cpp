@@ -1001,6 +1001,25 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     r.dialogue.set_translations(&r.translations);
     r.menu.set_translations(&r.translations);
     r.menu.set_theme(&r.settings.ui);
+    // Credits, from the project's credits.txt: a line each.
+    if (const assets::AssetRecord* record = r.assets.find("credits.txt")) {
+        if (const std::optional<std::vector<std::uint8_t>> bytes = r.assets.read(record->guid)) {
+            std::vector<std::string> lines;
+            std::string line;
+            for (const std::uint8_t c : *bytes) {
+                if (c == '\n') {
+                    lines.push_back(line);
+                    line.clear();
+                } else if (c != '\r') {
+                    line += static_cast<char>(c);
+                }
+            }
+            if (!line.empty()) {
+                lines.push_back(line);
+            }
+            r.menu.set_credits(std::move(lines));
+        }
+    }
     if (!r.vm->bind("tables", reflect::ObjectRef::of(r.tables))) {
         issues.push_back(
             serialize::Issue{"", "The tables object could not be made available to logic."});

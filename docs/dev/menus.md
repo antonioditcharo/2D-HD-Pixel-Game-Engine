@@ -23,6 +23,10 @@ name, twice the size, and **New game**, **Continue** and **Quit**. *When the gam
 Rules run only on New game. Continue lists save slots 1 to 3 (*(empty)* where nothing is
 saved; an empty one says so); choosing one loads it; Cancel goes back to the title.
 
+**Credits.** A project with `assets/credits.txt` has **Credits** on the title screen,
+before Quit: its lines roll up the screen, centred, the first in the highlight colour,
+round again until Interact or Cancel goes back to the title.
+
 **The pause menu** opens on the Menu key (Escape, or Start on a gamepad) while nothing else
 is open (not during a message or a battle): **Resume**, **Items** and **Skills** (below),
 **Quests** (the journal: [game.md](game.md)), **Party** (each member's level, HP and MP now,

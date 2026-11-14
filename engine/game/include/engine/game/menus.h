@@ -44,7 +44,8 @@ public:
         Equip,
         Options,
         Save,
-        Load
+        Load,
+        Credits
     };
     /// What the player chose on the Options page.
     struct Options {
@@ -91,8 +92,15 @@ public:
     void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
     void open_title();
     void open_pause();
-    /// Time passing, for opening: the menu fades in.
-    void advance(double seconds) noexcept { open_seconds_ += seconds; }
+    /// Time passing, for opening: the menu fades in, and the credits roll.
+    void advance(double seconds) noexcept {
+        open_seconds_ += seconds;
+        credits_seconds_ += seconds;
+    }
+    /// The credits, a line each (the project's credits.txt); with any, the title screen
+    /// offers Credits.
+    void set_credits(std::vector<std::string> lines) { credits_ = std::move(lines); }
+    [[nodiscard]] const std::vector<std::string>& credits() const noexcept { return credits_; }
     void close() noexcept { page_ = Page::None; }
     [[nodiscard]] bool open() const noexcept { return page_ != Page::None; }
     [[nodiscard]] Page page() const noexcept { return page_; }
@@ -140,6 +148,8 @@ private:
     [[nodiscard]] const UiTheme& theme() const noexcept;
     const UiTheme* theme_ = nullptr;
     double open_seconds_ = 1.0; ///< Since it opened.
+    std::vector<std::string> credits_;
+    double credits_seconds_ = 0.0; ///< Since the credits began to roll.
     PartyObject* party_ = nullptr;
     const TablesObject* tables_ = nullptr;
     InventoryObject* inventory_ = nullptr;

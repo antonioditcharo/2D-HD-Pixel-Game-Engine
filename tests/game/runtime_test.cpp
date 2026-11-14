@@ -4221,3 +4221,30 @@ TEST_CASE("Achievements: unlocked once, kept for the player across runs, and ann
     again->step();
     CHECK(std::count(again->log().begin(), again->log().end(), "1") == 1);
 }
+
+TEST_CASE("Credits: offered on the title screen when the game has credits.txt") {
+    const game::SaveObject saves([] { return std::filesystem::path{}; });
+    game::GameMenu menu;
+    menu.open_title();
+    CHECK(menu.choices(saves).size() == 3); // no credits: New game, Continue, Quit
+    menu.set_credits({"My game", "Made by me"});
+    CHECK(menu.choices(saves) ==
+          std::vector<std::string>{"New game", "Continue", "Credits", "Quit"});
+    static_cast<void>(menu.press("move_down", saves));
+    static_cast<void>(menu.press("move_down", saves));
+    static_cast<void>(menu.press("interact", saves));
+    CHECK(menu.page() == game::GameMenu::Page::Credits);
+    static_cast<void>(menu.press("cancel", saves));
+    CHECK(menu.page() == game::GameMenu::Page::Title);
+    CHECK(menu.cursor() == 2);
+    // Quit is now the fourth.
+    static_cast<void>(menu.press("move_down", saves));
+    CHECK(menu.press("interact", saves).kind == game::GameMenu::Result::Kind::Quit);
+
+    // The runtime reads the project's credits.txt.
+    const Project project;
+    std::ofstream(project.folder.path / "assets/credits.txt", std::ios::binary)
+        << "Test game\r\nMade with Sparxel\n";
+    const auto runtime = project.open(no_graphics(nullptr));
+    CHECK(runtime->menu().credits() == std::vector<std::string>{"Test game", "Made with Sparxel"});
+}
