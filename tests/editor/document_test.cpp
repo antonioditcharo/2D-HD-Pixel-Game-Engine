@@ -3358,6 +3358,7 @@ TEST_CASE("A new RPG: a village with an elder, a shop, a slime, menus and a HUD,
         CHECK(d->world().get<game::ScreenText>(d->world().find_named("gold").at(0)) != nullptr);
         CHECK(d->check_logic("logic/village.drules").empty());
         CHECK(d->settings().title_screen);
+        CHECK(d->settings().box_frame == "art/panel.png"); // boxes framed as the gold is
         CHECK(d->settings().pause_menu);
     }
     engine::input::Recording replay;

@@ -151,6 +151,9 @@ public:
     explicit BattleScreen(Battle battle);
     /// The colours it is drawn with (the project's); null for the standard ones.
     void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
+    /// The picture its boxes are drawn with (null, or one without a picture: the look's
+    /// colours). Kept by the caller.
+    void set_frame(const BoxFrame* frame) noexcept { frame_ = frame; }
     /// With a picture behind the battle, the screen dims it less than it dims the world.
     void set_backdrop(bool picture) noexcept { backdrop_ = picture; }
 
@@ -192,6 +195,7 @@ private:
     bool backdrop_ = false;
     [[nodiscard]] const UiTheme& theme() const noexcept;
     const UiTheme* theme_ = nullptr;
+    const BoxFrame* frame_ = nullptr;
 };
 
 } // namespace engine::game

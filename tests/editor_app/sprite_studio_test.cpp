@@ -238,4 +238,11 @@ TEST_CASE("The style guide: a palette from a picture, shown, and new sprites sta
     font->setCurrentIndex(elder);
     Q_EMIT font->activated(elder);
     CHECK(p.window.document()->settings().font == "art/elder.png");
+    // The boxes' frame, the same way.
+    auto* frame = panel->findChild<QComboBox*>(QStringLiteral("setting:box_frame"));
+    REQUIRE(frame != nullptr);
+    const int tiles = frame->findData(QStringLiteral("art/tiles.png"));
+    REQUIRE(tiles > 0);
+    Q_EMIT frame->activated(tiles);
+    CHECK(p.window.document()->settings().box_frame == "art/tiles.png");
 }

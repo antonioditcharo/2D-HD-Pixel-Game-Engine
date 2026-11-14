@@ -226,7 +226,5 @@ like any other property.
 1. **Vector fonts** through FreeType and HarfBuzz (ADR-010), with fallbacks per language
    (feature G7); pixel fonts from a picture are done (§2). The editor's scene view still
    shows Screen Text in the system's font.
-2. **Box frames:** the message box, menus and shops drawn with a 9-slice frame picture
-   from the UI look (Screen Pictures already stretch one; `nine_slice()`).
-3. **Layouts for on-screen elements:** stacks and grids that place Screen Text, Bars and
+2. **Layouts for on-screen elements:** stacks and grids that place Screen Text, Bars and
    Pictures together, so a party's HP bars line up by themselves (feature K1).

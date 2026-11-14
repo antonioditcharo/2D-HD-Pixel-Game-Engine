@@ -46,7 +46,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 39> known_project_keys{"format",
+constexpr std::array<std::string_view, 41> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -82,6 +82,8 @@ constexpr std::array<std::string_view, 39> known_project_keys{"format",
                                                               "palette",
                                                               "font",
                                                               "font_characters",
+                                                              "box_frame",
+                                                              "box_frame_edge",
                                                               "ui",
                                                               "music_while_talking",
                                                               "minimap"};
@@ -331,6 +333,7 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     text("palette", settings.palette, false);
     text("font", settings.font, false);
     text("font_characters", settings.font_characters, false);
+    text("box_frame", settings.box_frame, false);
     // The menus' and messages' colours: each "#rrggbb"; those missing keep the standard.
     if (const auto ui = doc.find("ui"); ui != doc.end() && ui->is_object()) {
         for (const auto& [key, field] :
@@ -407,6 +410,7 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     number("camera_smoothing", settings.camera_smoothing, 0.0, 2.0);
     number("day_minutes", settings.day_minutes, 0.0, 1440.0);
     number("text_speed", settings.text_speed, 0.0, 1000.0);
+    number("box_frame_edge", settings.box_frame_edge, 0.0, 64.0);
     number("music_while_talking", settings.music_while_talking, 0.0, 1.0);
     number("start_hour", settings.start_hour, 0.0, 24.0);
     number("camera_dead_zone", settings.camera_dead_zone, 0.0, 16.0);
@@ -572,6 +576,10 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     if (!settings.font.empty()) {
         json["font"] = settings.font;
         json["font_characters"] = settings.font_characters;
+    }
+    if (!settings.box_frame.empty()) {
+        json["box_frame"] = settings.box_frame;
+        json["box_frame_edge"] = settings.box_frame_edge;
     }
     json["width"] = settings.width;
     json["height"] = settings.height;
@@ -898,7 +906,17 @@ struct Runtime::Impl {
     std::unique_ptr<scene2d::SheetLibrary> sheets;
     std::unique_ptr<render::Texture> font;              ///< The font's atlas.
     ui::PixelFont font_face = ui::PixelFont::builtin(); ///< The project's font, or the built-in.
-    std::unique_ptr<render::Texture> white;             ///< One white pixel, for boxes.
+    BoxFrame box_frame; ///< The boxes' picture (settings.box_frame), if any.
+    /// Finds box_frame's texture again (when the game opens, and assets change).
+    void find_box_frame() {
+        box_frame.edge = static_cast<float>(
+            std::isfinite(settings.box_frame_edge) ? settings.box_frame_edge : 3.0);
+        const assets::AssetRecord* record =
+            settings.box_frame.empty() ? nullptr : assets.find(settings.box_frame);
+        box_frame.texture =
+            record != nullptr && textures != nullptr ? textures->get(record->guid) : nullptr;
+    }
+    std::unique_ptr<render::Texture> white; ///< One white pixel, for boxes.
 };
 
 Runtime::Runtime(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -1039,6 +1057,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
     r.dialogue.set_translations(&r.translations);
     r.menu.set_translations(&r.translations);
     r.menu.set_theme(&r.settings.ui);
+    r.menu.set_frame(&r.box_frame);
     // Credits, from the project's credits.txt: a line each.
     if (const assets::AssetRecord* record = r.assets.find("credits.txt")) {
         if (const std::optional<std::vector<std::uint8_t>> bytes = r.assets.read(record->guid)) {
@@ -1209,6 +1228,7 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
         }
         const ui::PixelFont& font = r.font_face;
         r.font = r.device->create_texture(font.atlas_width(), font.atlas_height(), font.atlas());
+        r.find_box_frame();
         const std::array<std::uint8_t, 4> white{255, 255, 255, 255};
         r.white = r.device->create_texture(1, 1, white);
         if (r.font == nullptr || r.white == nullptr) {
@@ -1646,6 +1666,7 @@ void Runtime::step() {
         if (fight) {
             r.battle_screen.emplace(std::move(*fight));
             r.battle_screen->set_theme(&r.settings.ui);
+            r.battle_screen->set_frame(&r.box_frame);
             r.battle.set_fighting(true);
             r.battle_picture = r.picture_wanted && !r.picture_wanted->empty()
                                    ? *r.picture_wanted
@@ -1668,6 +1689,7 @@ void Runtime::step() {
         }
         r.shop_screen.emplace(std::move(wares), items);
         r.shop_screen->set_theme(&r.settings.ui);
+        r.shop_screen->set_frame(&r.box_frame);
         r.inventory.set_shopping(true);
     }
     if (r.shop_screen && r.shop_screen->closed()) {
@@ -2084,25 +2106,13 @@ bool Runtime::draw() {
             const auto open = static_cast<float>(std::clamp(r.box_seconds / opening, 0.0, 1.0));
             const float h = std::max(2.0F, std::floor(box.height * open));
             const float y = std::floor(box.y + ((box.height - h) / 2.0F));
-            const auto faded = [open](render::Color c) {
-                c.a = static_cast<std::uint8_t>(static_cast<float>(c.a) * open);
-                return c;
-            };
-            r.sprites->draw(*r.white, one, render::Rect{box.x, y, box.width, h},
-                            faded(r.settings.ui.border));
-            r.sprites->draw(
-                *r.white, one,
-                render::Rect{box.x + 1.0F, y + 1.0F, box.width - 2.0F, std::max(0.0F, h - 2.0F)},
-                faded(r.settings.ui.box));
+            draw_box(*r.sprites, *r.white, r.settings.ui, &r.box_frame,
+                     render::Rect{box.x, y, box.width, h}, open);
             static_cast<void>(r.sprites->end());
             return true;
         }
-        r.sprites->draw(*r.white, one, render::Rect{box.x, box.y, box.width, box.height},
-                        r.settings.ui.border);
-        r.sprites->draw(
-            *r.white, one,
-            render::Rect{box.x + 1.0F, box.y + 1.0F, box.width - 2.0F, box.height - 2.0F},
-            r.settings.ui.box);
+        draw_box(*r.sprites, *r.white, r.settings.ui, &r.box_frame,
+                 render::Rect{box.x, box.y, box.width, box.height});
         const SpeakerLook& look = speaker_look(r.dialogue, r.cast);
         // The speaker's portrait, standing on the box's right end, as large as drawn
         // (smaller only if the screen has no room).
@@ -2184,10 +2194,8 @@ bool Runtime::draw() {
                 (2.0F * message_padding);
             const float x = std::max(box.x + box.width - width, message_margin);
             const float y = std::max(box.y - 2.0F - height, message_margin);
-            r.sprites->draw(*r.white, one, render::Rect{x, y, width, height}, r.settings.ui.border);
-            r.sprites->draw(*r.white, one,
-                            render::Rect{x + 1.0F, y + 1.0F, width - 2.0F, height - 2.0F},
-                            r.settings.ui.box);
+            draw_box(*r.sprites, *r.white, r.settings.ui, &r.box_frame,
+                     render::Rect{x, y, width, height});
             for (std::size_t i = 0; i < choices.size(); ++i) {
                 const float line_y = y + message_padding +
                                      static_cast<float>(static_cast<int>(i) * font.line_height());
@@ -2314,12 +2322,9 @@ bool Runtime::draw() {
         const double in_out = std::min({seconds / 0.25, (3.0 - seconds) / 0.25, 1.0});
         const float y = std::floor(-height + (static_cast<float>(in_out) * (height + 4.0F)));
         const float x = std::floor((static_cast<float>(r.target->width()) - width) / 2.0F);
-        const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
         r.sprites->begin_over(*r.target);
-        r.sprites->draw(*r.white, one, render::Rect{x, y, width, height}, r.settings.ui.border);
-        r.sprites->draw(*r.white, one,
-                        render::Rect{x + 1.0F, y + 1.0F, width - 2.0F, height - 2.0F},
-                        r.settings.ui.box);
+        draw_box(*r.sprites, *r.white, r.settings.ui, &r.box_frame,
+                 render::Rect{x, y, width, height});
         ui::draw_text(*r.sprites, *r.font, font, title, x + 6.0F, y + 4.0F, r.settings.ui.dim);
         ui::draw_text(*r.sprites, *r.font, font, text, x + 6.0F, y + 4.0F + line,
                       r.settings.ui.highlight);
@@ -3069,6 +3074,7 @@ std::size_t Runtime::reload_changed() {
     }
     if (r.textures != nullptr) {
         r.textures->apply(changes);
+        r.find_box_frame();
     }
     if (r.sheets != nullptr) {
         r.sheets->apply(changes);

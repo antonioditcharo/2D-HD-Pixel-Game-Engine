@@ -764,6 +764,9 @@ bool create_project(const fs::path& folder, std::string_view name, std::string& 
         settings.look.tilt_shift = true;
     }
     if (rpg) {
+        // Its boxes in the same frame as the gold's panel.
+        settings.box_frame = "art/panel.png";
+        settings.box_frame_edge = 2.0;
         settings.title_screen = true;
         settings.pause_menu = true;
         settings.text_speed = 40.0;

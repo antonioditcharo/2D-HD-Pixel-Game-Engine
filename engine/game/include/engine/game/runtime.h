@@ -81,6 +81,10 @@ struct ProjectSettings {
     /// The font picture's letters, in order (UTF-8); empty: printable ASCII from the space
     /// to '~'.
     std::string font_characters;
+    /// The picture every box is drawn with (messages, menus, shops, battles), a path in
+    /// assets/, stretched by its 9-slice edge; empty: the UI look's colours.
+    std::string box_frame;
+    double box_frame_edge = 3.0; ///< Pixels, 0 to 64.
     /// The colours of the menus and messages.
     UiTheme ui;
     /// A small map of the tiles around the player in the top-right corner.

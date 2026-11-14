@@ -55,6 +55,9 @@ public:
     void press(std::string_view action, InventoryObject& inventory);
     /// The colours it is drawn with (the project's); null for the standard ones.
     void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
+    /// The picture its boxes are drawn with (null, or one without a picture: the look's
+    /// colours). Kept by the caller.
+    void set_frame(const BoxFrame* frame) noexcept { frame_ = frame; }
     /// True once the player leaves.
     [[nodiscard]] bool closed() const noexcept { return closed_; }
 
@@ -89,6 +92,7 @@ private:
     bool closed_ = false;
     [[nodiscard]] const UiTheme& theme() const noexcept;
     const UiTheme* theme_ = nullptr;
+    const BoxFrame* frame_ = nullptr;
 };
 
 } // namespace engine::game

@@ -91,6 +91,16 @@ They are kept in the project file as `ui` (`box`, `border`, `text`, `dim`, `high
 Words in a message keep any colour given with `[color=…]` ([ui.md](ui.md)); the rest take
 the look's *Words*.
 
+**Box frame** draws every one of those boxes (and achievement notices) with a picture of
+the project instead of the *Box* and *Border* colours: a window skin, as RPG Maker and
+GB Studio have. Its **Frame edge** (pixels, 3 by default) is kept as drawn at each side
+while the middle stretches (9-slice, the same as Screen Pictures: [ui.md](ui.md)), so an
+8-pixel frame makes boxes of any size with crisp corners. Opening boxes fade it in as they
+do the colours. The RPG template frames its boxes with the gold's panel (`art/panel.png`,
+edge 2). A missing picture leaves the colours. It is kept in the project file as
+`box_frame` and `box_frame_edge` (written only when there is one). (`draw_box()` and
+`BoxFrame` in `engine/game/ui_theme.h`.)
+
 ## 3. Next increments
 
 1. **The UI designer** (`plan/02` K1): these screens as templates to restyle and rearrange,

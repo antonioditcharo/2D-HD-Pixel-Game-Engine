@@ -597,8 +597,7 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
         return c;
     };
     const auto box = [&](float x, float y, float bw, float bh) {
-        sprites.draw(white, one, render::Rect{x, y, bw, bh}, fade(ui.border));
-        sprites.draw(white, one, render::Rect{x + 1, y + 1, bw - 2, bh - 2}, fade(ui.box));
+        draw_box(sprites, white, ui, frame_, render::Rect{x, y, bw, bh}, appear);
     };
     const auto write = [&](const std::string& words, float x, float y, render::Color colour) {
         ui::draw_text(sprites, atlas, font, words, x, y, fade(colour));

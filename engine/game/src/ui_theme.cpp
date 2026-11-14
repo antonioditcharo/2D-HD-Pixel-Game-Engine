@@ -1,5 +1,9 @@
 #include "engine/game/ui_theme.h"
 
+#include "engine/game/hud.h"
+
+#include <algorithm>
+
 namespace engine::game {
 
 const std::array<UiThemePreset, 5>& ui_theme_presets() {
@@ -79,6 +83,30 @@ std::optional<render::Color> color_from_hex(std::string_view hex) {
         parts.at(i) = static_cast<std::uint8_t>((high * 16) + low);
     }
     return render::Color{parts[0], parts[1], parts[2], parts[3]};
+}
+
+void draw_box(render::SpriteRenderer& sprites, const render::Texture& white, const UiTheme& ui,
+              const BoxFrame* frame, render::Rect at, float opacity) {
+    const float keep = std::clamp(opacity, 0.0F, 1.0F);
+    const auto faded = [keep](render::Color c) {
+        c.a = static_cast<std::uint8_t>(static_cast<float>(c.a) * keep);
+        return c;
+    };
+    if (frame != nullptr && frame->texture != nullptr) {
+        const auto tw = static_cast<float>(frame->texture->width());
+        const auto th = static_cast<float>(frame->texture->height());
+        for (const SlicePiece& piece : nine_slice(tw, th, at, frame->edge)) {
+            sprites.draw(*frame->texture, piece.source, piece.destination,
+                         faded(render::Color{255, 255, 255, 255}));
+        }
+        return;
+    }
+    const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
+    sprites.draw(white, one, at, faded(ui.border));
+    sprites.draw(white, one,
+                 render::Rect{at.x + 1.0F, at.y + 1.0F, std::max(0.0F, at.w - 2.0F),
+                              std::max(0.0F, at.h - 2.0F)},
+                 faded(ui.box));
 }
 
 } // namespace engine::game

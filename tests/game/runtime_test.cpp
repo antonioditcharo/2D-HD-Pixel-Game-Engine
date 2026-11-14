@@ -4829,3 +4829,60 @@ TEST_CASE("A project's own font draws its words; a missing one falls back, sayin
     fallback->step();
     CHECK(fallback->draw());
 }
+
+TEST_CASE("A box frame: every box drawn with the project's picture, its corners crisp") {
+    if (test_support::gpu() == nullptr) {
+        return;
+    }
+    const Project project;
+    {
+        // A frame: red edges round a blue middle, 3 x 3, its edge 1 pixel.
+        assets::Image frame;
+        frame.width = 3;
+        frame.height = 3;
+        for (int i = 0; i < 9; ++i) {
+            const bool middle = i == 4;
+            frame.rgba.insert(frame.rgba.end(), {static_cast<std::uint8_t>(middle ? 0 : 255), 0,
+                                                 static_cast<std::uint8_t>(middle ? 255 : 0), 255});
+        }
+        const std::vector<std::uint8_t> png = assets::encode_png(frame);
+        std::ofstream(project.folder.path / "assets/art/frame.png", std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->box_frame = "art/frame.png";
+        settings->box_frame_edge = 1.0;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+        // Kept in the project's file.
+        std::vector<serialize::Issue> again;
+        const auto back = game::project_from_json(game::project_to_json(*settings), again);
+        REQUIRE(back.has_value());
+        if (!back) {
+            return;
+        }
+        CHECK(back->box_frame == "art/frame.png");
+        CHECK(back->box_frame_edge == 1.0);
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    runtime->dialogue().say("Hi.");
+    for (int i = 0; i < 8; ++i) {
+        runtime->step(); // the box opens over a tenth of a second
+    }
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    // The message box, from (4, 10) to (28, 28): the frame's red edge, its blue middle.
+    const render::Color red{255, 0, 0, 255};
+    CHECK(pixel(pixels, 32, 4, 10) == red);
+    CHECK(pixel(pixels, 32, 27, 27) == red);
+    CHECK(pixel(pixels, 32, 15, 10) == red); // the top edge, stretched
+    CHECK(pixel(pixels, 32, 6, 12) == render::Color{0, 0, 255, 255});
+    CHECK(pixel(pixels, 32, 3, 10) == background); // outside it
+}

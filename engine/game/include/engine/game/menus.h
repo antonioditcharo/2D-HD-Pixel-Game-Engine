@@ -90,6 +90,9 @@ public:
 
     /// The colours it is drawn with (the project's); null for the standard ones.
     void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
+    /// The picture its boxes are drawn with (null, or one without a picture: the look's
+    /// colours). Kept by the caller.
+    void set_frame(const BoxFrame* frame) noexcept { frame_ = frame; }
     void open_title();
     void open_pause();
     /// The save slots alone, as at a save point: Cancel goes back to the game.
@@ -149,6 +152,7 @@ private:
     const Translations* translations_ = nullptr;
     [[nodiscard]] const UiTheme& theme() const noexcept;
     const UiTheme* theme_ = nullptr;
+    const BoxFrame* frame_ = nullptr;
     double open_seconds_ = 1.0;  ///< Since it opened.
     bool at_save_point_ = false; ///< The save slots opened alone: Cancel closes them.
     std::vector<std::string> credits_;

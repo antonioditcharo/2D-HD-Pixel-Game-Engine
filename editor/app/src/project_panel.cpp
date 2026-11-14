@@ -477,6 +477,44 @@ void ProjectPanel::build() {
     }
     row->addStretch();
     menus->addRow(tr("Colours"), swatches);
+    // A picture every box is drawn with instead of the colours: a frame stretched by its
+    // 9-slice edge.
+    auto* frame = new QComboBox(content_);
+    frame->setObjectName(QStringLiteral("setting:box_frame"));
+    frame->setToolTip(tr("A picture every box is drawn with (messages, menus, shops, "
+                         "battles), its edges kept crisp as it stretches"));
+    frame->addItem(tr("(the colours)"), QString());
+    {
+        QStringList pictures;
+        for (const engine::assets::AssetRecord& record : document_->assets().assets()) {
+            if (record.importer == "image") {
+                pictures << text_of(record.path);
+            }
+        }
+        pictures.sort();
+        for (const QString& picture_path : pictures) {
+            frame->addItem(picture_path, picture_path);
+        }
+        const int chosen = frame->findData(text_of(now.box_frame));
+        if (chosen >= 0) {
+            frame->setCurrentIndex(chosen);
+        } else if (!now.box_frame.empty()) {
+            frame->addItem(tr("(missing) %1").arg(text_of(now.box_frame)), text_of(now.box_frame));
+            frame->setCurrentIndex(frame->count() - 1);
+        }
+    }
+    connect(frame, qOverload<int>(&QComboBox::activated), this, [this, frame, end](int index) {
+        const QByteArray bytes = frame->itemData(index).toString().toUtf8();
+        apply([&bytes](Settings& s) {
+            s.box_frame.assign(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+        });
+        end();
+    });
+    menus->addRow(tr("Box frame"), frame);
+    number(
+        menus, tr("Frame edge (pixels)"), "box_frame_edge", 0, 64, 1, 0,
+        [](const Settings& s) { return s.box_frame_edge; },
+        [](Settings& s, double v) { s.box_frame_edge = v; });
 
     QFormLayout* day = group(tr("Day and night"));
     number(
