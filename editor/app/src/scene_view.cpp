@@ -268,6 +268,8 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
     };
     QFont font = painter.font();
     font.setPixelSize(std::max(8, 7 * s));
+    // Hard-edged, as the game's pixel font is.
+    font.setStyleStrategy(QFont::NoAntialias);
     painter.setFont(font);
     const QFontMetricsF metrics(font);
     if (const auto* type = world.registry().find_type<engine::game::ScreenText>()) {

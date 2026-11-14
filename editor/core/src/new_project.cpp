@@ -672,9 +672,11 @@ bool create_project(const fs::path& folder, std::string_view name, std::string& 
         error = "The project's pictures could not be read back.";
         return false;
     }
+    // Kept as text: refreshing the database below replaces its records.
     const std::string tileset_id = tiles_png->guid.to_string();
+    const std::string hero_id = hero_png->guid.to_string();
     if (kind == ProjectTemplate::Platformer) {
-        return create_platformer(folder, name, error, tileset_id, hero_png->guid.to_string());
+        return create_platformer(folder, name, error, tileset_id, hero_id);
     }
     const bool rpg = kind == ProjectTemplate::Rpg;
     if (rpg && !write_rpg_files(folder / "assets")) {
@@ -699,7 +701,7 @@ bool create_project(const fs::path& folder, std::string_view name, std::string& 
                                           {"solid", true},
                                           {"height", 1.0}}},
                                         {"transform_2d", flat}}));
-    entities.push_back(entity("hero", {{"sprite", {{"image", hero_png->guid.to_string()}}},
+    entities.push_back(entity("hero", {{"sprite", {{"image", hero_id}}},
                                        {"top_down_mover", {{"speed", 4.0}}},
                                        {"transform_2d", {{"x", 10.0}, {"y", 6.0}}}}));
     if (rpg) {

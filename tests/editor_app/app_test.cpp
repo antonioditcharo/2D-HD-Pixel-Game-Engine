@@ -34,6 +34,7 @@
 #include <QToolButton>
 #include <QTreeView>
 #include <QTreeWidget>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -2241,7 +2242,9 @@ TEST_CASE("The scene view shows Screen Text where the game will") {
         int white = 0;
         for (int y = 0; y < shot.height(); ++y) {
             for (int x = 0; x < shot.width(); ++x) {
-                white += shot.pixelColor(x, y) == QColor(Qt::white) ? 1 : 0;
+                // Near white: fonts differ between systems (the bars' frames are greyer).
+                const QColor c = shot.pixelColor(x, y);
+                white += std::min({c.red(), c.green(), c.blue()}) >= 240 ? 1 : 0;
             }
         }
         CHECK(white > 20);
