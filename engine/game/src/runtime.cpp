@@ -15,6 +15,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -791,6 +792,9 @@ struct Runtime::Impl {
     BattleObject battle;
     std::optional<BattleScreen> battle_screen;
     std::optional<ShopScreen> shop_screen;
+    /// Achievements just unlocked, shown one after another at the top: the text, and how
+    /// long it has shown.
+    std::deque<std::pair<std::string, double>> toasts;
     // Testing from the editor.
     bool debug = false;
     DebugMenu debug_menu;
@@ -1635,6 +1639,23 @@ void Runtime::step() {
         const std::array<reflect::Value, 1> payload{reflect::Value{message}};
         r.vm->emit("game", "message", payload);
     }
+    // Achievements unlocked: kept in the player's file at once, and announced.
+    if (const std::vector<std::string> unlocked = r.save_object.take_unlocked();
+        !unlocked.empty()) {
+        save_achievements();
+        const Table* table = r.tables.find("data/achievements");
+        for (const std::string& id : unlocked) {
+            const std::optional<std::string> named =
+                table != nullptr ? table->text(id, "name") : std::nullopt;
+            r.toasts.emplace_back(named && !named->empty() ? *named : id, 0.0);
+        }
+    }
+    if (!r.toasts.empty()) {
+        r.toasts.front().second += dt;
+        if (r.toasts.front().second > 3.0) {
+            r.toasts.pop_front();
+        }
+    }
     // Things created and removed by logic.
     for (const SaveObject::Spawn& spawn : r.save_object.take_spawns()) {
         if (spawn.remove) {
@@ -1991,6 +2012,29 @@ bool Runtime::draw() {
     // The title screen or the pause menu, over everything.
     r.menu.draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(), r.settings.name,
                 r.save_object, r.inventory, r.quests, r.party);
+    // An achievement unlocked: a box at the top, sliding down, then up again.
+    if (!r.toasts.empty()) {
+        const auto& [text, seconds] = r.toasts.front();
+        const ui::PixelFont& font = ui::PixelFont::builtin();
+        const std::string title = r.translations.translate("Achievement unlocked");
+        const auto line = static_cast<float>(font.line_height());
+        const auto width =
+            static_cast<float>(std::max(ui::measure(font, title), ui::measure(font, text))) + 12.0F;
+        const float height = (line * 2.0F) + 8.0F;
+        const double in_out = std::min({seconds / 0.25, (3.0 - seconds) / 0.25, 1.0});
+        const float y = std::floor(-height + (static_cast<float>(in_out) * (height + 4.0F)));
+        const float x = std::floor((static_cast<float>(r.target->width()) - width) / 2.0F);
+        const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
+        r.sprites->begin_over(*r.target);
+        r.sprites->draw(*r.white, one, render::Rect{x, y, width, height}, r.settings.ui.border);
+        r.sprites->draw(*r.white, one,
+                        render::Rect{x + 1.0F, y + 1.0F, width - 2.0F, height - 2.0F},
+                        r.settings.ui.box);
+        ui::draw_text(*r.sprites, *r.font, font, title, x + 6.0F, y + 4.0F, r.settings.ui.dim);
+        ui::draw_text(*r.sprites, *r.font, font, text, x + 6.0F, y + 4.0F + line,
+                      r.settings.ui.highlight);
+        static_cast<void>(r.sprites->end());
+    }
     r.debug_menu.draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin());
     // How long frames take, in plain language (F3 while testing).
     if (r.debug && r.show_performance) {
@@ -2493,6 +2537,22 @@ std::string Runtime::create_copy(const SaveObject::Spawn& spawn, std::string& er
     return name;
 }
 
+void Runtime::save_achievements() {
+    Impl& r = *impl_;
+    const fs::path folder = r.save_object.folder();
+    serialize::Json names = serialize::Json::array();
+    for (const std::string& name : r.save_object.achievements()) {
+        names.push_back(name);
+    }
+    std::string error;
+    if (folder.empty() ||
+        !write_file_atomically(folder / achievements_file,
+                               serialize::to_text(serialize::Json{{"unlocked", names}}), error)) {
+        r.problems.push_back("Achievements not kept: " +
+                             (error.empty() ? std::string("no save folder") : error));
+    }
+}
+
 void Runtime::load_options() {
     Impl& r = *impl_;
     const fs::path folder = r.save_object.folder();
@@ -2511,6 +2571,25 @@ void Runtime::load_options() {
     }
     refresh_option_keys(r.menu.options(), r.state.map());
     apply_options();
+    // The player's achievements, from every game played before.
+    if (!folder.empty()) {
+        std::ifstream in(folder / achievements_file, std::ios::binary);
+        if (in) {
+            const std::string text((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            std::vector<serialize::Issue> ignored;
+            const std::optional<serialize::Json> json = serialize::parse(text, ignored);
+            std::set<std::string, std::less<>> names;
+            if (json && json->contains("unlocked") && (*json)["unlocked"].is_array()) {
+                for (const serialize::Json& name : (*json)["unlocked"]) {
+                    if (name.is_string()) {
+                        names.insert(name.get<std::string>());
+                    }
+                }
+            }
+            r.save_object.set_achievements(std::move(names));
+        }
+    }
 }
 
 void Runtime::save_options() {

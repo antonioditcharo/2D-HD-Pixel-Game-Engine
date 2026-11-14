@@ -443,6 +443,20 @@ Also on the **game** object, for parts of a game that wait for each other:
 Timers count while the game plays, not while the title screen or pause menu is open, and
 are saved with games, with their seconds left.
 
+### Achievements
+
+| Block | What it does |
+|---|---|
+| *Unlock the achievement {name}* | Kept for the player across every save and every time they play, and announced once |
+| *The achievement {name} is unlocked*, *The number of achievements unlocked* | A condition and a value |
+
+An achievement unlocked slides down at the top of the screen for three seconds
+(*Achievement unlocked* over its name, in the look of menus and messages), one after
+another. Its name is the `name` of its row of `data/achievements` (any other columns, such
+as a `description`, are for the creator), or else the name logic gave. They are kept in
+`achievements.json` beside the save slots, so loading an old save, or starting a new game,
+keeps them.
+
 ### Quests and the journal
 
 The **quests** object (`QuestObject`, [`quests.h`](../../engine/game/include/engine/game/quests.h))

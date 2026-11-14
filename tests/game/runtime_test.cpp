@@ -4157,3 +4157,67 @@ TEST_CASE("The music ducks while a message shows, and comes back after") {
     CHECK_FALSE(runtime->dialogue().is_open());
     CHECK(runtime->audio()->music_duck() == doctest::Approx(1.0));
 }
+
+TEST_CASE("Achievements: unlocked once, kept for the player across runs, and announced") {
+    const Project project;
+    {
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->width = 320;
+        settings->height = 180;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+        game::Table table;
+        table.columns = {{"name", game::ColumnKind::Text}};
+        table.rows.push_back({"first_steps", {{"name", "First steps"}}});
+        std::filesystem::create_directories(project.folder.path / "assets/data");
+        std::ofstream(project.folder.path / "assets/data/achievements.dtable", std::ios::binary)
+            << game::table_to_text(table);
+        logic::LogicAsset rules;
+        rules.name = "cheers";
+        rules.rules.push_back(
+            logic::Rule{logic::BlockId{1},
+                        "",
+                        "game_start",
+                        {},
+                        {ir::do_action(2, "game", "unlock", {Project::text("first_steps")}),
+                         ir::do_action(3, "game", "unlock", {Project::text("first_steps")}),
+                         ir::log(4, ir::call("game", "achievement_count"))},
+                        {}});
+        write_json(project.folder.path / "assets/logic/cheers.drules",
+                   serialize::logic_to_json(rules));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    for (int i = 0; i < 20; ++i) {
+        runtime->step();
+    }
+    CHECK(std::count(runtime->log().begin(), runtime->log().end(), "1") == 1);
+    // Kept in the player's file, once.
+    std::ifstream in(runtime->save_folder() / game::Runtime::achievements_file);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(text.find("first_steps") != std::string::npos);
+    CHECK(text.find("first_steps") == text.rfind("first_steps"));
+    // Announced at the top, in the look's highlight colour.
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    bool gold_on_top = false;
+    for (std::size_t y = 0; y < 30; ++y) {
+        for (std::size_t x = 0; x < 320; ++x) {
+            const std::size_t at = ((y * 320) + x) * 4;
+            gold_on_top = gold_on_top ||
+                          (pixels[at] == 255 && pixels[at + 1] == 210 && pixels[at + 2] == 122);
+        }
+    }
+    CHECK(gold_on_top);
+    // Another run remembers it: unlocking again counts no more.
+    const auto again = project.open(no_graphics(nullptr));
+    again->step();
+    CHECK(std::count(again->log().begin(), again->log().end(), "1") == 1);
+}

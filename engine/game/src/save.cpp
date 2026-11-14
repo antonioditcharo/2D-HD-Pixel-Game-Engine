@@ -96,6 +96,12 @@ std::vector<std::string> SaveObject::tick_timers(double seconds) {
     return ended;
 }
 
+void SaveObject::unlock(const std::string& name) {
+    if (!name.empty() && achievements_.insert(name).second) {
+        newly_.push_back(name);
+    }
+}
+
 void register_save_types(reflect::Registry& registry) {
     auto game = registry.add_type<SaveObject>("game").display_name("Game").category("Game").tooltip(
         "Saving and loading the player's progress.");
@@ -160,6 +166,16 @@ void register_save_types(reflect::Registry& registry) {
     game.event<std::string>("message", {"name"})
         .text("When a message is sent ({name})")
         .tooltip("Logic sent a message with Send the message.");
+    game.action<&SaveObject::unlock>("unlock", {"name"})
+        .text("Unlock the achievement {name}")
+        .tooltip("Kept for the player across every save, and announced once at the top of "
+                 "the screen. Names and descriptions come from data/achievements.");
+    game.condition<&SaveObject::unlocked>("unlocked", {"name"})
+        .text("The achievement {name} is unlocked")
+        .tooltip("Whether the player has unlocked it, in this game or another.");
+    game.getter<&SaveObject::achievement_count>("achievement_count")
+        .text("The number of achievements unlocked")
+        .tooltip("How many the player has unlocked.");
     game.getter<&SaveObject::last_created>("last_created")
         .text("The name of the last thing created")
         .tooltip("Such as coin_3: to remember it, or to remove it later.");

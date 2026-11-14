@@ -14,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -126,6 +127,26 @@ public:
     void send_message(const std::string& name) { messages_.push_back(name); }
     [[nodiscard]] std::vector<std::string> take_messages() { return std::exchange(messages_, {}); }
 
+    // ----- Achievements (plan/02 F1) -----
+    /// Unlocks an achievement (a row of data/achievements, or any name): kept for the player
+    /// across every save, and announced once.
+    void unlock(const std::string& name);
+    [[nodiscard]] bool unlocked(const std::string& name) const {
+        return achievements_.contains(name);
+    }
+    [[nodiscard]] std::int64_t achievement_count() const noexcept {
+        return static_cast<std::int64_t>(achievements_.size());
+    }
+    [[nodiscard]] const std::set<std::string, std::less<>>& achievements() const noexcept {
+        return achievements_;
+    }
+    /// Those unlocked before (read from the player's file at start): not announced again.
+    void set_achievements(std::set<std::string, std::less<>> names) {
+        achievements_ = std::move(names);
+    }
+    /// Unlocked since the last call, to announce and keep.
+    [[nodiscard]] std::vector<std::string> take_unlocked() { return std::exchange(newly_, {}); }
+
     /// The name of the last copy made, for Rules to act on it.
     [[nodiscard]] std::string last_created() const { return last_created_; }
     void set_last_created(std::string name) { last_created_ = std::move(name); }
@@ -140,6 +161,8 @@ private:
     std::vector<Spawn> spawns_;
     std::map<std::string, double, std::less<>> timers_;
     std::vector<std::string> messages_;
+    std::set<std::string, std::less<>> achievements_;
+    std::vector<std::string> newly_;
     std::string last_created_;
     std::optional<SceneRequest> scene_request_;
     std::string scene_path_;
