@@ -183,6 +183,12 @@ struct Brush {
     /// top to bottom.
     bool mirror_x = false;
     bool mirror_y = false;
+    /// Dither: only the pixels of a checkerboard are drawn, for gradients and textures.
+    bool dither = false;
+    /// Shade: each pixel drawn over moves one step along the palette towards the colour
+    /// drawn with (lighter or darker along its ramp), as Aseprite's shading ink; pixels not
+    /// in the palette, and see-through ones, stay.
+    bool shade = false;
 };
 
 /// Where a resized canvas keeps the old pixels.

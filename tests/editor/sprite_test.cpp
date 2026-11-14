@@ -565,3 +565,35 @@ TEST_CASE("Sound effects: each kind sounds its way, the same every time, and sav
         CHECK_FALSE(sfx::preset_name(preset).empty());
     }
 }
+
+TEST_CASE("Dither draws a checkerboard; Shade moves pixels one palette step towards the colour") {
+    sprite::Editor editor(sprite::Sprite::blank(4, 4));
+    sprite::Brush dither;
+    dither.dither = true;
+    CHECK(stroke(editor, Tool::FilledRectangle, red, {{0, 0}, {3, 3}}, dither));
+    CHECK(drawn(editor) == 8); // half of 16
+    CHECK(editor.sprite().pixel(0, 0, 0, 0) == red);
+    CHECK(editor.sprite().pixel(0, 0, 1, 0) == clear);
+
+    // A ramp of three in the palette: dark, middle, light.
+    sprite::Sprite ramp = sprite::Sprite::blank(4, 1);
+    const Color dark{40, 40, 40, 255};
+    const Color middle{120, 120, 120, 255};
+    const Color light{220, 220, 220, 255};
+    ramp.palette = {dark, middle, light};
+    sprite::Editor shading(std::move(ramp));
+    CHECK(stroke(shading, Tool::FilledRectangle, dark, {{0, 0}, {3, 0}}));
+    sprite::Brush shade;
+    shade.shade = true;
+    // Shading towards light: each pixel one step, once a stroke, however often passed over.
+    CHECK(stroke(shading, Tool::Pencil, light, {{0, 0}, {1, 0}, {0, 0}, {1, 0}}, shade));
+    CHECK(shading.sprite().pixel(0, 0, 0, 0) == middle);
+    CHECK(shading.sprite().pixel(0, 0, 1, 0) == middle);
+    CHECK(shading.sprite().pixel(0, 0, 2, 0) == dark); // not passed over
+    CHECK(stroke(shading, Tool::Pencil, light, {{0, 0}}, shade));
+    CHECK(shading.sprite().pixel(0, 0, 0, 0) == light);
+    // Back towards dark; at the end of the ramp it stays.
+    CHECK(stroke(shading, Tool::Pencil, dark, {{1, 0}}, shade));
+    CHECK(shading.sprite().pixel(0, 0, 1, 0) == dark);
+    CHECK_FALSE(stroke(shading, Tool::Pencil, dark, {{1, 0}}, shade));
+}

@@ -964,12 +964,36 @@ void Editor::redraw_drag() {
     const Rect clip = d.before.selection;
     const int w = sprite_.width;
     const int h = sprite_.height;
+    // Shading reads the picture as it was before the stroke, so each pixel moves one step.
+    const Image* before = d.base ? &*d.base : nullptr;
+    const std::vector<Color>& palette = sprite_.palette;
+    const auto palette_index = [&palette](Color c) -> std::ptrdiff_t {
+        const auto found = std::find(palette.begin(), palette.end(), c);
+        return found == palette.end() ? -1 : found - palette.begin();
+    };
+    const std::ptrdiff_t towards = palette_index(d.color);
     // One pixel of colour, kept inside the selection, mirrored as asked.
     const auto dot = [&](int x, int y) {
         const auto one = [&](int px, int py) {
-            if (clip.empty() || clip.contains(px, py)) {
-                put(image, px, py, d.color);
+            if (!clip.empty() && !clip.contains(px, py)) {
+                return;
             }
+            if (d.brush.dither && ((px + py) % 2) != 0) {
+                return; // the other squares of the checkerboard
+            }
+            if (d.brush.shade && d.tool != Tool::Eraser) {
+                if (before == nullptr || px < 0 || py < 0 || px >= w || py >= h) {
+                    return;
+                }
+                const Color now = get(*before, px, py);
+                const std::ptrdiff_t at = palette_index(now);
+                if (now.a == 0 || at < 0 || towards < 0 || at == towards) {
+                    return;
+                }
+                put(image, px, py, palette[static_cast<std::size_t>(at + (towards > at ? 1 : -1))]);
+                return;
+            }
+            put(image, px, py, d.color);
         };
         one(x, y);
         if (d.brush.mirror_x) {

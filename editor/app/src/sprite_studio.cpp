@@ -498,6 +498,12 @@ void SpriteStudio::build_tools() {
            QStringLiteral("mirror_x"), brush_.mirror_x, &sprite::Brush::mirror_x);
     toggle(tr("Mirror down"), tr("Everything drawn is mirrored top to bottom"),
            QStringLiteral("mirror_y"), brush_.mirror_y, &sprite::Brush::mirror_y);
+    toggle(tr("Dither"), tr("Only every other pixel, as a checkerboard: gradients and textures"),
+           QStringLiteral("dither"), brush_.dither, &sprite::Brush::dither);
+    toggle(tr("Shade"),
+           tr("Each pixel drawn over moves one palette step towards the colour drawn with: "
+              "shading along a ramp"),
+           QStringLiteral("shade"), brush_.shade, &sprite::Brush::shade);
 }
 
 void SpriteStudio::build_menus() {
