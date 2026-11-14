@@ -1,6 +1,8 @@
 #include "project_panel.h"
 
+#include "engine/assets/assets.h"
 #include "engine/game/ui_theme.h"
+#include "engine/scene2d/scene2d.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -11,14 +13,21 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QInputDialog>
+#include <QLabel>
 #include <QLineEdit>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <functional>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "editor/core/looks.h"
+#include "editor/core/sprite.h"
 
 namespace editor {
 
@@ -45,6 +54,41 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
 void ProjectPanel::set_document(Document* document) {
     document_ = document;
     refresh();
+}
+
+bool ProjectPanel::palette_from_picture(const QString& asset) {
+    if (document_ == nullptr) {
+        return false;
+    }
+    const engine::assets::AssetRecord* record = document_->assets().find(asset.toStdString());
+    const std::optional<std::vector<std::uint8_t>> bytes =
+        record != nullptr ? document_->assets().read(record->guid) : std::nullopt;
+    std::string error;
+    const std::optional<engine::assets::Image> image =
+        bytes ? engine::assets::decode_png(*bytes, error) : std::nullopt;
+    if (!image) {
+        Q_EMIT refused(tr("%1 is not a picture that can be read.").arg(asset));
+        return false;
+    }
+    std::vector<sprite::Color> colours;
+    for (const auto& rgb : scene2d::image_colors(*image, 64)) {
+        colours.push_back(sprite::Color{rgb[0], rgb[1], rgb[2], 255});
+    }
+    const std::string text = sprite::palette_text(colours);
+    apply([&text](Settings& s) { s.palette = text; });
+    document_->end_merge();
+    QTimer::singleShot(0, this, [this] { refresh(); });
+    return true;
+}
+
+void ProjectPanel::palette_from_sprite_studio() {
+    if (document_ == nullptr) {
+        return;
+    }
+    const std::string text = sprite::palette_text(sprite::default_palette());
+    apply([&text](Settings& s) { s.palette = text; });
+    document_->end_merge();
+    QTimer::singleShot(0, this, [this] { refresh(); });
 }
 
 void ProjectPanel::refresh() {
@@ -229,6 +273,77 @@ void ProjectPanel::build() {
                tr("Language codes, separated by commas (fr, de): Game > Collect texts to "
                   "translate makes a column for each"),
                now.languages, &Settings::languages);
+
+    // The style guide: the colours the game's art keeps to.
+    QFormLayout* style = group(tr("Style guide"));
+    auto* palette_line = new QLineEdit(text_of(now.palette), content_);
+    palette_line->setObjectName(QStringLiteral("setting:palette"));
+    palette_line->setPlaceholderText(tr("(any colours)"));
+    palette_line->setToolTip(tr("The colours the art keeps to, as #rrggbb: new sprites start "
+                                "with them, and Check the project notes pictures that use others"));
+    connect(palette_line, &QLineEdit::textEdited, this, [this](const QString& text) {
+        const QByteArray bytes = text.trimmed().toUtf8();
+        apply([&bytes](Settings& s) {
+            s.palette.assign(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+        });
+    });
+    connect(palette_line, &QLineEdit::editingFinished, this, [this, end] {
+        end();
+        QTimer::singleShot(0, this, [this] { refresh(); }); // the swatches again
+    });
+    style->addRow(tr("Palette"), palette_line);
+    // The palette as swatches, sixteen to a row.
+    const std::vector<sprite::Color> colours = sprite::parse_palette(now.palette);
+    if (!colours.empty()) {
+        constexpr int cell = 12;
+        constexpr int across = 16;
+        const int rows = (static_cast<int>(colours.size()) + across - 1) / across;
+        QPixmap strip(across * cell, rows * cell);
+        strip.fill(Qt::transparent);
+        QPainter painter(&strip);
+        for (std::size_t i = 0; i < colours.size(); ++i) {
+            const int at = static_cast<int>(i);
+            painter.fillRect((at % across) * cell, (at / across) * cell, cell - 1, cell - 1,
+                             QColor(colours[i].r, colours[i].g, colours[i].b));
+        }
+        painter.end();
+        auto* swatches = new QLabel(content_);
+        swatches->setObjectName(QStringLiteral("palette_swatches"));
+        swatches->setPixmap(strip);
+        swatches->setToolTip(tr("%n colour(s)", nullptr, static_cast<int>(colours.size())));
+        style->addRow(QString(), swatches);
+    }
+    auto* palette_buttons = new QWidget(content_);
+    auto* palette_row = new QHBoxLayout(palette_buttons);
+    palette_row->setContentsMargins(0, 0, 0, 0);
+    auto* from_picture = new QPushButton(tr("From a picture…"), palette_buttons);
+    from_picture->setToolTip(tr("The colours a picture of the project uses"));
+    auto* from_studio = new QPushButton(tr("Sprite Studio's"), palette_buttons);
+    from_studio->setToolTip(tr("Sprite Studio's own 32 colours, in ramps"));
+    palette_row->addWidget(from_picture);
+    palette_row->addWidget(from_studio);
+    palette_row->addStretch();
+    style->addRow(QString(), palette_buttons);
+    connect(from_studio, &QPushButton::clicked, this, [this] { palette_from_sprite_studio(); });
+    connect(from_picture, &QPushButton::clicked, this, [this] {
+        if (document_ == nullptr) {
+            return;
+        }
+        QStringList pictures;
+        for (const engine::assets::AssetRecord& record : document_->assets().assets()) {
+            if (record.importer == "image") {
+                pictures << text_of(record.path);
+            }
+        }
+        pictures.sort();
+        bool chosen = false;
+        const QString picture =
+            QInputDialog::getItem(this, tr("Palette from a picture"), tr("Take the colours of:"),
+                                  pictures, 0, false, &chosen);
+        if (chosen) {
+            palette_from_picture(picture);
+        }
+    });
 
     QFormLayout* menus = group(tr("Menus and messages"));
     number(

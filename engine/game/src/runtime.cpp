@@ -46,7 +46,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 36> known_project_keys{"format",
+constexpr std::array<std::string_view, 37> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -79,6 +79,7 @@ constexpr std::array<std::string_view, 36> known_project_keys{"format",
                                                               "text_speed",
                                                               "language",
                                                               "languages",
+                                                              "palette",
                                                               "ui",
                                                               "music_while_talking",
                                                               "minimap"};
@@ -321,6 +322,7 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     text("start_scene", settings.start_scene, true);
     text("language", settings.language, false);
     text("languages", settings.languages, false);
+    text("palette", settings.palette, false);
     // The menus' and messages' colours: each "#rrggbb"; those missing keep the standard.
     if (const auto ui = doc.find("ui"); ui != doc.end() && ui->is_object()) {
         for (const auto& [key, field] :
@@ -556,6 +558,9 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["look"] = std::move(look);
     json["gravity"] = serialize::Json::array({settings.gravity_x, settings.gravity_y});
     json["ppu"] = settings.ppu;
+    if (!settings.palette.empty()) {
+        json["palette"] = settings.palette;
+    }
     json["width"] = settings.width;
     json["height"] = settings.height;
     json["background"] = serialize::Json::array(

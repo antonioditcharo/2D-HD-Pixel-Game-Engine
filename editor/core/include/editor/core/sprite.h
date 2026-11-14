@@ -136,6 +136,11 @@ struct Sprite {
 /// The default palette of a new sprite: 32 colours in ramps (greys, skin, reds, oranges,
 /// greens, blues, purples) suited to pixel art, first transparent-free black and white.
 [[nodiscard]] std::vector<Color> default_palette();
+/// The colours of a palette written as text, "#1a1c2c #5d275d, ...": each "#rrggbb" (opaque),
+/// in order, without repeats; anything else is skipped.
+[[nodiscard]] std::vector<Color> parse_palette(std::string_view text);
+/// A palette as parse_palette() reads it: "#1a1c2c #5d275d".
+[[nodiscard]] std::string palette_text(const std::vector<Color>& colors);
 
 /// Reads a ".dsprite" file. Returns nothing, with `error` in plain language, if it cannot.
 [[nodiscard]] std::optional<Sprite> load(const std::filesystem::path& path, std::string& error);

@@ -1,6 +1,7 @@
 // The asset browser's tools: what uses an asset, and renaming one without breaking it.
 
 #include "engine/foundation/guid.h"
+#include "engine/game/runtime.h"
 
 #include <doctest/doctest.h>
 
@@ -12,6 +13,9 @@
 #include <vector>
 
 #include "editor/core/asset_tools.h"
+#include "editor/core/doctor.h"
+#include "editor/core/document.h"
+#include "editor/core/sprite.h"
 
 namespace fs = std::filesystem;
 using engine::Guid;
@@ -122,4 +126,55 @@ TEST_CASE("Renaming a table rewrites references with and without its extension")
     CHECK(changed == std::vector<std::string>{"logic/loot.drules"});
     CHECK(read_all(assets / "logic" / "loot.drules") ==
           R"({"table": "data/treasure", "file": "data/treasure.dtable", "other": "data/looted"})");
+}
+
+TEST_CASE("The style guide's palette: read, kept in the project, and checked against") {
+    namespace sprite = editor::sprite;
+    const std::vector<sprite::Color> colours =
+        sprite::parse_palette("#1a1c2c, #FF0000 #ff0000 #12 nonsense#00ff00");
+    REQUIRE(colours.size() == 3); // the repeat and the short one skipped
+    CHECK(colours[1] == sprite::Color{255, 0, 0, 255});
+    CHECK(sprite::palette_text(colours) == "#1a1c2c #ff0000 #00ff00");
+    CHECK(sprite::parse_palette("").empty());
+
+    // Kept in the project's file, and left out when there is none.
+    engine::game::ProjectSettings settings;
+    settings.name = "Styled";
+    settings.start_scene = "maps/a.dscene";
+    CHECK_FALSE(engine::game::project_to_json(settings).contains("palette"));
+    settings.palette = "#1a1c2c #ff0000";
+    std::vector<engine::serialize::Issue> issues;
+    const auto back =
+        engine::game::project_from_json(engine::game::project_to_json(settings), issues);
+    REQUIRE(back.has_value());
+    if (!back) {
+        return;
+    }
+    CHECK(back->palette == "#1a1c2c #ff0000");
+    CHECK(issues.empty());
+
+    // Check the project: a note for each picture with colours outside it.
+    const Sample s;
+    std::vector<engine::serialize::Issue> opened;
+    const auto document = editor::Document::open(s.path, opened);
+    REQUIRE(document != nullptr);
+    const auto notes = [&document] {
+        std::vector<editor::Finding> out;
+        for (const editor::Finding& f : editor::examine(*document)) {
+            if (f.message.find("outside the project's palette") != std::string::npos) {
+                out.push_back(f);
+            }
+        }
+        return out;
+    };
+    CHECK(notes().empty()); // no palette, nothing to keep to
+    engine::game::ProjectSettings styled = document->settings();
+    styled.palette = "#000000";
+    std::string error;
+    REQUIRE(document->set_settings(styled, error));
+    const std::vector<editor::Finding> found = notes();
+    REQUIRE(found.size() == 3); // the elder, the hero, the tiles
+    CHECK(found[0].severity == editor::Finding::Severity::Note);
+    CHECK(found[0].asset.starts_with("art/"));
+    CHECK(found[0].message.find(" more.") != std::string::npos);
 }

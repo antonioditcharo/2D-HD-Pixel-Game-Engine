@@ -13,6 +13,8 @@
 #include <set>
 #include <variant>
 
+#include "editor/core/sprite.h"
+
 namespace editor {
 
 namespace fs = std::filesystem;
@@ -90,6 +92,56 @@ void check_scene(const world::World& scene, const std::string& path,
 
 } // namespace
 
+namespace {
+
+/// A note for each picture using colours outside `palette` (its see-through pixels aside).
+void check_palette(const engine::assets::AssetDatabase& assets,
+                   const std::vector<sprite::Color>& palette, std::vector<Finding>& found) {
+    for (const engine::assets::AssetRecord& record : assets.assets()) {
+        if (record.importer != "image") {
+            continue;
+        }
+        const std::optional<std::vector<std::uint8_t>> bytes = assets.read(record.guid);
+        std::string error;
+        const std::optional<engine::assets::Image> image =
+            bytes ? engine::assets::decode_png(*bytes, error) : std::nullopt;
+        if (!image) {
+            continue;
+        }
+        std::vector<sprite::Color> outside;
+        for (std::size_t i = 0; i + 3 < image->rgba.size(); i += 4) {
+            if (image->rgba[i + 3] == 0) {
+                continue;
+            }
+            const sprite::Color c{image->rgba[i], image->rgba[i + 1], image->rgba[i + 2], 255};
+            if (std::ranges::find(palette, c) == palette.end() &&
+                std::ranges::find(outside, c) == outside.end()) {
+                outside.push_back(c);
+            }
+        }
+        if (outside.empty()) {
+            continue;
+        }
+        const std::size_t shown = std::min<std::size_t>(outside.size(), 4);
+        std::string message =
+            record.path + " uses " + std::to_string(outside.size()) +
+            (outside.size() == 1 ? " colour" : " colours") + " outside the project's palette: " +
+            sprite::palette_text(
+                {outside.begin(), outside.begin() + static_cast<std::ptrdiff_t>(shown)});
+        if (outside.size() > shown) {
+            message += " and " + std::to_string(outside.size() - shown) + " more";
+        }
+        message += ". Recolour them in Sprite Studio, or add them to the palette (Project).";
+        Finding f;
+        f.severity = Finding::Severity::Note;
+        f.message = std::move(message);
+        f.asset = record.path;
+        found.push_back(std::move(f));
+    }
+}
+
+} // namespace
+
 std::vector<Finding> examine(const Document& document) {
     std::vector<Finding> found;
     const engine::assets::AssetDatabase& assets = document.assets();
@@ -105,6 +157,12 @@ std::vector<Finding> examine(const Document& document) {
                     "the game in this scene.";
         f.asset = settings.start_scene;
         found.push_back(std::move(f));
+    }
+
+    // The style guide: pictures that use colours outside the project's palette.
+    if (const std::vector<sprite::Color> palette = sprite::parse_palette(settings.palette);
+        !palette.empty()) {
+        check_palette(assets, palette, found);
     }
 
     // Every scene: the open one as it is now, the others as saved.

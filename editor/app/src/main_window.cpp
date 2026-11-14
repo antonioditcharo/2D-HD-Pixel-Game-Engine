@@ -1451,7 +1451,13 @@ SpriteStudio* MainWindow::new_sprite(const QString& name, int width, int height)
     }
     fs::create_directories(file.parent_path(), ignored);
     std::string error;
-    if (!sprite::save(sprite::Sprite::blank(width, height), file, error)) {
+    sprite::Sprite made = sprite::Sprite::blank(width, height);
+    // With the style guide's palette, if the project keeps to one.
+    if (std::vector<sprite::Color> palette = sprite::parse_palette(document_->settings().palette);
+        !palette.empty()) {
+        made.palette = std::move(palette);
+    }
+    if (!sprite::save(made, file, error)) {
         report(tr("The sprite could not be made: %1").arg(text_of(error)));
         return nullptr;
     }

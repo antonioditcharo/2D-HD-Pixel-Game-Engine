@@ -3,6 +3,7 @@
 #include "engine/serialize/json.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -342,6 +343,47 @@ std::optional<Color> from_hex(std::string_view text) {
 
 Rect rect_between(int x0, int y0, int x1, int y1) noexcept {
     return {std::min(x0, x1), std::min(y0, y1), std::abs(x1 - x0) + 1, std::abs(y1 - y0) + 1};
+}
+
+std::vector<Color> parse_palette(std::string_view text) {
+    std::vector<Color> colors;
+    std::size_t at = 0;
+    while ((at = text.find('#', at)) != std::string_view::npos) {
+        const std::string_view hex = text.substr(at + 1, 6);
+        at += 1;
+        if (hex.size() != 6 || !std::ranges::all_of(hex, [](char c) {
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            })) {
+            continue;
+        }
+        const auto part = [&hex](std::size_t i) {
+            unsigned value = 0;
+            std::from_chars(hex.data() + i, hex.data() + i + 2, value, 16);
+            return static_cast<std::uint8_t>(value);
+        };
+        const Color c{part(0), part(2), part(4), 255};
+        if (std::ranges::find(colors, c) == colors.end()) {
+            colors.push_back(c);
+        }
+        at += 6;
+    }
+    return colors;
+}
+
+std::string palette_text(const std::vector<Color>& colors) {
+    constexpr std::string_view digits = "0123456789abcdef";
+    std::string out;
+    for (const Color& c : colors) {
+        if (!out.empty()) {
+            out += ' ';
+        }
+        out += '#';
+        for (const std::uint8_t v : {c.r, c.g, c.b}) {
+            out += digits[v >> 4U];
+            out += digits[v & 15U];
+        }
+    }
+    return out;
 }
 
 std::vector<Color> default_palette() {

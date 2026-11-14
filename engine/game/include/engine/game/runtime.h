@@ -70,6 +70,10 @@ struct ProjectSettings {
     std::string language;
     /// The languages "Collect texts to translate" makes columns for: "fr, de".
     std::string languages;
+    /// The style guide's palette (plan/02 A11): the colours the game's art keeps to,
+    /// "#1a1c2c #5d275d ...". New sprites start with it, and Check the project notes
+    /// pictures with colours outside it. Empty: no palette is kept to.
+    std::string palette;
     /// The colours of the menus and messages.
     UiTheme ui;
     /// A small map of the tiles around the player in the top-right corner.

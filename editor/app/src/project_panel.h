@@ -28,6 +28,11 @@ public:
     void set_document(Document* document);
     /// Puts the document's settings back into the fields (after undo, for example).
     void refresh();
+    /// Sets the style guide's palette to the colours `asset` (a picture in assets/) uses,
+    /// at most 64. False if it is not a picture that can be read.
+    bool palette_from_picture(const QString& asset);
+    /// Sets the style guide's palette to Sprite Studio's own 32 colours.
+    void palette_from_sprite_studio();
 
 Q_SIGNALS:
     /// The settings were changed here.

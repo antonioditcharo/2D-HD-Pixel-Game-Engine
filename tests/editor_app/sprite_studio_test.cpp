@@ -9,6 +9,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QImage>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QTableWidget>
@@ -17,6 +18,7 @@
 #include <string>
 
 #include "main_window.h"
+#include "project_panel.h"
 #include "scene_view.h"
 #include "sfx_generator.h"
 #include "sprite_studio.h"
@@ -194,4 +196,35 @@ TEST_CASE("File > New sound effect makes a sound of a kind and saves it into the
     CHECK(error == "There is a sound called boom already.");
     CHECK_FALSE(generator->save(QStringLiteral("../x"), error));
     generator->close();
+}
+
+TEST_CASE("The style guide: a palette from a picture, shown, and new sprites start with it") {
+    Project p;
+    editor::ProjectPanel* panel = p.window.project_panel();
+    REQUIRE(panel->palette_from_picture(QStringLiteral("art/elder.png")));
+    QApplication::processEvents();
+    const std::string palette = p.window.document()->settings().palette;
+    const std::vector<sprite::Color> colours = sprite::parse_palette(palette);
+    CHECK(colours.size() >= 3);
+    CHECK(panel->findChild<QLabel*>(QStringLiteral("palette_swatches")) != nullptr);
+    CHECK_FALSE(panel->palette_from_picture(QStringLiteral("maps/road.dscene")));
+    // One undo puts it back.
+    p.window.undo();
+    CHECK(p.window.document()->settings().palette.empty());
+    panel->palette_from_sprite_studio();
+    CHECK(sprite::parse_palette(p.window.document()->settings().palette) ==
+          sprite::default_palette());
+
+    // A sprite made now has the project's palette, not Sprite Studio's own.
+    p.window.undo();
+    REQUIRE(panel->palette_from_picture(QStringLiteral("art/elder.png")));
+    REQUIRE(p.window.new_sprite(QStringLiteral("villager"), 8, 8) != nullptr);
+    std::string error;
+    const std::optional<sprite::Sprite> made =
+        sprite::load(p.path / "assets" / "art" / "villager.dsprite", error);
+    REQUIRE(made.has_value());
+    if (!made) {
+        return;
+    }
+    CHECK(made->palette == colours);
 }
