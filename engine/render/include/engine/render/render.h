@@ -222,6 +222,15 @@ public:
     /// Starts drawing over what `target` already holds, for interfaces and text on top of
     /// a frame.
     void begin_over(RenderTarget& target);
+    /// How sprites queued from now on are blended (begin() sets Normal again).
+    enum class Blend : std::uint8_t {
+        Normal, ///< Over what is there, by the sprite's alpha.
+        /// Brightens what is there by the sprite's colour: what is there times one plus
+        /// it, as a lamp lights a wall, so the picture's own detail and colours show.
+        /// Black changes nothing; white doubles it. Alpha is not used.
+        Light,
+    };
+    void set_blend(Blend blend);
     /// Queues a sprite: the `source` pixels of `texture`, drawn to `destination`, multiplied
     /// by `tint`. Does nothing outside begin() and end().
     void draw(const Texture& texture, Rect source, Rect destination,

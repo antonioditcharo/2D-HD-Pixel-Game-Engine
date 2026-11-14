@@ -1058,6 +1058,29 @@ std::optional<assets::Image> TextureCache::load(Guid image) {
     return decoded;
 }
 
+const render::Texture* TextureCache::light_falloff() {
+    if (falloff_ == nullptr) {
+        constexpr std::uint32_t size = 128;
+        std::vector<std::uint8_t> rgba;
+        rgba.reserve(std::size_t{size} * size * 4);
+        const double middle = (static_cast<double>(size) - 1.0) / 2.0;
+        for (std::uint32_t y = 0; y < size; ++y) {
+            for (std::uint32_t x = 0; x < size; ++x) {
+                const double dx = (static_cast<double>(x) - middle) / (middle + 0.5);
+                const double dy = (static_cast<double>(y) - middle) / (middle + 0.5);
+                const double near = std::max(0.0, 1.0 - std::sqrt((dx * dx) + (dy * dy)));
+                const auto v = static_cast<std::uint8_t>(std::lround(near * near * 255.0));
+                rgba.insert(rgba.end(), {v, v, v, 255});
+            }
+        }
+        falloff_ = device_.create_texture(size, size, rgba);
+        if (falloff_ == nullptr) {
+            last_error_ = device_.last_error();
+        }
+    }
+    return falloff_.get();
+}
+
 void TextureCache::apply(const assets::AssetChanges& changes) {
     const auto forget = [this](Guid guid) {
         textures_.erase(guid);
@@ -1220,6 +1243,89 @@ double clamp_axis(double at, double low, double high, double min, double max) no
 std::array<double, 2> clamp_view(double x, double y, const Box& view, const Box& bounds) noexcept {
     return {clamp_axis(x, view.left, view.right, bounds.left, bounds.right),
             clamp_axis(y, view.top, view.bottom, bounds.top, bounds.bottom)};
+}
+
+double lights_2d_strength(double tint_r, double tint_g, double tint_b) {
+    const double sum = tint_r + tint_g + tint_b;
+    const double brightness = std::isfinite(sum) ? std::clamp(sum / 3.0, 0.0, 1.0) : 1.0;
+    return 0.25 + (0.75 * (1.0 - brightness));
+}
+
+std::size_t draw_lights_2d(const world::World& world, TextureCache& textures,
+                           render::SpriteRenderer& sprites, render::RenderTarget& target,
+                           const Camera2D& camera, const Lights2DShading& shading) {
+    const reflect::TypeInfo* light_type = world.registry().find_type<Light>();
+    const render::Texture* falloff = light_type != nullptr ? textures.light_falloff() : nullptr;
+    if (falloff == nullptr) {
+        return 0;
+    }
+    const double ppu = static_cast<double>(std::max<std::uint32_t>(camera.ppu, 1));
+    const double scale = static_cast<double>(std::max<std::uint32_t>(camera.scale, 1));
+    // As draw_world() places things: the camera on the target's middle pixel.
+    const std::uint32_t centre_x_pixel = target.width() / 2;
+    const std::uint32_t centre_y_pixel = target.height() / 2;
+    const auto centre_x = static_cast<double>(centre_x_pixel);
+    const auto centre_y = static_cast<double>(centre_y_pixel);
+    const render::Rect whole{0.0F, 0.0F, static_cast<float>(falloff->width()),
+                             static_cast<float>(falloff->height())};
+    std::size_t drawn = 0;
+    sprites.begin_over(target);
+    sprites.set_blend(render::SpriteRenderer::Blend::Light);
+    world.each(*light_type, [&](world::Entity entity, reflect::ObjectRef ref) {
+        const auto* light = ref.as<Light>();
+        const Transform2D* where = world.get<Transform2D>(entity);
+        if (light == nullptr || where == nullptr || !light->enabled ||
+            !std::isfinite(light->radius) || !std::isfinite(light->intensity) ||
+            light->radius <= 0.0 || light->intensity <= 0.0) {
+            return;
+        }
+        const double height = std::isfinite(light->height) ? light->height : 0.0;
+        const double x = centre_x + (std::round((where->x - camera.x) * ppu) * scale);
+        const double y = centre_y + (std::round((where->y - height - camera.y) * ppu) * scale);
+        const double r = std::min(light->radius, 32.0) * ppu * scale;
+        // What shows is the scene times (the look's tint plus the light), so the light is
+        // divided by the tint the look multiplies by afterwards. A light can brighten by
+        // more than double: drawn again, each time by an even share of the factor.
+        const double scale_by =
+            std::isfinite(shading.strength) ? std::clamp(shading.strength, 0.0, 1.0) : 1.0;
+        const double intensity = std::min(light->intensity, 8.0) * scale_by;
+        if (intensity <= 0.0) {
+            return;
+        }
+        // Its colour, as saturated as the look leaves colours.
+        const double grey =
+            (0.299 * light->color_r) + (0.587 * light->color_g) + (0.114 * light->color_b);
+        const double keep =
+            std::isfinite(shading.saturation) ? std::clamp(shading.saturation, 0.0, 2.0) : 1.0;
+        const auto saturated = [grey, keep](std::uint8_t c) {
+            return std::clamp(grey + ((static_cast<double>(c) - grey) * keep), 0.0, 255.0);
+        };
+        const std::array<double, 3> colour{saturated(light->color_r), saturated(light->color_g),
+                                           saturated(light->color_b)};
+        std::array<double, 3> factor{};
+        double most = 1.0;
+        for (std::size_t c = 0; c < 3; ++c) {
+            const double t = std::isfinite(shading.darkening.at(c))
+                                 ? std::max(shading.darkening.at(c), 0.05)
+                                 : 1.0;
+            factor.at(c) = 1.0 + (colour.at(c) / 255.0 * intensity / t);
+            most = std::max(most, factor.at(c));
+        }
+        const int passes = std::clamp(static_cast<int>(std::ceil(std::log2(most))), 1, 8);
+        const auto part = [passes](double f) {
+            const double each = std::pow(f, 1.0 / passes) - 1.0;
+            return static_cast<std::uint8_t>(std::lround(std::clamp(each, 0.0, 1.0) * 255.0));
+        };
+        const render::Color tint{part(factor[0]), part(factor[1]), part(factor[2]), 255};
+        const render::Rect to{static_cast<float>(x - r), static_cast<float>(y - r),
+                              static_cast<float>(2.0 * r), static_cast<float>(2.0 * r)};
+        for (int i = 0; i < passes; ++i) {
+            sprites.draw(*falloff, whole, to, tint);
+        }
+        ++drawn;
+    });
+    static_cast<void>(sprites.end());
+    return drawn;
 }
 
 DrawStats draw_world(const world::World& world, TextureCache& textures,

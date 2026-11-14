@@ -10,6 +10,8 @@
 #include "engine/foundation/reflect.h"
 #include "engine/scene2d/scene2d.h"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace engine::game {
@@ -51,6 +53,13 @@ struct LightingObject {
 /// bright high one at noon, blended between. The sun rises in the east (90 degrees) at 6
 /// and sets in the west (270) at 18; at night the moon lights from high in the south.
 [[nodiscard]] LightingObject daylight(double hours);
+/// How bright the Classic 2D style draws the world under `lighting`: its ambient and sun
+/// light together, 1 at most (the default 0.55 and 0.45 make 1, as at noon; night's 0.4).
+/// The Diorama style lights with them directly instead.
+[[nodiscard]] inline double classic_brightness(const LightingObject& lighting) {
+    const double sum = lighting.ambient + lighting.sun;
+    return std::isfinite(sum) ? std::clamp(sum, 0.05, 1.0) : 1.0;
+}
 /// One step of `seconds`: the clock runs (if it does) and, following the time, the light.
 void advance_day(LightingObject& lighting, double seconds);
 

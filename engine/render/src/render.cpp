@@ -475,6 +475,7 @@ std::unique_ptr<Window> Device::create_window(std::string_view title, std::uint3
 struct SpriteRenderer::Native {
     SDL_GPUDevice* device{nullptr};
     SDL_GPUGraphicsPipeline* pipeline{nullptr};
+    SDL_GPUGraphicsPipeline* light_pipeline{nullptr}; ///< Blend::Light.
     SDL_GPUSampler* sampler{nullptr};
     SDL_GPUBuffer* vertex_buffer{nullptr};
     std::uint32_t vertex_capacity = 0; ///< In vertices.
@@ -485,6 +486,8 @@ struct SpriteRenderer::Native {
     bool keep = false; ///< Draw over what the target holds instead of clearing it.
     std::vector<Vertex> vertices;
     std::vector<const Texture*> textures; ///< One per sprite.
+    std::vector<Blend> blends;            ///< One per sprite.
+    Blend blend = Blend::Normal;
 };
 
 SpriteRenderer::SpriteRenderer(Device& device, std::unique_ptr<Native> native)
@@ -494,6 +497,7 @@ SpriteRenderer::~SpriteRenderer() {
     release(native_->device, native_->vertex_buffer);
     SDL_ReleaseGPUSampler(native_->device, native_->sampler);
     SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->pipeline);
+    SDL_ReleaseGPUGraphicsPipeline(native_->device, native_->light_pipeline);
 }
 
 std::unique_ptr<SpriteRenderer> SpriteRenderer::create(Device& device) {
@@ -524,6 +528,7 @@ std::unique_ptr<SpriteRenderer> SpriteRenderer::create(Device& device) {
     SDL_GPUShader* fragment_shader = SDL_CreateGPUShader(gpu, &fragment_info);
 
     SDL_GPUGraphicsPipeline* pipeline = nullptr;
+    SDL_GPUGraphicsPipeline* light_pipeline = nullptr;
     if (vertex_shader == nullptr || fragment_shader == nullptr) {
         device.last_error_ = sdl_error("Creating the sprite shaders failed");
     } else {
@@ -559,13 +564,23 @@ std::unique_ptr<SpriteRenderer> SpriteRenderer::create(Device& device) {
         info.target_info.color_target_descriptions = &color;
         info.target_info.num_color_targets = 1;
         pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &info);
+        // Light: what is there, times one plus the sprite's colour; alpha kept.
+        SDL_GPUColorTargetDescription lit = color;
+        lit.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_DST_COLOR;
+        lit.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        lit.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+        lit.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        info.target_info.color_target_descriptions = &lit;
+        light_pipeline = pipeline == nullptr ? nullptr : SDL_CreateGPUGraphicsPipeline(gpu, &info);
     }
-    if (pipeline == nullptr && vertex_shader != nullptr && fragment_shader != nullptr) {
+    if ((pipeline == nullptr || light_pipeline == nullptr) && vertex_shader != nullptr &&
+        fragment_shader != nullptr) {
         device.last_error_ = sdl_error("Creating the sprite pipeline failed");
     }
     release(gpu, vertex_shader);
     release(gpu, fragment_shader);
-    if (pipeline == nullptr) {
+    if (pipeline == nullptr || light_pipeline == nullptr) {
+        SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
         return nullptr;
     }
 
@@ -580,12 +595,14 @@ std::unique_ptr<SpriteRenderer> SpriteRenderer::create(Device& device) {
     if (sampler == nullptr) {
         device.last_error_ = sdl_error("Creating the sprite sampler failed");
         SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(gpu, light_pipeline);
         return nullptr;
     }
 
     auto native = std::make_unique<Native>();
     native->device = gpu;
     native->pipeline = pipeline;
+    native->light_pipeline = light_pipeline;
     native->sampler = sampler;
     return std::unique_ptr<SpriteRenderer>(new SpriteRenderer(device, std::move(native)));
 }
@@ -596,6 +613,12 @@ void SpriteRenderer::begin(RenderTarget& target, Color clear) {
     native_->keep = false;
     native_->vertices.clear();
     native_->textures.clear();
+    native_->blends.clear();
+    native_->blend = Blend::Normal;
+}
+
+void SpriteRenderer::set_blend(Blend blend) {
+    native_->blend = blend;
 }
 
 void SpriteRenderer::begin_over(RenderTarget& target) {
@@ -635,6 +658,7 @@ void SpriteRenderer::draw(const Texture& texture, Rect source, const std::array<
     };
     native_->vertices.insert(native_->vertices.end(), std::begin(vertices), std::end(vertices));
     native_->textures.push_back(&texture);
+    native_->blends.push_back(native_->blend);
 }
 
 bool SpriteRenderer::end() {
@@ -707,12 +731,20 @@ bool SpriteRenderer::end() {
         const float transform[4] = {2.0F / static_cast<float>(target->width()),
                                     -2.0F / static_cast<float>(target->height()), -1.0F, 1.0F};
         SDL_PushGPUVertexUniformData(commands, 0, transform, sizeof(transform));
-        // One draw per run of sprites sharing a texture, in the order they were queued.
+        // One draw per run of sprites sharing a texture and a blend, in the order they
+        // were queued.
+        Blend bound = Blend::Normal;
         std::size_t first = 0;
         while (first < n.textures.size()) {
             std::size_t last = first + 1;
-            while (last < n.textures.size() && n.textures[last] == n.textures[first]) {
+            while (last < n.textures.size() && n.textures[last] == n.textures[first] &&
+                   n.blends[last] == n.blends[first]) {
                 ++last;
+            }
+            if (n.blends[first] != bound) {
+                bound = n.blends[first];
+                SDL_BindGPUGraphicsPipeline(pass,
+                                            bound == Blend::Light ? n.light_pipeline : n.pipeline);
             }
             SDL_GPUTextureSamplerBinding sampler{};
             sampler.texture = n.textures[first]->native().texture;

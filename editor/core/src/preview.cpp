@@ -76,9 +76,12 @@ std::optional<engine::assets::Image> Preview::render(Document& document, double 
     }
     // The light's colour at the hour the game starts (day and night).
     const game::LightingObject light = game::starting_lighting(settings);
-    look.tint_r *= static_cast<float>(light.tint_r);
-    look.tint_g *= static_cast<float>(light.tint_g);
-    look.tint_b *= static_cast<float>(light.tint_b);
+    // In Classic 2D, also how bright its ambient and sun light are (as the game does).
+    const double bright =
+        settings.style == game::RenderStyle::Diorama ? 1.0 : game::classic_brightness(light);
+    look.tint_r *= static_cast<float>(light.tint_r * bright);
+    look.tint_g *= static_cast<float>(light.tint_g * bright);
+    look.tint_b *= static_cast<float>(light.tint_b * bright);
     const bool post = !look.neutral();
     render::RenderTarget& target = post ? *p.scene : *p.frame;
     if (settings.style == game::RenderStyle::Diorama) {
@@ -97,6 +100,19 @@ std::optional<engine::assets::Image> Preview::render(Document& document, double 
     if (post && !p.post->apply(*p.scene, *p.frame, look)) {
         error = p.device->last_error();
         return std::nullopt;
+    }
+    // Classic 2D's lights, over the look's result, as the game draws them.
+    if (settings.style != game::RenderStyle::Diorama) {
+        scene2d::Camera2D lit;
+        lit.x = x;
+        lit.y = y;
+        lit.ppu = settings.ppu;
+        scene2d::Lights2DShading shading;
+        shading.strength = scene2d::lights_2d_strength(look.tint_r, look.tint_g, look.tint_b);
+        shading.darkening = {look.tint_r, look.tint_g, look.tint_b};
+        shading.saturation = look.saturation;
+        static_cast<void>(scene2d::draw_lights_2d(document.world(), *p.textures, *p.sprites,
+                                                  *p.frame, lit, shading));
     }
     engine::assets::Image image;
     image.width = p.frame->width();

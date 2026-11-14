@@ -1739,3 +1739,61 @@ TEST_CASE("Palette swaps: colours read, swapped once, and drawn recoloured") {
     CHECK(textures.size() == 0);
     CHECK(textures.get(f.red_image, "#ff0000>#00ff00") != nullptr);
 }
+
+TEST_CASE("Classic 2D lights brighten what is drawn, in their colour, fading at the radius") {
+    render::Device* device = gpu();
+    if (device == nullptr) {
+        return;
+    }
+    const Fixture f;
+    const auto target = device->create_render_target(64, 64);
+    const auto sprites = render::SpriteRenderer::create(*device);
+    REQUIRE(target != nullptr);
+    REQUIRE(sprites != nullptr);
+    scene2d::TextureCache textures(*device, f.db);
+    REQUIRE(textures.light_falloff() != nullptr);
+    // A quarter at noon, all of it in the dark.
+    CHECK(scene2d::lights_2d_strength(1.0, 1.0, 1.0) == doctest::Approx(0.25));
+    CHECK(scene2d::lights_2d_strength(0.0, 0.0, 0.0) == doctest::Approx(1.0));
+    CHECK(scene2d::lights_2d_strength(2.0, 2.0, 2.0) == doctest::Approx(0.25));
+    const scene2d::Camera2D camera{0.0, 0.0, 8, 1};
+    const auto w = f.make_world();
+    // A torch at the middle, its glow lifted one tile: at pixel (32, 24), 16 pixels round.
+    const world::Entity torch = w->create("torch");
+    w->add<scene2d::Transform2D>(torch);
+    scene2d::Light* light = w->add<scene2d::Light>(torch);
+    light->color_r = 255;
+    light->color_g = 0;
+    light->color_b = 0;
+    light->radius = 2.0;
+    light->height = 1.0;
+    const render::Color grey{100, 100, 100, 255};
+
+    sprites->begin(*target, grey);
+    REQUIRE(sprites->end());
+    CHECK(scene2d::draw_lights_2d(*w, textures, *sprites, *target, camera) == 1);
+    std::vector<std::uint8_t> pixels = target->read_pixels();
+    const Color middle = pixel(pixels, 64, 32, 24);
+    CHECK(middle.r > 180);  // nearly doubled
+    CHECK(middle.g == 100); // red light: green and blue as they were
+    CHECK(middle.b == 100);
+    const Color halfway = pixel(pixels, 64, 32, 32);
+    CHECK(halfway.r > 100);
+    CHECK(halfway.r < middle.r);
+    CHECK(pixel(pixels, 64, 32, 42) == grey); // past its radius
+    CHECK(pixel(pixels, 64, 2, 2) == grey);
+
+    // Brighter than 1: brighter still, to white; switched off: nothing.
+    light->intensity = 3.0;
+    sprites->begin(*target, grey);
+    REQUIRE(sprites->end());
+    scene2d::draw_lights_2d(*w, textures, *sprites, *target, camera);
+    pixels = target->read_pixels();
+    CHECK(pixel(pixels, 64, 32, 24).r == 255);
+    CHECK(pixel(pixels, 64, 32, 32).r > halfway.r);
+    light->enabled = false;
+    sprites->begin(*target, grey);
+    REQUIRE(sprites->end());
+    CHECK(scene2d::draw_lights_2d(*w, textures, *sprites, *target, camera) == 0);
+    CHECK(pixel(target->read_pixels(), 64, 32, 24) == grey);
+}

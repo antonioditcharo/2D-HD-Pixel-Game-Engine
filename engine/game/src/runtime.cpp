@@ -134,9 +134,13 @@ render::Look effective_look(const ProjectSettings& settings, const LightingObjec
     const auto channel = [](double v) {
         return static_cast<float>(std::clamp(std::isfinite(v) ? v : 1.0, 0.0, 2.0));
     };
-    look.tint_r *= channel(lighting.tint_r);
-    look.tint_g *= channel(lighting.tint_g);
-    look.tint_b *= channel(lighting.tint_b);
+    // In Classic 2D, also how bright the ambient and sun light are: nights are dark, and
+    // its lights (draw_lights_2d()) show.
+    const double bright =
+        settings.style == RenderStyle::Diorama ? 1.0 : classic_brightness(lighting);
+    look.tint_r *= channel(lighting.tint_r * bright);
+    look.tint_g *= channel(lighting.tint_g * bright);
+    look.tint_b *= channel(lighting.tint_b * bright);
     return look;
 }
 
@@ -1935,6 +1939,17 @@ bool Runtime::draw() {
     if (r.post != nullptr &&
         !r.post->apply(*r.scene, *r.target, effective_look(r.settings, r.lighting))) {
         return false;
+    }
+    // Classic 2D's lights, over the look's result: the frame night has darkened, which
+    // they brighten in their own colour.
+    if (r.settings.style != RenderStyle::Diorama) {
+        const render::Look shown = effective_look(r.settings, r.lighting);
+        scene2d::Lights2DShading shading;
+        shading.strength = scene2d::lights_2d_strength(shown.tint_r, shown.tint_g, shown.tint_b);
+        shading.darkening = {shown.tint_r, shown.tint_g, shown.tint_b};
+        shading.saturation = shown.saturation;
+        static_cast<void>(
+            scene2d::draw_lights_2d(*r.world, *r.textures, *r.sprites, *r.target, camera, shading));
     }
 
     // The weather, over the world: rain darkens a little and falls in streaks, snow

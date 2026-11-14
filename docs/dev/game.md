@@ -291,7 +291,10 @@ keyframes as HD-2D games light their days:
 
 The sun's direction and height drive the Diorama style's shading and shadows; the **tint**
 (the light's colour, each channel 0 to 2) colours the frame in either style, as part of the
-Look ([rendering.md](rendering.md) §8), so Classic 2D games have nights too. Logic uses
+Look ([rendering.md](rendering.md) §8), so Classic 2D games have nights too: there the
+frame is also darkened by the ambient and sun light together (at most 1, so 1 by day and
+0.4 at night), and Lights glow in it ([scene2d.md](scene2d.md), Lights in Classic 2D).
+Logic uses
 *Set the time of day to {hours}* (the light follows it), *Tint the light {red}, {green},
 {blue}* (logic's own colour: the light stops following the time; *Light follows the time*
 turns it back on), and reads or sets *Time of day*, *Day length*, and the tint's channels.

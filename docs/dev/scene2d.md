@@ -246,8 +246,18 @@ the style ([game.md](game.md) §2).
   (`diorama_lights()`, ties by GUID), per pixel ([rendering.md](rendering.md) §7). Ground
   and block faces take them from the front; sprites, as billboards, softly from all round
   and in their tint. Lights add to the ambient and sun light, so they show best when
-  those are low: the game's `lighting` object sets them ([game.md](game.md) §3). Classic
-  2D does not draw lights yet.
+  those are low: the game's `lighting` object sets them ([game.md](game.md) §3).
+- **Lights in Classic 2D** (`draw_lights_2d()`): drawn over the frame once the Look has
+  graded and darkened it, each brightens what is there in its colour, fading to nothing at
+  its `radius`, with its middle `height` tiles above its position (a torch's flame). What
+  shows is the scene times the night's tint *plus* the light, so a torch stays warm in a
+  blue night and the art's own detail shows through it (the sprite renderer's
+  `Blend::Light`: what is there times one plus the light). Lights show a quarter as
+  strongly in full daylight as in the dark (`lights_2d_strength()`), take the Look's
+  saturation (grey under a black and white look), and an `intensity` above 1 brightens in
+  steps up to 8. The game and the editor's view draw them alike. Classic 2D's darkness
+  itself comes from the ambient and sun light together (`classic_brightness()`: their sum,
+  at most 1; 1 by default, 0.4 at night on the clock), times the tint.
 - **The sun** is placed by an angle and a height (`sun_direction()`): degrees clockwise
   from north (up the map) and above the horizon. By default it is in the south-west
   (215 degrees), 55 degrees up, behind the camera and a little to its left, so shadows

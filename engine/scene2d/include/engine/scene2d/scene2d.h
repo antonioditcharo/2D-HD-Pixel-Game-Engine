@@ -246,10 +246,10 @@ private:
 /// whole numbers have no decimals.
 [[nodiscard]] std::string format_heights(const std::vector<std::vector<double>>& heights);
 
-/// "Light": a point light for the Diorama style, such as a torch, a lamp or a glowing
-/// window. It lights the ground, walls and characters around it, fading smoothly to
-/// nothing at its radius. Lights add to the scene's ambient and sun light, so they show
-/// best at dusk and night.
+/// "Light": a point light, such as a torch, a lamp or a glowing window. It lights the
+/// ground, walls and characters around it, fading smoothly to nothing at its radius. In the
+/// Diorama style it adds to the scene's ambient and sun light; in Classic 2D it brightens
+/// what is drawn (draw_lights_2d()). Either way it shows best at dusk and night.
 struct Light {
     std::uint8_t color_r = 255; ///< A warm torchlight by default.
     std::uint8_t color_g = 180;
@@ -361,6 +361,10 @@ public:
     /// it with every result of AssetDatabase::refresh() to hot-reload images.
     void apply(const assets::AssetChanges& changes);
 
+    /// A soft round light, white in the middle fading to black at the rim (128 x 128), for
+    /// Classic 2D's lights. Made once; null if it cannot be.
+    const render::Texture* light_falloff();
+
     [[nodiscard]] std::size_t size() const noexcept { return textures_.size(); }
     [[nodiscard]] const std::string& last_error() const noexcept { return last_error_; }
 
@@ -371,6 +375,7 @@ private:
     std::optional<assets::Image> load(Guid image);
 
     std::unordered_map<Guid, std::unique_ptr<render::Texture>, GuidHash> textures_;
+    std::unique_ptr<render::Texture> falloff_;
     /// Recoloured textures, by "<guid> <recolor>".
     std::unordered_map<std::string, std::unique_ptr<render::Texture>> recolored_;
     std::string last_error_;
@@ -380,6 +385,34 @@ struct DrawStats {
     std::size_t drawn = 0;   ///< Sprites and tiles drawn.
     std::size_t missing = 0; ///< Sprites and tilemaps whose image or tiles could not be used.
 };
+
+/// How strongly Classic 2D's lights show under a look tinted `tint_r`, `tint_g`, `tint_b`
+/// (the day and night's colour and brightness times the look's): a quarter in full
+/// daylight, all of it in the dark, so torches show at night, and only a little at noon.
+[[nodiscard]] double lights_2d_strength(double tint_r, double tint_g, double tint_b);
+
+/// How Classic 2D's lights are shaded by the look drawn before them.
+struct Lights2DShading {
+    /// Scales every light, 0 to 1: see lights_2d_strength().
+    double strength = 1.0;
+    /// The tint the look multiplied the frame by (night's dark blue). Lights brighten the
+    /// frame by one plus the light divided by it, so what shows is the scene times (that
+    /// tint plus the light): a torch keeps its own warm colour in a blue night.
+    std::array<double, 3> darkening{1.0, 1.0, 1.0};
+    /// The look's saturation: 0 makes the lights grey too, as a black and white look is.
+    double saturation = 1.0;
+};
+
+/// Classic 2D's lights: brightens what `target` holds around every enabled Light with a
+/// Transform2D, in the light's colour (what is there times one plus the light, so the art's
+/// own detail shows), fading to nothing at its radius. The glow's middle is `height` tiles
+/// above the position, where a torch's flame is. An intensity above 1 brightens more, in
+/// steps. The game draws them over the look's result (the frame, already darkened by
+/// night), so nothing is lost to brightness the frame cannot hold. Returns how many were
+/// drawn.
+std::size_t draw_lights_2d(const world::World& world, TextureCache& textures,
+                           render::SpriteRenderer& sprites, render::RenderTarget& target,
+                           const Camera2D& camera, const Lights2DShading& shading = {});
 
 /// Draws every visible entity that has a Transform2D and a Sprite or a Tilemap into
 /// `target`, cleared to `clear`, as seen by `camera`. Positions are snapped to whole

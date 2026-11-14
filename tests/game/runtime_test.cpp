@@ -4701,3 +4701,51 @@ TEST_CASE("Screen Pictures: fixed to the screen, a frame stretched with crisp ed
     CHECK(pixel(pixels, 320, 318, 170) == blue);
     CHECK_FALSE(pixel(pixels, 320, 289, 170) == red);
 }
+
+TEST_CASE("Classic 2D lights at night: the torch shows the ground round it") {
+    const Project project;
+    {
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        const world::Entity lamp = w.create("lamp");
+        w.add<scene2d::Transform2D>(lamp)->y = 1.0; // its glow, a tile up: the middle
+        w.add<scene2d::Light>(lamp)->radius = 6.0;
+        write_json(project.folder.path / "assets/maps/night.dscene", serialize::scene_to_json(w));
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->start_scene = "maps/night.dscene";
+        settings->width = 320;
+        settings->height = 180;
+        settings->background = render::Color{120, 140, 110, 255};
+        settings->day_minutes = 10.0; // a clock, starting late at night
+        settings->start_hour = 23.0;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    runtime->step();
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    const render::Color near = pixel(pixels, 320, 160, 90);
+    const render::Color far = pixel(pixels, 320, 4, 4);
+    // Dark far away; warm and bright near the torch.
+    CHECK(far.r < 80);
+    CHECK(near.r > far.r + 40);
+    CHECK(near.r > near.b); // warm
+    const assets::Image image{320, 180, pixels};
+    const std::vector<std::uint8_t> png = assets::encode_png(image);
+    std::ofstream(std::filesystem::temp_directory_path() / "sparxel-night-light.png",
+                  std::ios::binary)
+        .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+               static_cast<std::streamsize>(png.size()));
+}
