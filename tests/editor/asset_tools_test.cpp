@@ -177,4 +177,13 @@ TEST_CASE("The style guide's palette: read, kept in the project, and checked aga
     CHECK(found[0].severity == editor::Finding::Severity::Note);
     CHECK(found[0].asset.starts_with("art/"));
     CHECK(found[0].message.find(" more.") != std::string::npos);
+
+    // A font that is not a strip of the letters named: a warning.
+    styled.font = "art/hero.png";
+    REQUIRE(document->set_settings(styled, error));
+    const std::vector<editor::Finding> all = editor::examine(*document);
+    CHECK(std::ranges::any_of(all, [](const editor::Finding& f) {
+        return f.severity == editor::Finding::Severity::Warning && f.asset == "art/hero.png" &&
+               f.message.find("font") != std::string::npos;
+    }));
 }

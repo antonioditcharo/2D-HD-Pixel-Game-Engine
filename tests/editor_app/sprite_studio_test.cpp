@@ -8,6 +8,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QImage>
 #include <QLabel>
 #include <QLineEdit>
@@ -227,4 +228,14 @@ TEST_CASE("The style guide: a palette from a picture, shown, and new sprites sta
         return;
     }
     CHECK(made->palette == colours);
+
+    // The font: chosen from the project's pictures, or the built-in one.
+    auto* font = panel->findChild<QComboBox*>(QStringLiteral("setting:font"));
+    REQUIRE(font != nullptr);
+    CHECK(font->itemText(0) == QStringLiteral("(built-in)"));
+    const int elder = font->findData(QStringLiteral("art/elder.png"));
+    REQUIRE(elder > 0);
+    font->setCurrentIndex(elder);
+    Q_EMIT font->activated(elder);
+    CHECK(p.window.document()->settings().font == "art/elder.png");
 }

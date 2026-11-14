@@ -11,8 +11,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::ui {
@@ -21,6 +23,19 @@ class PixelFont {
 public:
     /// The built-in font: printable ASCII; anything else shows as '?'.
     [[nodiscard]] static const PixelFont& builtin();
+    /// The printable ASCII characters in order, from the space to '~': the characters a
+    /// font strip has when none are named.
+    [[nodiscard]] static std::string_view ascii_characters() noexcept;
+    /// A font from a strip of letters (RGBA, `width` x `height`, rows top-down): the
+    /// letters side by side, each separated from the next by a column of one colour, the
+    /// colour of the top-left pixel (as Love2D's and Construct's image fonts are). Widths
+    /// come from the strip, so letters may differ in width. `characters` (UTF-8) names the
+    /// letters in order; empty is ascii_characters(). Letters are white where drawn (any
+    /// pixel neither see-through nor the separator), so text colours tint them. Nothing,
+    /// with `error`, if the strip and the characters do not match.
+    [[nodiscard]] static std::optional<PixelFont>
+    from_strip(const std::vector<std::uint8_t>& rgba, std::uint32_t width, std::uint32_t height,
+               std::string_view characters, std::string& error);
 
     /// How far the pen moves after `c`, in pixels (its width plus one pixel of space).
     [[nodiscard]] int advance(char32_t c) const noexcept;
@@ -43,11 +58,13 @@ private:
     };
     [[nodiscard]] const Glyph& find(char32_t c) const noexcept;
 
-    std::vector<Glyph> glyphs_; ///< For code points 32 to 126.
+    std::unordered_map<char32_t, Glyph> glyphs_;
     std::uint32_t atlas_width_ = 0;
     std::uint32_t atlas_height_ = 0;
     std::vector<std::uint8_t> atlas_;
     int line_height_ = 9;
+    int height_ = 8;        ///< Of every glyph.
+    int space_advance_ = 4; ///< The pen's move for a space with no glyph of its own.
 };
 
 /// The code points of UTF-8 `text`; a malformed byte becomes U+FFFD (shown as '?').

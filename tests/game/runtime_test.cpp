@@ -4749,3 +4749,83 @@ TEST_CASE("Classic 2D lights at night: the torch shows the ground round it") {
         .write(reinterpret_cast<const char*>(png.data()), // NOLINT
                static_cast<std::streamsize>(png.size()));
 }
+
+TEST_CASE("A project's own font draws its words; a missing one falls back, saying so") {
+    const Project project;
+    {
+        // One letter, "A": a solid block 4 wide and 6 high, after a magenta column.
+        assets::Image strip;
+        strip.width = 5;
+        strip.height = 6;
+        for (std::uint32_t y = 0; y < 6; ++y) {
+            for (std::uint32_t x = 0; x < 5; ++x) {
+                if (x == 0) {
+                    strip.rgba.insert(strip.rgba.end(), {255, 0, 255, 255});
+                } else {
+                    strip.rgba.insert(strip.rgba.end(), {0, 0, 0, 255});
+                }
+            }
+        }
+        const std::vector<std::uint8_t> png = assets::encode_png(strip);
+        std::ofstream(project.folder.path / "assets/art/font.png", std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        game::ScreenText* text = w.add<game::ScreenText>(w.create("label"));
+        text->text = "AA";
+        text->x = 0.0;
+        text->y = 0.0;
+        write_json(project.folder.path / "assets/maps/words.dscene", serialize::scene_to_json(w));
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->start_scene = "maps/words.dscene";
+        settings->width = 64;
+        settings->height = 36;
+        settings->font = "art/font.png";
+        settings->font_characters = "A";
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    {
+        const auto runtime = project.open(options);
+        REQUIRE(runtime->target() != nullptr);
+        runtime->step();
+        REQUIRE(runtime->draw());
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        const render::Color words = runtime->settings().ui.text;
+        // Two blocks, 4 wide, a pixel apart: in the words' colour, white tinted.
+        CHECK(pixel(pixels, 64, 1, 2) == words);
+        CHECK(pixel(pixels, 64, 3, 5) == words);
+        CHECK(pixel(pixels, 64, 5, 2) == words);
+        CHECK(pixel(pixels, 64, 8, 2) == words);
+        CHECK_FALSE(pixel(pixels, 64, 4, 2) == words); // the gap (its shadow)
+        CHECK_FALSE(pixel(pixels, 64, 1, 7) == words); // only 6 high
+    }
+    // A font that is not there: the built-in one, and a plain message.
+    std::vector<serialize::Issue> issues;
+    std::optional<game::ProjectSettings> settings = game::read_project(project.folder.path, issues);
+    REQUIRE(settings.has_value());
+    if (!settings) {
+        return;
+    }
+    settings->font = "art/missing.png";
+    write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+    options.save_folder = project.folder.path / "saves";
+    std::vector<serialize::Issue> opening;
+    const auto fallback = game::Runtime::open(project.folder.path, options, opening);
+    REQUIRE(fallback != nullptr);
+    REQUIRE(opening.size() == 1);
+    CHECK(opening[0].message.find("built-in font") != std::string::npos);
+    fallback->step();
+    CHECK(fallback->draw());
+}

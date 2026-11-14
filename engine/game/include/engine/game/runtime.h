@@ -74,6 +74,13 @@ struct ProjectSettings {
     /// "#1a1c2c #5d275d ...". New sprites start with it, and Check the project notes
     /// pictures with colours outside it. Empty: no palette is kept to.
     std::string palette;
+    /// The game's font (plan/02 G7): a picture in assets/ of letters side by side, each
+    /// separated by a column of the top-left pixel's colour (ui::PixelFont::from_strip()).
+    /// Empty: the built-in font.
+    std::string font;
+    /// The font picture's letters, in order (UTF-8); empty: printable ASCII from the space
+    /// to '~'.
+    std::string font_characters;
     /// The colours of the menus and messages.
     UiTheme ui;
     /// A small map of the tiles around the player in the top-right corner.

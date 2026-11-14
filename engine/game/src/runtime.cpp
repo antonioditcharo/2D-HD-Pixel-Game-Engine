@@ -46,7 +46,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 37> known_project_keys{"format",
+constexpr std::array<std::string_view, 39> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -80,6 +80,8 @@ constexpr std::array<std::string_view, 37> known_project_keys{"format",
                                                               "language",
                                                               "languages",
                                                               "palette",
+                                                              "font",
+                                                              "font_characters",
                                                               "ui",
                                                               "music_while_talking",
                                                               "minimap"};
@@ -200,8 +202,8 @@ struct MessageLayout {
 constexpr float message_margin = 4.0F;
 constexpr float message_padding = 5.0F;
 
-MessageLayout message_layout(std::uint32_t width, std::uint32_t height) {
-    const int line = ui::PixelFont::builtin().line_height();
+MessageLayout message_layout(std::uint32_t width, std::uint32_t height, const ui::PixelFont& font) {
+    const int line = font.line_height();
     MessageLayout layout;
     layout.lines = std::clamp(((static_cast<int>(height) / 3) - 10) / line, 1, 3);
     layout.height = static_cast<float>((layout.lines * line) - 1) + (2.0F * message_padding);
@@ -213,14 +215,14 @@ MessageLayout message_layout(std::uint32_t width, std::uint32_t height) {
 }
 
 /// How many pages the message showing takes in a game of `settings`' size (1 if none).
-std::size_t message_pages(const DialogueObject& dialogue, const ProjectSettings& settings) {
+std::size_t message_pages(const DialogueObject& dialogue, const ProjectSettings& settings,
+                          const ui::PixelFont& font) {
     const std::string* message = dialogue.current();
-    const MessageLayout layout = message_layout(settings.width, settings.height);
+    const MessageLayout layout = message_layout(settings.width, settings.height, font);
     const std::size_t lines =
         message == nullptr
             ? 0
-            : ui::wrap(ui::PixelFont::builtin(), ui::parse_rich(*message).plain, layout.text_width)
-                  .size();
+            : ui::wrap(font, ui::parse_rich(*message).plain, layout.text_width).size();
     const auto per_page = static_cast<std::size_t>(layout.lines);
     return std::max<std::size_t>(1, (lines + per_page - 1) / per_page);
 }
@@ -327,6 +329,8 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
     text("language", settings.language, false);
     text("languages", settings.languages, false);
     text("palette", settings.palette, false);
+    text("font", settings.font, false);
+    text("font_characters", settings.font_characters, false);
     // The menus' and messages' colours: each "#rrggbb"; those missing keep the standard.
     if (const auto ui = doc.find("ui"); ui != doc.end() && ui->is_object()) {
         for (const auto& [key, field] :
@@ -564,6 +568,10 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["ppu"] = settings.ppu;
     if (!settings.palette.empty()) {
         json["palette"] = settings.palette;
+    }
+    if (!settings.font.empty()) {
+        json["font"] = settings.font;
+        json["font_characters"] = settings.font_characters;
     }
     json["width"] = settings.width;
     json["height"] = settings.height;
@@ -888,8 +896,9 @@ struct Runtime::Impl {
     std::unique_ptr<scene2d::TextureCache> textures;
     /// The sheets of the pictures: tags with their frames' times.
     std::unique_ptr<scene2d::SheetLibrary> sheets;
-    std::unique_ptr<render::Texture> font;  ///< The built-in font's atlas.
-    std::unique_ptr<render::Texture> white; ///< One white pixel, for boxes.
+    std::unique_ptr<render::Texture> font;              ///< The font's atlas.
+    ui::PixelFont font_face = ui::PixelFont::builtin(); ///< The project's font, or the built-in.
+    std::unique_ptr<render::Texture> white;             ///< One white pixel, for boxes.
 };
 
 Runtime::Runtime(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -1171,7 +1180,34 @@ std::unique_ptr<Runtime> Runtime::open(const fs::path& root, const RuntimeOption
             return nullptr;
         }
         r.textures = std::make_unique<scene2d::TextureCache>(*r.device, r.assets);
-        const ui::PixelFont& font = ui::PixelFont::builtin();
+        // The project's font, if it has one that can be read; else the built-in.
+        if (!r.settings.font.empty()) {
+            const assets::AssetRecord* record = r.assets.find(r.settings.font);
+            const std::optional<std::vector<std::uint8_t>> bytes =
+                record != nullptr ? r.assets.read(record->guid) : std::nullopt;
+            std::string font_error;
+            std::optional<assets::Image> strip;
+            if (bytes.has_value()) {
+                strip = assets::decode_png(bytes.value(), font_error);
+            } else {
+                font_error = "there is no such picture in assets/";
+            }
+            std::optional<ui::PixelFont> font_loaded;
+            if (strip.has_value()) {
+                font_loaded = ui::PixelFont::from_strip(strip.value().rgba, strip.value().width,
+                                                        strip.value().height,
+                                                        r.settings.font_characters, font_error);
+            }
+            if (font_loaded.has_value()) {
+                r.font_face = std::move(font_loaded.value());
+            } else {
+                issues.push_back(serialize::Issue{std::string(project_file) + "/font",
+                                                  "The font " + r.settings.font +
+                                                      " could not be used (" + font_error +
+                                                      "), so the built-in font is shown."});
+            }
+        }
+        const ui::PixelFont& font = r.font_face;
         r.font = r.device->create_texture(font.atlas_width(), font.atlas_height(), font.atlas());
         const std::array<std::uint8_t, 4> white{255, 255, 255, 255};
         r.white = r.device->create_texture(1, 1, white);
@@ -1496,8 +1532,8 @@ void Runtime::step() {
         }
         // A question's answers show on its last page; Up and Down move the cursor there.
         const std::vector<std::string>& choices = r.dialogue.choices();
-        const bool choosing =
-            talking && !choices.empty() && r.page + 1 >= message_pages(r.dialogue, r.settings);
+        const bool choosing = talking && !choices.empty() &&
+                              r.page + 1 >= message_pages(r.dialogue, r.settings, r.font_face);
         if (choosing && (action == "move_up" || action == "move_down")) {
             r.choice = action == "move_up" ? (r.choice + choices.size() - 1) % choices.size()
                                            : (r.choice + 1) % choices.size();
@@ -1505,9 +1541,10 @@ void Runtime::step() {
         }
         if (talking && action == "interact" && r.typed < static_cast<double>(r.rich.plain.size())) {
             // Still typing: the page shows whole first.
-            const MessageLayout box = message_layout(r.settings.width, r.settings.height);
+            const MessageLayout box =
+                message_layout(r.settings.width, r.settings.height, r.font_face);
             const std::vector<std::string> lines =
-                ui::wrap(ui::PixelFont::builtin(), r.rich.plain, box.text_width);
+                ui::wrap(r.font_face, r.rich.plain, box.text_width);
             const std::vector<std::size_t> starts = ui::line_starts(r.rich.plain, lines);
             const std::size_t next_page = (r.page + 1) * static_cast<std::size_t>(box.lines);
             const double page_end = next_page < starts.size()
@@ -1526,7 +1563,7 @@ void Runtime::step() {
         }
         if (talking && action == "interact") {
             // The next page, or the next message; the last one closing tells Rules.
-            if (!choosing && r.page + 1 < message_pages(r.dialogue, r.settings)) {
+            if (!choosing && r.page + 1 < message_pages(r.dialogue, r.settings, r.font_face)) {
                 ++r.page;
                 continue;
             }
@@ -2020,19 +2057,19 @@ bool Runtime::draw() {
             return record != nullptr && r.textures != nullptr ? r.textures->get(record->guid)
                                                               : nullptr;
         };
-        r.battle_screen->draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(),
-                              r.inventory, picture);
+        r.battle_screen->draw(*r.sprites, *r.target, *r.white, *r.font, r.font_face, r.inventory,
+                              picture);
     }
     // A shop, over the world.
     if (r.shop_screen) {
-        r.shop_screen->draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(),
-                            r.inventory);
+        r.shop_screen->draw(*r.sprites, *r.target, *r.white, *r.font, r.font_face, r.inventory);
     }
 
     // The message box, over everything.
     if (const std::string* message = r.dialogue.current()) {
-        const MessageLayout box = message_layout(r.target->width(), r.target->height());
-        const ui::PixelFont& font = ui::PixelFont::builtin();
+        const MessageLayout box =
+            message_layout(r.target->width(), r.target->height(), r.font_face);
+        const ui::PixelFont& font = r.font_face;
         const ui::RichText rich =
             *message == r.typing_for ? r.rich : themed_rich(*message, r.settings.ui);
         const std::vector<std::string> lines = ui::wrap(font, rich.plain, box.text_width);
@@ -2177,7 +2214,7 @@ bool Runtime::draw() {
         r.sprites->end();
     }
     // The title screen or the pause menu, over everything.
-    r.menu.draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(), r.settings.name,
+    r.menu.draw(*r.sprites, *r.target, *r.white, *r.font, r.font_face, r.settings.name,
                 r.save_object, r.inventory, r.quests, r.party);
     // The minimap: the tiles around the player, solid ones as walls, top right, with the
     // player and the people to talk to as dots. Not over menus, shops or battles.
@@ -2268,7 +2305,7 @@ bool Runtime::draw() {
     // An achievement unlocked: a box at the top, sliding down, then up again.
     if (!r.toasts.empty()) {
         const auto& [text, seconds] = r.toasts.front();
-        const ui::PixelFont& font = ui::PixelFont::builtin();
+        const ui::PixelFont& font = r.font_face;
         const std::string title = r.translations.translate("Achievement unlocked");
         const auto line = static_cast<float>(font.line_height());
         const auto width =
@@ -2288,10 +2325,10 @@ bool Runtime::draw() {
                       r.settings.ui.highlight);
         static_cast<void>(r.sprites->end());
     }
-    r.debug_menu.draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin());
+    r.debug_menu.draw(*r.sprites, *r.target, *r.white, *r.font, r.font_face);
     // Time controls, said in the bottom-left corner while on.
     if (r.debug && r.time_control != Impl::Time::Normal) {
-        const ui::PixelFont& font = ui::PixelFont::builtin();
+        const ui::PixelFont& font = r.font_face;
         const std::string words = r.time_control == Impl::Time::Paused
                                       ? "Paused (F2 goes on, F6 one step)"
                                       : "Slow motion (F7)";
@@ -2321,7 +2358,7 @@ bool Runtime::draw() {
                  : percent > 70 ? "close to the limit"
                                 : "plenty of room"),
             std::to_string(r.world->entity_count()) + " entities"};
-        const ui::PixelFont& font = ui::PixelFont::builtin();
+        const ui::PixelFont& font = r.font_face;
         const auto line = static_cast<float>(font.line_height());
         r.sprites->begin_over(*r.target);
         r.sprites->draw(*r.white, render::Rect{0.0F, 0.0F, 1.0F, 1.0F},
@@ -2931,7 +2968,7 @@ std::string Runtime::hud_value(std::string_view name) const {
 
 void Runtime::draw_hud() {
     Impl& r = *impl_;
-    const ui::PixelFont& font = ui::PixelFont::builtin();
+    const ui::PixelFont& font = r.font_face;
     const auto sw = static_cast<float>(r.target->width());
     const auto sh = static_cast<float>(r.target->height());
     // Where a thing of w x h pixels goes for `anchor`, `x` and `y` in from it.

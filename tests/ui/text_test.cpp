@@ -4,8 +4,10 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -125,4 +127,54 @@ TEST_CASE("Rich text: tags become styles, pauses and speeds; the rest is kept as
     const std::string words = "one two three four";
     const std::vector<std::string> lines{"one two", "three", "four"};
     CHECK(ui::line_starts(words, lines) == std::vector<std::size_t>{0, 8, 14});
+}
+
+TEST_CASE("Fonts from a strip of letters: widths found, white where drawn, mismatches told") {
+    // "A" 2 wide and "Bé" 3 wide (a UTF-8 letter), 4 high, between magenta columns.
+    constexpr std::uint32_t width = 9;
+    constexpr std::uint32_t height = 4;
+    const std::array<std::uint8_t, 4> magenta{255, 0, 255, 255};
+    const std::array<std::uint8_t, 4> ink{40, 40, 40, 255};
+    const std::array<std::uint8_t, 4> clear{0, 0, 0, 0};
+    // Columns: separator, A, A, separator, é, é, é, separator, separator.
+    const std::array<int, width> column{0, 1, 1, 0, 2, 2, 2, 0, 0};
+    std::vector<std::uint8_t> rgba;
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            const int kind = column.at(x);
+            // A is solid; é has a see-through top row.
+            const auto& p = kind == 0 ? magenta : (kind == 2 && y == 0) ? clear : ink;
+            rgba.insert(rgba.end(), p.begin(), p.end());
+        }
+    }
+    std::string error;
+    const std::optional<ui::PixelFont> font =
+        ui::PixelFont::from_strip(rgba, width, height, "A\xC3\xA9", error);
+    REQUIRE(font.has_value());
+    if (!font) {
+        return;
+    }
+    CHECK(font->line_height() == 5);
+    CHECK(font->advance(U'A') == 3);
+    CHECK(font->advance(U'\u00e9') == 4);
+    CHECK(font->advance(U' ') == 2); // no space letter: half the height
+    CHECK(font->glyph(U'A').h == 4.0F);
+    CHECK(ui::measure(*font, "A\xC3\xA9") == 6); // no gap after the last
+    // White where drawn, so text colours tint it; the see-through row stays so.
+    const ui::PixelFont& f = *font;
+    const auto alpha = [&f](std::uint32_t x, std::uint32_t y) {
+        return f.atlas().at(((std::size_t{y} * f.atlas_width()) + x) * 4 + 3);
+    };
+    CHECK(f.atlas().at(0) == 255);
+    CHECK(alpha(0, 0) == 255);
+    CHECK(alpha(3, 0) == 0);
+    CHECK(alpha(3, 1) == 255);
+    // A letter it lacks shows as nothing (it has no question mark).
+    CHECK(font->advance(U'Z') == 1);
+
+    // Two letters drawn, three named: told plainly.
+    CHECK_FALSE(ui::PixelFont::from_strip(rgba, width, height, "ABC", error).has_value());
+    CHECK(error.find("has 2 letters, but 3") != std::string::npos);
+    CHECK_FALSE(ui::PixelFont::from_strip({}, 0, 0, "", error).has_value());
+    CHECK(ui::PixelFont::ascii_characters().size() == 95);
 }

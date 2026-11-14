@@ -324,6 +324,51 @@ void ProjectPanel::build() {
     palette_row->addWidget(from_studio);
     palette_row->addStretch();
     style->addRow(QString(), palette_buttons);
+    // The font: one of the project's pictures, a strip of letters, or the built-in one.
+    auto* font = new QComboBox(content_);
+    font->setObjectName(QStringLiteral("setting:font"));
+    font->setToolTip(tr("A picture of letters side by side, each separated by a column of the "
+                        "top-left pixel's colour; or the built-in font"));
+    font->addItem(tr("(built-in)"), QString());
+    {
+        QStringList pictures;
+        for (const engine::assets::AssetRecord& record : document_->assets().assets()) {
+            if (record.importer == "image") {
+                pictures << text_of(record.path);
+            }
+        }
+        pictures.sort();
+        for (const QString& strip : pictures) {
+            font->addItem(strip, strip);
+        }
+        const int chosen = font->findData(text_of(now.font));
+        if (chosen >= 0) {
+            font->setCurrentIndex(chosen);
+        } else if (!now.font.empty()) {
+            font->addItem(tr("(missing) %1").arg(text_of(now.font)), text_of(now.font));
+            font->setCurrentIndex(font->count() - 1);
+        }
+    }
+    connect(font, qOverload<int>(&QComboBox::activated), this, [this, font, end](int index) {
+        const QByteArray bytes = font->itemData(index).toString().toUtf8();
+        apply([&bytes](Settings& s) {
+            s.font.assign(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+        });
+        end();
+    });
+    style->addRow(tr("Font"), font);
+    auto* letters = new QLineEdit(text_of(now.font_characters), content_);
+    letters->setObjectName(QStringLiteral("setting:font_characters"));
+    letters->setPlaceholderText(tr("(the space to ~, in ASCII order)"));
+    letters->setToolTip(tr("The font picture's letters, in the order drawn"));
+    connect(letters, &QLineEdit::textEdited, this, [this](const QString& text) {
+        const QByteArray bytes = text.toUtf8();
+        apply([&bytes](Settings& s) {
+            s.font_characters.assign(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+        });
+    });
+    connect(letters, &QLineEdit::editingFinished, this, end);
+    style->addRow(tr("Its letters"), letters);
     connect(from_studio, &QPushButton::clicked, this, [this] { palette_from_sprite_studio(); });
     connect(from_picture, &QPushButton::clicked, this, [this] {
         if (document_ == nullptr) {

@@ -5,6 +5,7 @@
 #include "engine/game/tables.h"
 #include "engine/scene2d/scene2d.h"
 #include "engine/serialize/json.h"
+#include "engine/ui/text.h"
 
 #include <algorithm>
 #include <fstream>
@@ -161,6 +162,34 @@ std::vector<Finding> examine(const Document& document) {
                     "the game in this scene.";
         f.asset = settings.start_scene;
         found.push_back(std::move(f));
+    }
+
+    // The style guide's font: a picture of letters that matches its characters.
+    if (!settings.font.empty()) {
+        const engine::assets::AssetRecord* record = assets.find(settings.font);
+        const std::optional<std::vector<std::uint8_t>> bytes =
+            record != nullptr ? assets.read(record->guid) : std::nullopt;
+        std::string problem;
+        bool usable = false;
+        if (!bytes.has_value()) {
+            problem = "it is not a picture in assets/";
+        } else if (const std::optional<engine::assets::Image> strip =
+                       engine::assets::decode_png(bytes.value(), problem);
+                   strip.has_value()) {
+            usable = engine::ui::PixelFont::from_strip(strip.value().rgba, strip.value().width,
+                                                       strip.value().height,
+                                                       settings.font_characters, problem)
+                         .has_value();
+        }
+        if (!usable) {
+            Finding f;
+            f.severity = Finding::Severity::Warning;
+            f.message = "The game's font " + settings.font + " cannot be used (" + problem +
+                        "), so the built-in font is shown. Choose another in Project > Style "
+                        "guide.";
+            f.asset = settings.font;
+            found.push_back(std::move(f));
+        }
     }
 
     // The style guide: pictures that use colours outside the project's palette.

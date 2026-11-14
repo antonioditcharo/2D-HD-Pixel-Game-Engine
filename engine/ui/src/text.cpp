@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cmath>
 #include <optional>
+#include <string>
 
 namespace engine::ui {
 
@@ -160,9 +161,91 @@ PixelFont::PixelFont() {
                 }
             }
         }
-        glyphs_.push_back(glyph);
+        glyphs_.emplace(static_cast<char32_t>(32 + i), glyph);
         x += glyph.width + 1;
     }
+    height_ = cell_height;
+    space_advance_ = space_advance;
+}
+
+std::string_view PixelFont::ascii_characters() noexcept {
+    return " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`"
+           "abcdefghijklmnopqrstuvwxyz{|}~";
+}
+
+std::optional<PixelFont> PixelFont::from_strip(const std::vector<std::uint8_t>& rgba,
+                                               std::uint32_t width, std::uint32_t height,
+                                               std::string_view characters, std::string& error) {
+    if (width == 0 || height == 0 || rgba.size() != std::size_t{width} * height * 4) {
+        error = "The font's picture is empty.";
+        return std::nullopt;
+    }
+    const std::u32string letters =
+        decode_utf8(characters.empty() ? ascii_characters() : characters);
+    const auto pixel = [&](std::uint32_t x, std::uint32_t y) {
+        const std::size_t at = ((std::size_t{y} * width) + x) * 4;
+        return std::array<std::uint8_t, 4>{rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]};
+    };
+    const std::array<std::uint8_t, 4> separator = pixel(0, 0);
+    // The runs of columns between separator columns: the letters.
+    std::vector<std::array<std::uint32_t, 2>> runs; // first column, width
+    std::uint32_t start = 0;
+    bool inside = false;
+    for (std::uint32_t x = 0; x <= width; ++x) {
+        bool apart = x == width;
+        if (!apart) {
+            apart = true;
+            for (std::uint32_t y = 0; y < height && apart; ++y) {
+                apart = pixel(x, y) == separator;
+            }
+        }
+        if (!apart && !inside) {
+            start = x;
+            inside = true;
+        } else if (apart && inside) {
+            runs.push_back({start, x - start});
+            inside = false;
+        }
+    }
+    if (runs.size() != letters.size()) {
+        error = "The font's picture has " + std::to_string(runs.size()) + " letters, but " +
+                std::to_string(letters.size()) +
+                " characters are named. Letters are separated by columns of the top-left "
+                "pixel's colour.";
+        return std::nullopt;
+    }
+    PixelFont font;
+    font.glyphs_.clear();
+    std::uint32_t total = 0;
+    for (const auto& run : runs) {
+        total += run[1] + 1;
+    }
+    font.atlas_width_ = total;
+    font.atlas_height_ = height;
+    font.atlas_.assign(std::size_t{total} * height * 4, 0);
+    std::uint32_t x = 0;
+    for (std::size_t i = 0; i < runs.size(); ++i) {
+        const auto [first, glyph_width] = runs[i];
+        for (std::uint32_t y = 0; y < height; ++y) {
+            for (std::uint32_t column = 0; column < glyph_width; ++column) {
+                const std::array<std::uint8_t, 4> p = pixel(first + column, y);
+                if (p[3] == 0 || p == separator) {
+                    continue;
+                }
+                const std::size_t at = ((std::size_t{y} * total) + x + column) * 4;
+                font.atlas_[at] = 255;
+                font.atlas_[at + 1] = 255;
+                font.atlas_[at + 2] = 255;
+                font.atlas_[at + 3] = p[3];
+            }
+        }
+        font.glyphs_[letters[i]] = Glyph{static_cast<int>(x), static_cast<int>(glyph_width)};
+        x += glyph_width + 1;
+    }
+    font.height_ = static_cast<int>(height);
+    font.line_height_ = static_cast<int>(height) + 1;
+    font.space_advance_ = std::max(2, static_cast<int>(height) / 2);
+    return font;
 }
 
 const PixelFont& PixelFont::builtin() {
@@ -171,20 +254,26 @@ const PixelFont& PixelFont::builtin() {
 }
 
 const PixelFont::Glyph& PixelFont::find(char32_t c) const noexcept {
-    if (c < 32 || c > 126) {
-        c = U'?';
+    static const Glyph none{};
+    if (const auto found = glyphs_.find(c); found != glyphs_.end()) {
+        return found->second;
     }
-    return glyphs_[static_cast<std::size_t>(c - 32)];
+    // A letter the font lacks: its question mark (or nothing, if it has none).
+    const auto unknown = glyphs_.find(U'?');
+    return unknown != glyphs_.end() ? unknown->second : none;
 }
 
 int PixelFont::advance(char32_t c) const noexcept {
-    return c == U' ' ? space_advance : find(c).width + 1;
+    if (c == U' ' && !glyphs_.contains(U' ')) {
+        return space_advance_;
+    }
+    return c == U' ' ? std::max(find(c).width + 1, space_advance_) : find(c).width + 1;
 }
 
 render::Rect PixelFont::glyph(char32_t c) const noexcept {
     const Glyph& g = find(c);
     return render::Rect{static_cast<float>(g.x), 0.0F, static_cast<float>(g.width),
-                        static_cast<float>(cell_height)};
+                        static_cast<float>(height_)};
 }
 
 std::u32string decode_utf8(std::string_view text) {

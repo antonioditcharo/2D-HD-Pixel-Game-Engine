@@ -51,6 +51,19 @@ and malformed UTF-8, shows as `?`.
   `draw_text` tints it. It is built when the font is first used, from bit rows in
   `text.cpp`.
 
+**A game's own font** (feature G7): the Project view's *Style guide* chooses a picture of
+the project as the **Font**, and names **Its letters** in the order drawn (empty: the space
+to `~` in ASCII order). The picture is a strip of letters side by side, each separated from
+the next by a column of one colour, the colour of its top-left pixel, as Love2D's and
+Construct's image fonts are. So letters may be any width and height, and any characters
+at all (accents, other alphabets) can be named. Letters are white where drawn, so the
+look's word colours tint them; a space with no letter of its own is half the height wide,
+and lines are the height plus one pixel apart. Every word the game shows uses it:
+messages, menus, shops, battles, Screen Text. A picture that does not match its letters
+falls back to the built-in font, with a message when the game opens and a warning in
+*Check the project*. (`ui::PixelFont::from_strip()`; `ProjectSettings::font` and
+`font_characters`.)
+
 | Function | Does |
 |---|---|
 | `decode_utf8(text)` | The code points of UTF-8 text. A malformed byte becomes U+FFFD (shown as `?`), and decoding goes on with the next byte |
@@ -210,8 +223,9 @@ like any other property.
 
 ## 5. Next increments
 
-1. **Imported fonts:** pixel fonts from a PNG sheet, then vector fonts through FreeType
-   and HarfBuzz (ADR-010), with fallbacks per language (feature G7).
+1. **Vector fonts** through FreeType and HarfBuzz (ADR-010), with fallbacks per language
+   (feature G7); pixel fonts from a picture are done (§2). The editor's scene view still
+   shows Screen Text in the system's font.
 2. **Box frames:** the message box, menus and shops drawn with a 9-slice frame picture
    from the UI look (Screen Pictures already stretch one; `nine_slice()`).
 3. **Layouts for on-screen elements:** stacks and grids that place Screen Text, Bars and
