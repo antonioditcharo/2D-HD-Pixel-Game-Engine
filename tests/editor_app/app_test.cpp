@@ -2184,7 +2184,7 @@ TEST_CASE("An Aseprite file saved again is imported again when the editor reload
 }
 
 TEST_CASE("The Animation's Tag offers the tags of the sprite's sheet") {
-    Sample sample;
+    const Sample sample;
     {
         scene2d::SheetInfo sheet;
         sheet.frame_width = 1;
