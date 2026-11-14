@@ -25,8 +25,9 @@ saved; an empty one says so); choosing one loads it; Cancel goes back to the tit
 
 **The pause menu** opens on the Menu key (Escape, or Start on a gamepad) while nothing else
 is open (not during a message or a battle): **Resume**, **Items** and **Skills** (below),
-**Quests** (the journal: [game.md](game.md)), **Party** (members and HP, and the experience
-won: [battle.md](battle.md)), **Equip** (below), **Options** (below), **Save** and **Load** (slots 1 to 3; saving says *Saved in slot
+**Quests** (the journal: [game.md](game.md)), **Party** (each member's level, HP and MP now,
+attack, defence and speed with what they wear, and the experience to the next level:
+[battle.md](battle.md)), **Equip** (below), **Options** (below), **Save** and **Load** (slots 1 to 3; saving says *Saved in slot
 2.*) and **Quit**. Up and Down choose, Interact picks, Cancel (or Menu) goes back, and from
 the menu itself resumes. While a menu is open, nobody moves and Rules hear no keys.
 

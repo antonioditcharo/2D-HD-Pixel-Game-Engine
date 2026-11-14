@@ -622,11 +622,25 @@ void GameMenu::draw(render::SpriteRenderer& sprites, render::RenderTarget& surfa
             break;
         }
         case Page::Party:
+            // Each member's status: level, HP and MP now, their numbers with what they
+            // wear, and the experience to the next level.
             for (const std::string& member : party.members()) {
-                const std::int64_t hp = party.hp_of(member);
                 const std::int64_t next = party.xp_to_next(member);
-                lines.push_back(member + "  Lv " + std::to_string(party.level_of(member)) +
-                                (hp < 0 ? std::string("  HP full") : "  HP " + std::to_string(hp)) +
+                const std::optional<Fighter> f = member_now(member);
+                if (!f) {
+                    const std::int64_t hp = party.hp_of(member);
+                    lines.push_back(
+                        member + "  Lv " + std::to_string(party.level_of(member)) +
+                        (hp < 0 ? std::string("  HP full") : "  HP " + std::to_string(hp)));
+                    continue;
+                }
+                lines.push_back(member_name(member) + "  Lv " + std::to_string(f->level) + "  HP " +
+                                std::to_string(f->hp) + "/" + std::to_string(f->max_hp) +
+                                (f->max_mp > 0 ? "  MP " + std::to_string(f->mp) + "/" +
+                                                     std::to_string(f->max_mp)
+                                               : std::string()));
+                lines.push_back("   Atk " + std::to_string(f->attack) + "  Def " +
+                                std::to_string(f->defense) + "  Spd " + std::to_string(f->speed) +
                                 (next > 0 ? "  next " + std::to_string(next) : std::string()));
             }
             if (lines.empty()) {
