@@ -37,6 +37,7 @@
 #include <string>
 
 #include "doctor_panel.h"
+#include "editor/core/new_project.h"
 #include "inspector.h"
 #include "logic_panel.h"
 #include "main_window.h"
@@ -2215,4 +2216,32 @@ TEST_CASE("The Animation's Tag offers the tags of the sprite's sheet") {
     tag->setCurrentIndex(tag->findText(QStringLiteral("walk")));
     Q_EMIT tag->activated(tag->currentIndex());
     CHECK(window.document()->world().get<scene2d::SpriteAnimation>(heroes[0])->tag == "walk");
+}
+
+TEST_CASE("The scene view shows Screen Text where the game will") {
+    const fs::path folder =
+        fs::temp_directory_path() / ("sparxel-hud-" + engine::Guid::generate().to_string());
+    std::string error;
+    REQUIRE(editor::create_project(folder, "HUD", error, editor::ProjectTemplate::Rpg));
+    {
+        editor::MainWindow window(SPARXEL_PLAYER);
+        window.resize(1400, 900);
+        window.show();
+        REQUIRE(window.open_project(folder));
+        QApplication::processEvents();
+        const QImage shot = window.scene_view()->grab().toImage();
+        if (const QString path = qEnvironmentVariable("SPARXEL_HUD_SCREENSHOT"); !path.isEmpty()) {
+            shot.save(path);
+        }
+        // Words in white with a shadow: the template's "Gold {gold}" and "HP ..." labels.
+        int white = 0;
+        for (int y = 0; y < shot.height(); ++y) {
+            for (int x = 0; x < shot.width(); ++x) {
+                white += shot.pixelColor(x, y) == QColor(Qt::white) ? 1 : 0;
+            }
+        }
+        CHECK(white > 20);
+    }
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
 }

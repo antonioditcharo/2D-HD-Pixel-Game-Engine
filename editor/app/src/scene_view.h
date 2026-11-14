@@ -19,6 +19,8 @@
 #include "editor/core/document.h"
 #include "editor/core/preview.h"
 
+class QPainter;
+
 namespace editor {
 
 /// Whether `guids` holds `guid`. (By comparison, not std::find: Microsoft's library under
@@ -137,6 +139,9 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    /// Screen Text and Screen Bars where the game shows them, over the frame drawn at
+    /// `origin_at` at `s` times: their words as written, bars half full.
+    void paint_hud(QPainter& painter, QPoint origin_at, int s) const;
     [[nodiscard]] int scale() const;
     [[nodiscard]] QPoint origin() const;
 

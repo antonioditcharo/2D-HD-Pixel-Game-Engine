@@ -187,6 +187,9 @@ Values in braces, filled every frame:
 | `{time}` | The time of day, as 7:05 |
 | `{timer:race}` | Whole seconds left on a timer ([game.md](game.md)) |
 
+In the editor, the scene view shows them where the game will, with their words as
+written (braces and all) and bars half full, so they are placed by eye.
+
 `{{` writes a brace. Logic shows and hides them by their *Visible*, and changes their words
 like any other property.
 

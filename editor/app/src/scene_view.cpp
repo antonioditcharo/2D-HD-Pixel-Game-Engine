@@ -1,10 +1,12 @@
 #include "scene_view.h"
 
+#include "engine/game/hud.h"
 #include "engine/scene2d/scene2d.h"
 
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -246,6 +248,65 @@ QPoint SceneView::from_map(double x, double y) const {
         o.y() + static_cast<int>(std::lround(((y - camera_y_) * ppu + image_.height() / 2.0) * s))};
 }
 
+void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
+    if (document_ == nullptr) {
+        return;
+    }
+    const engine::world::World& world = document_->world();
+    const auto sw = static_cast<double>(image_.width());
+    const auto sh = static_cast<double>(image_.height());
+    // Where a w x h thing goes on the game's screen, as the game places it.
+    const auto place = [&](engine::game::ScreenAnchor anchor, double x, double y, double w,
+                           double h) {
+        const int column = static_cast<int>(anchor) % 3;
+        const int row = static_cast<int>(anchor) / 3;
+        const double px = column == 0   ? x
+                          : column == 1 ? std::floor((sw - w) / 2.0) + x
+                                        : sw - w - x;
+        const double py = row == 0 ? y : row == 1 ? std::floor((sh - h) / 2.0) + y : sh - h - y;
+        return QRectF(origin_at.x() + (px * s), origin_at.y() + (py * s), w * s, h * s);
+    };
+    QFont font = painter.font();
+    font.setPixelSize(std::max(8, 7 * s));
+    painter.setFont(font);
+    const QFontMetricsF metrics(font);
+    if (const auto* type = world.registry().find_type<engine::game::ScreenText>()) {
+        world.each(*type, [&](engine::world::Entity, engine::reflect::ObjectRef ref) {
+            const auto* label = ref.as<engine::game::ScreenText>();
+            if (label == nullptr || !label->visible) {
+                return;
+            }
+            const QString words =
+                QString::fromUtf8(label->text.data(), static_cast<qsizetype>(label->text.size()));
+            const double size = label->size >= 2 ? 2.0 : 1.0;
+            const QRectF at = place(label->anchor, label->x, label->y,
+                                    metrics.horizontalAdvance(words) * size / s, 9.0 * size);
+            painter.setPen(QColor(0, 0, 0, 180));
+            painter.drawText(at.translated(s, s), Qt::AlignLeft | Qt::AlignVCenter, words);
+            painter.setPen(Qt::white);
+            painter.drawText(at, Qt::AlignLeft | Qt::AlignVCenter, words);
+        });
+    }
+    if (const auto* type = world.registry().find_type<engine::game::ScreenBar>()) {
+        world.each(*type, [&](engine::world::Entity, engine::reflect::ObjectRef ref) {
+            const auto* bar = ref.as<engine::game::ScreenBar>();
+            if (bar == nullptr || !bar->visible) {
+                return;
+            }
+            const QRectF at =
+                place(bar->anchor, bar->x, bar->y, bar->width + 2.0, bar->height + 2.0);
+            painter.fillRect(at, QColor(230, 232, 240));
+            const QRectF inside = at.adjusted(s, s, -s, -s);
+            painter.fillRect(inside, QColor(18, 20, 40));
+            QColor fill(
+                QString::fromUtf8(bar->color.data(), static_cast<qsizetype>(bar->color.size())));
+            painter.fillRect(
+                QRectF(inside.topLeft(), QSizeF(inside.width() / 2.0, inside.height())),
+                fill.isValid() ? fill : QColor(220, 70, 70));
+        });
+    }
+}
+
 void SceneView::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.fillRect(rect(), QColor(24, 24, 28));
@@ -259,6 +320,7 @@ void SceneView::paintEvent(QPaintEvent* /*event*/) {
     const int s = scale();
     const QPoint o = origin();
     painter.drawImage(QRect(o, image_.size() * s), image_);
+    paint_hud(painter, o, s);
     // A rectangle being dragged out, before it is painted or selected with.
     if ((drag_ == Drag::Paint && paint_tool_ == PaintTool::Rectangle) ||
         (drag_ == Drag::Box && boxing_)) {
