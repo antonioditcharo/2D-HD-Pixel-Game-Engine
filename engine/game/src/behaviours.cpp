@@ -1,5 +1,6 @@
 #include "engine/game/behaviours.h"
 
+#include "engine/game/hud.h"
 #include "engine/game/particles.h"
 
 #include <algorithm>
@@ -16,6 +17,7 @@ namespace engine::game {
 // ---------------------------------------------------------------------------------------
 
 void register_behaviours(reflect::Registry& registry) {
+    register_hud(registry);
     registry.add_choice_list<Facing>("facing")
         .display_name("Facing")
         .entry(Facing::Down, "down")
@@ -463,8 +465,9 @@ bool register_behaviour_components(world::World& world) {
     const bool sound = world.register_component<SoundSource>();
     const bool jumping = world.register_component<Jumping>();
     const bool enemy = world.register_component<EnemyOnMap>();
+    const bool hud = register_hud_components(world);
     return mover && walker && particles && prefab && encounter && walk && body && trigger &&
-           interactable && simulated && sound && jumping && enemy;
+           interactable && simulated && sound && jumping && enemy && hud;
 }
 
 // ---------------------------------------------------------------------------------------

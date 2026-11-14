@@ -2,6 +2,7 @@
 
 #include "engine/foundation/text.h"
 #include "engine/game/debug_menu.h"
+#include "engine/game/hud.h"
 #include "engine/game/localization.h"
 #include "engine/game/logic_world.h"
 #include "engine/game/shop.h"
@@ -1947,6 +1948,11 @@ bool Runtime::draw() {
         static_cast<void>(r.sprites->end());
     }
 
+    // Screen Text and Screen Bars, fixed to the screen, over the world and the weather.
+    if (!r.battle_screen && !r.menu.open()) {
+        draw_hud();
+    }
+
     // A battle, over the world, or over its background picture.
     if (r.battle_screen && !r.battle_picture.empty()) {
         const assets::AssetRecord* record = r.assets.find(r.battle_picture);
@@ -2803,6 +2809,143 @@ void Runtime::footsteps(double walked, std::array<double, 2> at) {
         const std::array<double, 3> pitches{1.0, 0.94, 1.06};
         r.audio_object.play_voice(sound, pitches.at(r.steps_taken++ % pitches.size()));
     }
+}
+
+std::string Runtime::hud_value(std::string_view name) const {
+    const Impl& r = *impl_;
+    const std::size_t colon = name.find(':');
+    const std::string_view kind = name.substr(0, colon);
+    const std::string_view of =
+        colon == std::string_view::npos ? std::string_view{} : name.substr(colon + 1);
+    const auto number = [](double v) { return engine::text::format_number(v); };
+    if (kind == "var") {
+        for (const std::string& script : r.vm->scripts()) {
+            for (const auto& [variable, value] : r.vm->variables(script)) {
+                if (variable == of) {
+                    if (const auto* whole = std::get_if<std::int64_t>(&value)) {
+                        return std::to_string(*whole);
+                    }
+                    if (const auto* real = std::get_if<double>(&value)) {
+                        return number(*real);
+                    }
+                    if (const auto* words = std::get_if<std::string>(&value)) {
+                        return *words;
+                    }
+                    if (const auto* yes = std::get_if<bool>(&value)) {
+                        return *yes ? "yes" : "no";
+                    }
+                }
+            }
+        }
+        return "?";
+    }
+    if (kind == "time") {
+        const auto minutes = static_cast<int>(r.lighting.time_of_day * 60.0) % (24 * 60);
+        const std::string mm = std::to_string(minutes % 60);
+        return std::to_string(minutes / 60) + ":" + (mm.size() == 1 ? "0" + mm : mm);
+    }
+    if (kind == "timer") {
+        return std::to_string(
+            static_cast<int>(std::ceil(r.save_object.time_left(std::string(of)))));
+    }
+    if (kind == "hp" || kind == "max_hp" || kind == "mp" || kind == "max_mp" || kind == "level") {
+        const std::string member(of);
+        BattleData data;
+        data.party = r.tables.find("data/party");
+        data.items = r.tables.find("data/items");
+        data.levels = r.tables.find("data/levels");
+        data.member_levels = r.party.levels();
+        data.member_equipment = r.party.all_equipment();
+        std::string error;
+        std::optional<Fighter> f = make_fighter(data, member, false, error);
+        if (!f) {
+            return "?";
+        }
+        if (const auto known = r.party.condition().find(member);
+            known != r.party.condition().end()) {
+            f->hp = std::clamp<std::int64_t>(known->second.first, 0, f->max_hp);
+            f->mp = std::clamp<std::int64_t>(known->second.second, 0, f->max_mp);
+        }
+        const std::int64_t v = kind == "hp"       ? f->hp
+                               : kind == "max_hp" ? f->max_hp
+                               : kind == "mp"     ? f->mp
+                               : kind == "max_mp" ? f->max_mp
+                                                  : f->level;
+        return std::to_string(v);
+    }
+    // A bare name, or item:name: how many of it the player carries.
+    return std::to_string(r.inventory.count_of(std::string(kind == "item" ? of : name)));
+}
+
+void Runtime::draw_hud() {
+    Impl& r = *impl_;
+    const ui::PixelFont& font = ui::PixelFont::builtin();
+    const auto sw = static_cast<float>(r.target->width());
+    const auto sh = static_cast<float>(r.target->height());
+    // Where a thing of w x h pixels goes for `anchor`, `x` and `y` in from it.
+    const auto place = [&](ScreenAnchor anchor, double x, double y, float w, float h) {
+        const auto column = static_cast<int>(anchor) % 3;
+        const auto row = static_cast<int>(anchor) / 3;
+        const float px = column == 0   ? static_cast<float>(x)
+                         : column == 1 ? std::floor((sw - w) / 2.0F) + static_cast<float>(x)
+                                       : sw - w - static_cast<float>(x);
+        const float py = row == 0   ? static_cast<float>(y)
+                         : row == 1 ? std::floor((sh - h) / 2.0F) + static_cast<float>(y)
+                                    : sh - h - static_cast<float>(y);
+        return std::array<float, 2>{std::floor(px), std::floor(py)};
+    };
+    const auto fill = [this](const std::string& text) {
+        return fill_values(text, [this](std::string_view name) { return hud_value(name); });
+    };
+    const auto numeric = [](const std::string& text) {
+        try {
+            return std::stod(text);
+        } catch (const std::exception&) {
+            return 0.0;
+        }
+    };
+    const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
+    r.sprites->begin_over(*r.target);
+    if (const reflect::TypeInfo* type = r.world->registry().find_type<ScreenBar>()) {
+        r.world->each(*type, [&](world::Entity, reflect::ObjectRef ref) {
+            const auto* bar = ref.as<ScreenBar>();
+            if (bar == nullptr || !bar->visible) {
+                return;
+            }
+            const double most = numeric(fill(bar->most));
+            const double now = numeric(fill(bar->value));
+            const double part = most > 0.0 ? std::clamp(now / most, 0.0, 1.0) : 0.0;
+            const auto w = static_cast<float>(bar->width);
+            const auto h = static_cast<float>(bar->height);
+            const auto [x, y] = place(bar->anchor, bar->x, bar->y, w + 2.0F, h + 2.0F);
+            r.sprites->draw(*r.white, one, render::Rect{x, y, w + 2.0F, h + 2.0F},
+                            r.settings.ui.border);
+            r.sprites->draw(*r.white, one, render::Rect{x + 1.0F, y + 1.0F, w, h},
+                            r.settings.ui.box);
+            r.sprites->draw(
+                *r.white, one,
+                render::Rect{x + 1.0F, y + 1.0F, std::floor(w * static_cast<float>(part)), h},
+                hex_color(bar->color, render::Color{220, 70, 70, 255}));
+        });
+    }
+    if (const reflect::TypeInfo* type = r.world->registry().find_type<ScreenText>()) {
+        r.world->each(*type, [&](world::Entity, reflect::ObjectRef ref) {
+            const auto* label = ref.as<ScreenText>();
+            if (label == nullptr || !label->visible) {
+                return;
+            }
+            const std::string words = r.translations.translate(fill(label->text));
+            const int size = label->size >= 2 ? 2 : 1;
+            const auto w = static_cast<float>(ui::measure(font, words) * size);
+            const auto h = static_cast<float>(font.line_height() * size);
+            const auto [x, y] = place(label->anchor, label->x, label->y, w, h);
+            // A shadow, so the words read over any ground.
+            ui::draw_text(*r.sprites, *r.font, font, words, x + 1.0F, y + 1.0F,
+                          render::Color{0, 0, 0, 180}, size);
+            ui::draw_text(*r.sprites, *r.font, font, words, x, y, r.settings.ui.text, size);
+        });
+    }
+    static_cast<void>(r.sprites->end());
 }
 
 std::size_t Runtime::reload_changed() {

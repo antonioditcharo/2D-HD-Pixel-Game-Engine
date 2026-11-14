@@ -275,6 +275,9 @@ private:
     void load_options();
     /// The player walked `walked` tiles to `at`: a footstep when due, on the ground's sound.
     void footsteps(double walked, std::array<double, 2> at);
+    /// A value Screen Text and Screen Bars show, by its name in braces: "gold", "hp:hero".
+    [[nodiscard]] std::string hud_value(std::string_view name) const;
+    void draw_hud();
     /// Keeps the player's achievements in the save folder.
     void save_achievements();
     /// Makes a copy of a prefab for logic (SaveObject::create()); returns its name, or empty

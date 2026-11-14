@@ -4,6 +4,7 @@
 
 #include "engine/game/battle.h"
 #include "engine/game/conversation.h"
+#include "engine/game/hud.h"
 #include "engine/game/localization.h"
 #include "engine/game/logic_world.h"
 #include "engine/game/runtime.h"
@@ -4516,4 +4517,76 @@ TEST_CASE("Weather: rain eases in and falls in streaks; saves keep it") {
     const serialize::Json saved = runtime->save();
     CHECK(saved["lighting"]["weather"] == "rain");
     CHECK(saved["lighting"]["weather_strength"].get<double>() == doctest::Approx(1.0));
+}
+
+TEST_CASE("Screen Text and Screen Bars: values in braces, fixed to the screen") {
+    const auto value = [](std::string_view name) { return "<" + std::string(name) + ">"; };
+    CHECK(game::fill_values("Gold: {gold}", value) == "Gold: <gold>");
+    CHECK(game::fill_values("{hp:hero}/{max_hp:hero}", value) == "<hp:hero>/<max_hp:hero>");
+    CHECK(game::fill_values("{{literal} and {open", value) == "{literal} and {open");
+
+    const Project project;
+    {
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        const world::Entity hero = w.create("hero");
+        w.add<scene2d::Transform2D>(hero);
+        w.add<game::TopDownMover>(hero);
+        const world::Entity label = w.create("gold_label");
+        game::ScreenText* text = w.add<game::ScreenText>(label);
+        text->text = "Gold: {gold}";
+        text->anchor = game::ScreenAnchor::TopRight;
+        const world::Entity meter = w.create("gold_meter");
+        game::ScreenBar* bar = w.add<game::ScreenBar>(meter);
+        bar->value = "{gold}";
+        bar->most = "100";
+        bar->anchor = game::ScreenAnchor::BottomLeft;
+        bar->width = 40.0;
+        bar->color = "#00ff00";
+        write_json(project.folder.path / "assets/maps/hud.dscene", serialize::scene_to_json(w));
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->start_scene = "maps/hud.dscene";
+        settings->width = 320;
+        settings->height = 180;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+        logic::LogicAsset rules;
+        rules.name = "rich";
+        rules.rules.push_back(logic::Rule{
+            logic::BlockId{1},
+            "",
+            "game_start",
+            {},
+            {ir::do_action(2, "inventory", "give", {Project::text("gold"), Project::whole(25)})},
+            {}});
+        write_json(project.folder.path / "assets/logic/rich.drules",
+                   serialize::logic_to_json(rules));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    runtime->step();
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    int words_top_right = 0;
+    int green = 0;
+    for (std::size_t y = 0; y < 180; ++y) {
+        for (std::size_t x = 0; x < 320; ++x) {
+            const std::size_t i = ((y * 320) + x) * 4;
+            const bool white = pixels[i] == 255 && pixels[i + 1] == 255 && pixels[i + 2] == 255;
+            words_top_right += white && y < 16 && x > 220 ? 1 : 0;
+            green += pixels[i] == 0 && pixels[i + 1] == 255 && pixels[i + 2] == 0 ? 1 : 0;
+        }
+    }
+    CHECK(words_top_right > 20); // "Gold: 25", top right
+    CHECK(green == 10 * 4);      // 25 of 100: a quarter of 40 pixels, 4 high
 }

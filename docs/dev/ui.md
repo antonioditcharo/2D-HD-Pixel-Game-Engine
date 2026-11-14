@@ -164,6 +164,32 @@ default, which shows each message whole at once) types messages out. Interact wh
 is still typing shows the page whole; the next press turns the page or closes the message,
 as before. A question's answers show once its words are all typed.
 
+
+## Screen Text and Screen Bar
+
+Words and bars fixed to the screen rather than the map, made like any other part of a scene
+(an entity with the component; `plan/02` K2): the gold carried, the hero's HP, a score, a
+countdown. They are drawn over the world and the weather, under messages, and not over
+menus or battles.
+
+| Component | Settings |
+|---|---|
+| **Screen Text** (`screen_text`) | *Text* with values in braces (below), its *Place* on the screen (a corner, a side or the middle), *X* and *Y* pixels in from there, *Size* (1, or 2 for twice as large) and *Visible*. Words have a one-pixel shadow so they read over any ground, in the look's word colour, and are translated ([localization.md](localization.md)) |
+| **Screen Bar** (`screen_bar`) | *Value* and *Most* (each a value in braces or a number), filled that far in its *Colour* (`#rrggbb`) inside a frame in the look's colours, its *Place*, *X*, *Y*, *Width*, *Height* and *Visible* |
+
+Values in braces, filled every frame:
+
+| Value | What it is |
+|---|---|
+| `{gold}`, `{potion}` (or `{item:potion}`) | How many of it the player carries |
+| `{hp:hero}`, `{max_hp:hero}`, `{mp:hero}`, `{max_mp:hero}`, `{level:hero}` | A party member's, by their row of `data/party`, with what they wear |
+| `{var:score}` | A logic variable, by its name |
+| `{time}` | The time of day, as 7:05 |
+| `{timer:race}` | Whole seconds left on a timer ([game.md](game.md)) |
+
+`{{` writes a brace. Logic shows and hides them by their *Visible*, and changes their words
+like any other property.
+
 ## 5. Next increments
 
 1. **The dialogue graph** (feature G1): lines, choices, conditions and effects drawn as a
