@@ -105,6 +105,27 @@ assets::Image figure(Rgb hair, Rgb tunic) {
     return image;
 }
 
+/// A panel's frame, 8 x 8, for a 9-slice edge of 2: a light rim round a dark, slightly
+/// see-through middle.
+assets::Image panel_frame() {
+    assets::Image image;
+    image.width = 8;
+    image.height = 8;
+    image.rgba.reserve(std::size_t{8} * 8 * 4);
+    for (std::uint32_t y = 0; y < 8; ++y) {
+        for (std::uint32_t x = 0; x < 8; ++x) {
+            const std::uint32_t edge = std::min({x, y, 7 - x, 7 - y});
+            const bool rim = edge == 0;
+            const bool corner = (x == 0 || x == 7) && (y == 0 || y == 7);
+            const std::uint8_t alpha = corner ? 0 : rim ? 255 : edge == 1 ? 255 : 210;
+            const std::uint8_t shade = rim ? 230 : 18;
+            image.rgba.insert(image.rgba.end(), {shade, static_cast<std::uint8_t>(rim ? 232 : 20),
+                                                 static_cast<std::uint8_t>(rim ? 240 : 40), alpha});
+        }
+    }
+    return image;
+}
+
 /// A green slime: a dome with a lighter shine and two eyes.
 assets::Image slime() {
     assets::Image image;
@@ -631,7 +652,8 @@ bool write_rpg_files(const fs::path& assets_folder) {
                      figure({220, 220, 220}, {120, 60, 140})) &&
            write_png(assets_folder / "art" / "shopkeeper.png",
                      figure({40, 30, 20}, {190, 120, 40})) &&
-           write_png(assets_folder / "art" / "slime.png", slime());
+           write_png(assets_folder / "art" / "slime.png", slime()) &&
+           write_png(assets_folder / "art" / "panel.png", panel_frame());
 }
 
 } // namespace
@@ -718,6 +740,15 @@ bool create_project(const fs::path& folder, std::string_view name, std::string& 
         entities.push_back(entity("slime", {{"sprite", {{"image", picture("art/slime.png")}}},
                                             {"enemy_on_map", {{"enemies", "slime"}}},
                                             {"transform_2d", {{"x", 10.5}, {"y", 9.0}}}}));
+        // The gold carried, on a framed panel stretched from an 8-pixel picture (9-slice).
+        entities.push_back(entity("gold_panel", {{"screen_picture",
+                                                  {{"image", picture("art/panel.png")},
+                                                   {"anchor", "top_right"},
+                                                   {"x", 1.0},
+                                                   {"y", 1.0},
+                                                   {"width", 60.0},
+                                                   {"height", 14.0},
+                                                   {"border", 2.0}}}}));
         entities.push_back(
             entity("gold", {{"screen_text", {{"text", "Gold {gold}"}, {"anchor", "top_right"}}}}));
         entities.push_back(

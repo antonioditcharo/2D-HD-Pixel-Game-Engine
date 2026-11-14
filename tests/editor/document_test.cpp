@@ -3351,7 +3351,9 @@ TEST_CASE("A new RPG: a village with an elder, a shop, a slime, menus and a HUD,
         const auto d = editor::Document::open(folder, issues);
         REQUIRE(d != nullptr);
         CHECK(issues.empty());
-        CHECK(d->entities().size() == 8);
+        CHECK(d->entities().size() == 9);
+        CHECK(d->world().get<game::ScreenPicture>(d->world().find_named("gold_panel").at(0)) !=
+              nullptr);
         CHECK(d->world().get<game::EnemyOnMap>(d->world().find_named("slime").at(0)) != nullptr);
         CHECK(d->world().get<game::ScreenText>(d->world().find_named("gold").at(0)) != nullptr);
         CHECK(d->check_logic("logic/village.drules").empty());

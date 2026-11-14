@@ -13,8 +13,12 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
+#include <string>
+#include <utility>
 
 #include "editor/core/document.h"
 #include "editor/core/preview.h"
@@ -142,6 +146,8 @@ private:
     /// Screen Text and Screen Bars where the game shows them, over the frame drawn at
     /// `origin_at` at `s` times: their words as written, bars half full.
     void paint_hud(QPainter& painter, QPoint origin_at, int s) const;
+    /// The picture of a Screen Picture, by its GUID, read once (again when it changes).
+    [[nodiscard]] QImage hud_picture(const std::string& guid) const;
     [[nodiscard]] int scale() const;
     [[nodiscard]] QPoint origin() const;
 
@@ -152,6 +158,8 @@ private:
     std::uint32_t scatter_seed_ = 1; ///< Each scatter stroke's random choices.
     std::unique_ptr<Preview> preview_;
     QImage image_;
+    /// hud_picture()'s pictures, with when their files changed.
+    mutable std::map<std::string, std::pair<std::filesystem::file_time_type, QImage>> hud_pictures_;
     engine::Guid selection_;
     std::vector<engine::Guid> group_; ///< Everything selected, `selection_` first.
     /// A group being dragged: each entity and where it was when the drag began.

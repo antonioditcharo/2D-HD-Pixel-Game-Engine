@@ -266,6 +266,40 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
         const double py = row == 0 ? y : row == 1 ? std::floor((sh - h) / 2.0) + y : sh - h - y;
         return QRectF(origin_at.x() + (px * s), origin_at.y() + (py * s), w * s, h * s);
     };
+    // Screen Pictures first, under the bars and words, as the game draws them.
+    if (const auto* type = world.registry().find_type<engine::game::ScreenPicture>()) {
+        world.each(*type, [&](engine::world::Entity, engine::reflect::ObjectRef ref) {
+            const auto* picture = ref.as<engine::game::ScreenPicture>();
+            if (picture == nullptr || !picture->visible) {
+                return;
+            }
+            const QImage source = hud_picture(picture->image);
+            if (source.isNull()) {
+                return;
+            }
+            const auto pw = static_cast<float>(source.width());
+            const auto ph = static_cast<float>(source.height());
+            const double w = picture->width > 0.0 ? picture->width : pw;
+            const double h = picture->height > 0.0 ? picture->height : ph;
+            const QRectF at = place(picture->anchor, picture->x, picture->y, w, h);
+            painter.save();
+            painter.setOpacity(std::clamp(picture->opacity, 0.0, 1.0));
+            // The same pieces as the game's (engine/game/hud.h), in screen pixels.
+            for (const engine::game::SlicePiece& piece : engine::game::nine_slice(
+                     pw, ph,
+                     engine::render::Rect{0.0F, 0.0F, static_cast<float>(w), static_cast<float>(h)},
+                     static_cast<float>(picture->border))) {
+                const auto scaled = [s](float v) { return static_cast<double>(v) * s; };
+                const QRectF to(at.x() + scaled(piece.destination.x),
+                                at.y() + scaled(piece.destination.y), scaled(piece.destination.w),
+                                scaled(piece.destination.h));
+                painter.drawImage(
+                    to, source,
+                    QRectF(piece.source.x, piece.source.y, piece.source.w, piece.source.h));
+            }
+            painter.restore();
+        });
+    }
     QFont font = painter.font();
     font.setPixelSize(std::max(8, 7 * s));
     // Hard-edged, as the game's pixel font is.
@@ -307,6 +341,27 @@ void SceneView::paint_hud(QPainter& painter, QPoint origin_at, int s) const {
                 fill.isValid() ? fill : QColor(220, 70, 70));
         });
     }
+}
+
+QImage SceneView::hud_picture(const std::string& guid) const {
+    const std::optional<engine::Guid> id = engine::Guid::parse(guid);
+    const engine::assets::AssetRecord* record =
+        id && document_ != nullptr ? document_->assets().find(*id) : nullptr;
+    if (record == nullptr) {
+        return {};
+    }
+    const std::filesystem::path file =
+        document_->assets().root() /
+        std::filesystem::path(std::u8string(record->path.begin(), record->path.end()));
+    std::error_code failed;
+    const std::filesystem::file_time_type changed = std::filesystem::last_write_time(file, failed);
+    if (const auto found = hud_pictures_.find(guid);
+        found != hud_pictures_.end() && found->second.first == changed) {
+        return found->second.second;
+    }
+    const QImage image(QString::fromStdU16String(file.u16string()));
+    hud_pictures_[guid] = {changed, image};
+    return image;
 }
 
 void SceneView::paintEvent(QPaintEvent* /*event*/) {

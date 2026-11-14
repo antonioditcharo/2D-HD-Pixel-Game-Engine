@@ -4624,3 +4624,80 @@ TEST_CASE("Testing: F2 pauses, F6 steps once, F2 goes on; F7 slows to half speed
     }
     CHECK(transform_of(*runtime, "hero").x > one_step); // going on
 }
+
+TEST_CASE("Screen Pictures: fixed to the screen, a frame stretched with crisp edges") {
+    // The pieces: a 3 x 3 picture with a 1-pixel edge, drawn 30 x 20.
+    const std::vector<game::SlicePiece> pieces =
+        game::nine_slice(3.0F, 3.0F, render::Rect{10.0F, 20.0F, 30.0F, 20.0F}, 1.0F);
+    REQUIRE(pieces.size() == 9);
+    CHECK(pieces[0].destination.w == 1.0F); // the top-left corner, as drawn
+    CHECK(pieces[4].source.x == 1.0F);      // the middle: one pixel, stretched
+    CHECK(pieces[4].destination.w == 28.0F);
+    CHECK(pieces[8].destination.x == 39.0F); // the bottom-right corner
+    CHECK(game::nine_slice(3.0F, 3.0F, render::Rect{0, 0, 30, 20}, 0.0F).size() == 1);
+    // An edge too wide for the picture is narrowed to fit.
+    CHECK(game::nine_slice(4.0F, 4.0F, render::Rect{0, 0, 30, 20}, 9.0F).front().source.w == 2.0F);
+    CHECK(game::nine_slice(0.0F, 3.0F, render::Rect{0, 0, 30, 20}, 1.0F).empty());
+
+    const Project project;
+    {
+        // A frame: red edges round a blue middle.
+        assets::Image frame;
+        frame.width = 3;
+        frame.height = 3;
+        for (int i = 0; i < 9; ++i) {
+            const bool middle = i == 4;
+            frame.rgba.insert(frame.rgba.end(), {static_cast<std::uint8_t>(middle ? 0 : 255), 0,
+                                                 static_cast<std::uint8_t>(middle ? 255 : 0), 255});
+        }
+        const std::vector<std::uint8_t> png = assets::encode_png(frame);
+        std::ofstream(project.folder.path / "assets/art/frame.png", std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+        assets::AssetDatabase db(project.folder.path / "assets");
+        static_cast<void>(db.refresh());
+        const assets::AssetRecord* record = db.find("art/frame.png");
+        REQUIRE(record != nullptr);
+
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        game::ScreenPicture* picture = w.add<game::ScreenPicture>(w.create("panel"));
+        picture->image = record->guid.to_string();
+        picture->anchor = game::ScreenAnchor::BottomRight;
+        picture->width = 30.0;
+        picture->height = 20.0;
+        picture->border = 1.0;
+        write_json(project.folder.path / "assets/maps/hud.dscene", serialize::scene_to_json(w));
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->start_scene = "maps/hud.dscene";
+        settings->width = 320;
+        settings->height = 180;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    runtime->step();
+    REQUIRE(runtime->draw());
+    const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    const render::Color red{255, 0, 0, 255};
+    const render::Color blue{0, 0, 255, 255};
+    // In the bottom-right corner: x 290 to 319, y 160 to 179.
+    CHECK(pixel(pixels, 320, 290, 160) == red);
+    CHECK(pixel(pixels, 320, 319, 179) == red);
+    CHECK(pixel(pixels, 320, 305, 160) == red); // the top edge, one pixel high
+    CHECK(pixel(pixels, 320, 305, 161) == blue);
+    CHECK(pixel(pixels, 320, 305, 170) == blue); // the middle, stretched
+    CHECK(pixel(pixels, 320, 318, 170) == blue);
+    CHECK_FALSE(pixel(pixels, 320, 289, 170) == red);
+}

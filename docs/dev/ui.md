@@ -165,7 +165,7 @@ is still typing shows the page whole; the next press turns the page or closes th
 as before. A question's answers show once its words are all typed.
 
 
-## Screen Text and Screen Bar
+## Screen Text, Screen Bar and Screen Picture
 
 Words and bars fixed to the screen rather than the map, made like any other part of a scene
 (an entity with the component; `plan/02` K2): the gold carried, the hero's HP, a score, a
@@ -176,6 +176,16 @@ menus or battles.
 |---|---|
 | **Screen Text** (`screen_text`) | *Text* with values in braces (below), its *Place* on the screen (a corner, a side or the middle), *X* and *Y* pixels in from there, *Size* (1, or 2 for twice as large) and *Visible*. Words have a one-pixel shadow so they read over any ground, in the look's word colour, and are translated ([localization.md](localization.md)) |
 | **Screen Bar** (`screen_bar`) | *Value* and *Most* (each a value in braces or a number), filled that far in its *Colour* (`#rrggbb`) inside a frame in the look's colours, its *Place*, *X*, *Y*, *Width*, *Height* and *Visible* |
+| **Screen Picture** (`screen_picture`) | A *Picture* (an icon, a portrait, a panel), its *Place*, *X* and *Y*, *Width* and *Height* (0 keeps the picture's own), *Frame edge* and *Opacity* (0 to 1). Pictures are drawn under the bars and words, so a panel can sit behind them |
+
+**Frames that stretch (9-slice).** With a *Frame edge* of, say, 2, a picture's outer two
+pixels on each side are drawn as they are while the middle stretches to the *Width* and
+*Height*: an 8-pixel frame makes a panel of any size whose corners and rim stay crisp,
+as in RPG Maker's windows or Godot's NinePatchRect. An edge too wide for the picture or the
+size is narrowed to fit; 0 stretches the whole picture. The RPG template puts the gold on
+such a panel (`art/panel.png`, 8 × 8, stretched to 60 × 14). (`nine_slice()` in
+`engine/game/hud.h` gives the pieces; the game and the editor's scene view both draw from
+it, so they match.)
 
 Values in braces, filled every frame:
 
@@ -188,7 +198,8 @@ Values in braces, filled every frame:
 | `{timer:race}` | Whole seconds left on a timer ([game.md](game.md)) |
 
 In the editor, the scene view shows them where the game will, with their words as
-written (braces and all) and bars half full, so they are placed by eye.
+written (braces and all), bars half full and pictures stretched as the game will, so they
+are placed by eye.
 
 `{{` writes a brace. Logic shows and hides them by their *Visible*, and changes their words
 like any other property.

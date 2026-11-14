@@ -2253,6 +2253,18 @@ TEST_CASE("The scene view shows Screen Text where the game will") {
             }
         }
         CHECK(white > 20);
+        // The gold's panel, a Screen Picture: its light rim and dark middle, top right.
+        int rim = 0;
+        int middle = 0;
+        for (int y = 0; y < shot.height() / 3; ++y) {
+            for (int x = shot.width() / 2; x < shot.width(); ++x) {
+                const QColor c = shot.pixelColor(x, y);
+                rim += c == QColor(230, 232, 240) ? 1 : 0;
+                middle += c.blue() > c.red() + 15 && c.red() < 40 ? 1 : 0;
+            }
+        }
+        CHECK(rim > 40);
+        CHECK(middle > 100);
     }
     std::error_code ignored;
     fs::remove_all(folder, ignored);

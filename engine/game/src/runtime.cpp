@@ -2943,6 +2943,30 @@ void Runtime::draw_hud() {
     };
     const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
     r.sprites->begin_over(*r.target);
+    if (const reflect::TypeInfo* type = r.world->registry().find_type<ScreenPicture>();
+        type != nullptr && r.textures != nullptr) {
+        r.world->each(*type, [&](world::Entity, reflect::ObjectRef ref) {
+            const auto* picture = ref.as<ScreenPicture>();
+            const std::optional<Guid> guid =
+                picture != nullptr && picture->visible ? Guid::parse(picture->image) : std::nullopt;
+            const render::Texture* texture = guid ? r.textures->get(*guid) : nullptr;
+            if (texture == nullptr) {
+                return;
+            }
+            const auto tw = static_cast<float>(texture->width());
+            const auto th = static_cast<float>(texture->height());
+            const float w = picture->width > 0.0 ? static_cast<float>(picture->width) : tw;
+            const float h = picture->height > 0.0 ? static_cast<float>(picture->height) : th;
+            const auto [x, y] = place(picture->anchor, picture->x, picture->y, w, h);
+            const auto alpha =
+                static_cast<std::uint8_t>(std::clamp(picture->opacity, 0.0, 1.0) * 255.0);
+            for (const SlicePiece& piece : nine_slice(tw, th, render::Rect{x, y, w, h},
+                                                      static_cast<float>(picture->border))) {
+                r.sprites->draw(*texture, piece.source, piece.destination,
+                                render::Color{255, 255, 255, alpha});
+            }
+        });
+    }
     if (const reflect::TypeInfo* type = r.world->registry().find_type<ScreenBar>()) {
         r.world->each(*type, [&](world::Entity, reflect::ObjectRef ref) {
             const auto* bar = ref.as<ScreenBar>();
