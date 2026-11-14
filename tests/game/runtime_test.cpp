@@ -4590,3 +4590,37 @@ TEST_CASE("Screen Text and Screen Bars: values in braces, fixed to the screen") 
     CHECK(words_top_right > 20); // "Gold: 25", top right
     CHECK(green == 10 * 4);      // 25 of 100: a quarter of 40 pixels, 4 high
 }
+
+TEST_CASE("Testing: F2 pauses, F6 steps once, F2 goes on; F7 slows to half speed") {
+    const Project project;
+    input::Recording replay;
+    replay.record(0, key(input::Key::Right), true); // walking right all along
+    replay.record(10, key(input::Key::F2), true);   // pause
+    replay.record(11, key(input::Key::F2), false);
+    replay.record(20, key(input::Key::F6), true); // one step
+    replay.record(21, key(input::Key::F6), false);
+    replay.record(30, key(input::Key::F2), true); // go on
+    replay.record(31, key(input::Key::F2), false);
+    game::RuntimeOptions options = no_graphics(&replay);
+    options.debug = true;
+    const auto runtime = project.open(options);
+    for (int i = 0; i < 11; ++i) {
+        runtime->step();
+    }
+    const double paused_at = transform_of(*runtime, "hero").x;
+    for (int i = 11; i < 20; ++i) {
+        runtime->step();
+    }
+    CHECK(transform_of(*runtime, "hero").x == paused_at); // stood still while paused
+    runtime->step();                                      // F6: one step
+    const double one_step = transform_of(*runtime, "hero").x;
+    CHECK(one_step > paused_at);
+    for (int i = 21; i < 30; ++i) {
+        runtime->step();
+    }
+    CHECK(transform_of(*runtime, "hero").x == one_step);
+    for (int i = 30; i < 40; ++i) {
+        runtime->step();
+    }
+    CHECK(transform_of(*runtime, "hero").x > one_step); // going on
+}

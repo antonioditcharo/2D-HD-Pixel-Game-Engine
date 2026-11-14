@@ -46,6 +46,10 @@ sparxel-player samples/hello --headless --frames 120 --no-audio --screenshot fra
   **Quests** (each with how it stands: Interact completes it), **Go to…** (everything
   named, by name: Interact puts the player just below it and closes the menu), **Heal the
   party**, and **Close**. Up and Down choose; Cancel goes back. F1 again closes it.
+- **Time controls** (`plan/02` N3): **F2** pauses the game and goes on again, **F6**
+  moves a paused game on by one step (a sixtieth of a second), and **F7** plays it at half
+  speed, to look at a jump or a battle closely. A magenta line in the bottom-left corner
+  says which is on. The debug menu still works while paused.
 - **Live editing**: once a second the game reads again what changed in `assets/` while it
   plays (`Runtime::reload_changed()`, `plan/02` N2): pictures and sprite sheets (saved in
   Sprite Studio, or imported from Aseprite) show at once, and data tables and translations

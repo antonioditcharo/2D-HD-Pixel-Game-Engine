@@ -856,6 +856,9 @@ struct Runtime::Impl {
     std::uint32_t fade_length = 0;
     std::uint32_t steps_taken = 0; ///< Footsteps taken, for each one's pitch.
     bool debug = false;            ///< Testing from the editor: the debug menu and timings.
+    /// Testing: time paused (F2), going a step (F6), or slowed (F7).
+    enum class Time : std::uint8_t { Normal, Paused, Slow } time_control = Time::Normal;
+    bool frame_step = false;
     bool show_performance = false;
     std::unique_ptr<logic::Vm> vm;
     FixedStepClock clock;
@@ -1269,7 +1272,23 @@ void Runtime::step() {
                 }
             } else if (binding == input::Binding::key(input::Key::F3)) {
                 r.show_performance = !r.show_performance;
+            } else if (binding == input::Binding::key(input::Key::F2)) {
+                r.time_control =
+                    r.time_control == Impl::Time::Paused ? Impl::Time::Normal : Impl::Time::Paused;
+            } else if (binding == input::Binding::key(input::Key::F6)) {
+                r.frame_step = true;
+            } else if (binding == input::Binding::key(input::Key::F7)) {
+                r.time_control =
+                    r.time_control == Impl::Time::Slow ? Impl::Time::Normal : Impl::Time::Slow;
             }
+        }
+        // Time controls: paused (F6 goes one step), or slow motion (every other step).
+        const bool hold = (r.time_control == Impl::Time::Paused && !r.frame_step) ||
+                          (r.time_control == Impl::Time::Slow && r.steps % 2 == 1);
+        r.frame_step = false;
+        if (hold && !r.debug_menu.is_open()) {
+            ++r.steps;
+            return;
         }
     }
 
@@ -2250,6 +2269,19 @@ bool Runtime::draw() {
         static_cast<void>(r.sprites->end());
     }
     r.debug_menu.draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin());
+    // Time controls, said in the bottom-left corner while on.
+    if (r.debug && r.time_control != Impl::Time::Normal) {
+        const ui::PixelFont& font = ui::PixelFont::builtin();
+        const std::string words = r.time_control == Impl::Time::Paused
+                                      ? "Paused (F2 goes on, F6 one step)"
+                                      : "Slow motion (F7)";
+        const auto y = static_cast<float>(r.target->height() - font.line_height() - 2);
+        r.sprites->begin_over(*r.target);
+        ui::draw_text(*r.sprites, *r.font, font, words, 3.0F, y + 1.0F,
+                      render::Color{0, 0, 0, 200});
+        ui::draw_text(*r.sprites, *r.font, font, words, 2.0F, y, render::Color{220, 60, 220, 255});
+        static_cast<void>(r.sprites->end());
+    }
     // How long frames take, in plain language (F3 while testing).
     if (r.debug && r.show_performance) {
         constexpr double budget = 1000.0 / 60.0;
