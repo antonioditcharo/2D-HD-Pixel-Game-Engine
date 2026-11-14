@@ -175,3 +175,17 @@ TEST_CASE("Controls that went down this step are listed in order, and named for 
     CHECK(input::binding_name(input::Binding::key(input::Key::Escape)) == "Esc");
     CHECK(input::binding_name(input::Binding::button(input::Button::South)) == "Pad A");
 }
+
+TEST_CASE("Button prompts name the control of the device used last") {
+    input::InputState state(input::InputMap::rpg_preset());
+    CHECK(state.last_device() == Binding::Device::Keyboard);
+    CHECK(state.prompt("interact") == "Z");
+    state.begin_step();
+    state.set(Binding::button(Button::South), true);
+    CHECK(state.last_device() == Binding::Device::Gamepad);
+    CHECK(state.prompt("interact") == "Pad A");
+    CHECK(state.prompt("nothing").empty());
+    state.begin_step();
+    state.set(Binding::key(Key::Left), true);
+    CHECK(state.prompt("cancel") == "X");
+}

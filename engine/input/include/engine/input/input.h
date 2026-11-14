@@ -170,6 +170,12 @@ public:
     void set_map(InputMap map);
     /// Controls that went down during this step, in order: for "press a key" while
     /// rebinding.
+    /// The kind of control pressed last: keyboard or gamepad, for showing which button
+    /// to press ("Z" or "Pad A").
+    [[nodiscard]] Binding::Device last_device() const noexcept { return last_device_; }
+    /// The name of the first control of `action` on the device pressed last ("Z", "Pad A");
+    /// empty if the action has none there.
+    [[nodiscard]] std::string prompt(std::string_view action) const;
     [[nodiscard]] const std::vector<Binding>& pressed_bindings() const noexcept {
         return newly_down_;
     }
@@ -180,6 +186,7 @@ private:
     InputMap map_;
     std::set<Binding> down_;
     std::vector<Binding> newly_down_;
+    Binding::Device last_device_ = Binding::Device::Keyboard;
     std::set<std::string, std::less<>> pressed_;
     std::set<std::string, std::less<>> released_;
 };

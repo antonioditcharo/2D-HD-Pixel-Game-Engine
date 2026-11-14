@@ -80,6 +80,10 @@ In the game:
 
 - **The player stands still** while a message is open. Movement and physics see no
   controls held, so the hero stops walking and pushes nothing.
+- **Which button goes on.** Once a page is all shown (and it is not a question's answers),
+  the button that turns it blinks on the box's bottom edge, named for the device the player
+  used last: *[Z]* on a keyboard, *[Pad A]* after a gamepad (`InputState::prompt()`,
+  `plan/02` K4). Rebinding Interact on the Options page changes it too.
 - **Interact turns the pages.** A message longer than the box shows a page at a time;
   Interact shows the next page, and on the last page closes the message. The press is
   used up: it does not run *"When Interact is pressed"* Rules and does not talk to the

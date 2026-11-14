@@ -1889,6 +1889,24 @@ bool Runtime::draw() {
         const std::vector<std::string>& choices = r.dialogue.choices();
         const std::size_t pages = (lines.size() + static_cast<std::size_t>(box.lines) - 1) /
                                   static_cast<std::size_t>(box.lines);
+        // The page all shown, and no answers to pick: which button goes on, on the box's
+        // bottom edge, blinking ("[Z]", or "[Pad A]" after a gamepad was used).
+        const std::size_t page_end = first + static_cast<std::size_t>(box.lines) < starts.size()
+                                         ? starts[first + static_cast<std::size_t>(box.lines)]
+                                         : rich.plain.size();
+        const bool answers_here = !choices.empty() && r.page + 1 >= std::max<std::size_t>(pages, 1);
+        if (const std::string key = r.state.prompt("interact");
+            !key.empty() && !answers_here && shown >= page_end &&
+            std::fmod(r.message_seconds, 1.0) < 0.7) {
+            const std::string prompt = "[" + key + "]";
+            const auto pw = static_cast<float>(ui::measure(font, prompt) + 4);
+            const auto ph = static_cast<float>(font.line_height());
+            const float px = box.x + box.width - pw - message_padding;
+            const float py = box.y + box.height - (ph / 2.0F) - 1.0F;
+            r.sprites->draw(*r.white, one, render::Rect{px, py, pw, ph}, r.settings.ui.box);
+            ui::draw_text(*r.sprites, *r.font, font, prompt, px + 2.0F, py,
+                          r.settings.ui.highlight);
+        }
         if (!choices.empty() && r.page + 1 >= std::max<std::size_t>(pages, 1) &&
             shown >= rich.plain.size()) {
             const float marker = static_cast<float>(ui::measure(font, ">") + 3);

@@ -109,6 +109,7 @@ bool InputState::held_by_controls(std::string_view action) const {
 void InputState::set(Binding binding, bool down) {
     if (down && !down_.contains(binding)) {
         newly_down_.push_back(binding);
+        last_device_ = binding.device;
     }
     if (down == down_.contains(binding)) {
         return; // a repeat
@@ -149,6 +150,15 @@ bool InputState::released(std::string_view action) const {
 
 std::vector<std::string> InputState::pressed_actions() const {
     return {pressed_.begin(), pressed_.end()};
+}
+
+std::string InputState::prompt(std::string_view action) const {
+    for (const Binding binding : map_.bindings(action)) {
+        if (binding.device == last_device_) {
+            return binding_name(binding);
+        }
+    }
+    return {};
 }
 
 void InputState::set_map(InputMap map) {

@@ -4078,6 +4078,14 @@ TEST_CASE("The look of menus and messages: colours read, saved, and drawn") {
     runtime->step();
     REQUIRE(runtime->draw());
     const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+    {
+        const assets::Image image{320, 180, pixels};
+        const std::vector<std::uint8_t> png = assets::encode_png(image);
+        std::ofstream(std::filesystem::temp_directory_path() / "sparxel-parchment.png",
+                      std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), // NOLINT
+                   static_cast<std::streamsize>(png.size()));
+    }
     bool box = false;
     bool words = false;
     for (std::size_t i = 0; i + 3 < pixels.size(); i += 4) {
