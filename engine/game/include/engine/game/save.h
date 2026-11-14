@@ -147,6 +147,11 @@ public:
     /// Unlocked since the last call, to announce and keep.
     [[nodiscard]] std::vector<std::string> take_unlocked() { return std::exchange(newly_, {}); }
 
+    /// The minimap shown or hidden by logic; nothing keeps the project's setting.
+    void show_minimap() { minimap_ = true; }
+    void hide_minimap() { minimap_ = false; }
+    [[nodiscard]] std::optional<bool> minimap() const noexcept { return minimap_; }
+
     /// The name of the last copy made, for Rules to act on it.
     [[nodiscard]] std::string last_created() const { return last_created_; }
     void set_last_created(std::string name) { last_created_ = std::move(name); }
@@ -161,6 +166,7 @@ private:
     std::vector<Spawn> spawns_;
     std::map<std::string, double, std::less<>> timers_;
     std::vector<std::string> messages_;
+    std::optional<bool> minimap_;
     std::set<std::string, std::less<>> achievements_;
     std::vector<std::string> newly_;
     std::string last_created_;

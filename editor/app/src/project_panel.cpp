@@ -247,6 +247,9 @@ void ProjectPanel::build() {
         menus, tr("Pause menu on the Menu key"), "pause_menu",
         [](const Settings& s) { return s.pause_menu; },
         [](Settings& s, bool on) { s.pause_menu = on; });
+    tick(
+        menus, tr("Minimap (top right)"), "minimap", [](const Settings& s) { return s.minimap; },
+        [](Settings& s, bool on) { s.minimap = on; });
     // Their colours: a ready-made look, or each colour on its own.
     auto* ui_presets = new QComboBox(content_);
     ui_presets->setObjectName(QStringLiteral("setting:ui_preset"));

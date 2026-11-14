@@ -45,7 +45,7 @@ void add_issues(std::vector<serialize::Issue>& out, std::string_view file,
 }
 
 /// The entries a project file may have; anything else is reported and ignored.
-constexpr std::array<std::string_view, 35> known_project_keys{"format",
+constexpr std::array<std::string_view, 36> known_project_keys{"format",
                                                               "version",
                                                               "name",
                                                               "start_scene",
@@ -79,7 +79,8 @@ constexpr std::array<std::string_view, 35> known_project_keys{"format",
                                                               "language",
                                                               "languages",
                                                               "ui",
-                                                              "music_while_talking"};
+                                                              "music_while_talking",
+                                                              "minimap"};
 
 } // namespace
 
@@ -450,8 +451,9 @@ std::optional<ProjectSettings> project_from_json(const serialize::Json& doc,
             }
         }
     }
-    for (const auto& [key, target] : {std::pair{"title_screen", &settings.title_screen},
-                                      std::pair{"pause_menu", &settings.pause_menu}}) {
+    for (const auto& [key, target] :
+         {std::pair{"title_screen", &settings.title_screen},
+          std::pair{"pause_menu", &settings.pause_menu}, std::pair{"minimap", &settings.minimap}}) {
         if (const auto found = doc.find(key); found != doc.end()) {
             if (found->is_boolean()) {
                 *target = found->get<bool>();
@@ -529,6 +531,7 @@ serialize::Json project_to_json(const ProjectSettings& settings) {
     json["camera_clamp"] = settings.camera_clamp;
     json["title_screen"] = settings.title_screen;
     json["pause_menu"] = settings.pause_menu;
+    json["minimap"] = settings.minimap;
     json["ambient_light"] = settings.ambient_light;
     json["sun_light"] = settings.sun_light;
     json["sun_angle"] = settings.sun_angle;
@@ -2031,6 +2034,92 @@ bool Runtime::draw() {
     // The title screen or the pause menu, over everything.
     r.menu.draw(*r.sprites, *r.target, *r.white, *r.font, ui::PixelFont::builtin(), r.settings.name,
                 r.save_object, r.inventory, r.quests, r.party);
+    // The minimap: the tiles around the player, solid ones as walls, top right, with the
+    // player and the people to talk to as dots. Not over menus, shops or battles.
+    if (r.save_object.minimap().value_or(r.settings.minimap) && !r.menu.open() &&
+        !r.battle_screen && !r.shop_screen) {
+        if (const std::optional<std::array<double, 2>> player = player_position(*r.world)) {
+            constexpr int reach = 20;   // tiles each way
+            constexpr float dot = 2.0F; // pixels a tile
+            const float side = dot * static_cast<float>((2 * reach) + 1);
+            const float left = static_cast<float>(r.target->width()) - side - 4.0F;
+            constexpr float top = 4.0F;
+            const render::Rect one{0.0F, 0.0F, 1.0F, 1.0F};
+            r.sprites->begin_over(*r.target);
+            r.sprites->draw(*r.white, one, render::Rect{left - 1, top - 1, side + 2, side + 2},
+                            r.settings.ui.border);
+            r.sprites->draw(*r.white, one, render::Rect{left, top, side, side}, r.settings.ui.box);
+            const double ppu = std::max<std::uint32_t>(r.settings.ppu, 1);
+            const double px = std::floor((*player)[0]);
+            const double py = std::floor((*player)[1]);
+            // Where map point (x, y) shows, if inside.
+            const auto spot = [&](double x, double y) -> std::optional<std::array<float, 2>> {
+                const double dx = std::floor(x) - px + reach;
+                const double dy = std::floor(y) - py + reach;
+                if (dx < 0 || dy < 0 || dx > 2 * reach || dy > 2 * reach) {
+                    return std::nullopt;
+                }
+                return std::array<float, 2>{left + (static_cast<float>(dx) * dot),
+                                            top + (static_cast<float>(dy) * dot)};
+            };
+            if (const reflect::TypeInfo* type = r.world->registry().find_type<scene2d::Tilemap>()) {
+                r.world->each(*type, [&](world::Entity e, reflect::ObjectRef ref) {
+                    const auto* map = ref.as<scene2d::Tilemap>();
+                    const auto* at = r.world->get<scene2d::Transform2D>(e);
+                    std::string error;
+                    const scene2d::TileGrid* grid =
+                        map != nullptr && map->visible ? map->grid(error) : nullptr;
+                    if (grid == nullptr || at == nullptr) {
+                        return;
+                    }
+                    const double tile =
+                        static_cast<double>(map->tile_size == 0 ? ppu : map->tile_size) / ppu;
+                    const render::Color colour =
+                        map->solid ? r.settings.ui.border : r.settings.ui.dim;
+                    // Only the cells near the player.
+                    const auto first = [&](double from, double origin) {
+                        return static_cast<std::uint32_t>(
+                            std::max(0.0, std::floor((from - origin) / tile)));
+                    };
+                    const std::uint32_t c0 = first(px - reach, at->x);
+                    const std::uint32_t r0 = first(py - reach, at->y);
+                    const std::uint32_t c1 =
+                        std::min(grid->width, first(px + reach + 1, at->x) + 1);
+                    const std::uint32_t r1 =
+                        std::min(grid->height, first(py + reach + 1, at->y) + 1);
+                    for (std::uint32_t row = r0; row < r1; ++row) {
+                        for (std::uint32_t column = c0; column < c1; ++column) {
+                            if (grid->at(column, row) < 0) {
+                                continue;
+                            }
+                            if (const auto where =
+                                    spot(at->x + (column * tile), at->y + (row * tile))) {
+                                r.sprites->draw(*r.white, one,
+                                                render::Rect{(*where)[0], (*where)[1], dot, dot},
+                                                colour);
+                            }
+                        }
+                    }
+                });
+            }
+            if (const reflect::TypeInfo* type = r.world->registry().find_type<Interactable>()) {
+                r.world->each(*type, [&](world::Entity e, reflect::ObjectRef) {
+                    const auto* at = r.world->get<scene2d::Transform2D>(e);
+                    if (const auto where =
+                            at != nullptr ? spot(at->x, at->y - 0.5) : std::nullopt) {
+                        r.sprites->draw(*r.white, one,
+                                        render::Rect{(*where)[0], (*where)[1], dot, dot},
+                                        r.settings.ui.text);
+                    }
+                });
+            }
+            r.sprites->draw(
+                *r.white, one,
+                render::Rect{left + (reach * dot) - 1, top + (reach * dot) - 1, dot + 2, dot + 2},
+                r.settings.ui.highlight);
+            static_cast<void>(r.sprites->end());
+        }
+    }
     // An achievement unlocked: a box at the top, sliding down, then up again.
     if (!r.toasts.empty()) {
         const auto& [text, seconds] = r.toasts.front();

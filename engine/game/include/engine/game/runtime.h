@@ -71,6 +71,8 @@ struct ProjectSettings {
     std::string languages;
     /// The colours of the menus and messages.
     UiTheme ui;
+    /// A small map of the tiles around the player in the top-right corner.
+    bool minimap = false;
     render::Color background{20, 24, 40, 255};
     /// The Diorama camera: how far it looks down (5 to 85 degrees), how far it stands from
     /// the player (1 to 200 tiles), and its vertical field of view (5 to 90 degrees).

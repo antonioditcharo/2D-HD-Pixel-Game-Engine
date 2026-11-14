@@ -4248,3 +4248,77 @@ TEST_CASE("Credits: offered on the title screen when the game has credits.txt") 
     const auto runtime = project.open(no_graphics(nullptr));
     CHECK(runtime->menu().credits() == std::vector<std::string>{"Test game", "Made with Sparxel"});
 }
+
+TEST_CASE("The minimap shows walls, the player and people to talk to; logic hides it") {
+    const Project project;
+    {
+        reflect::Registry registry;
+        game::register_types(registry);
+        world::World w(registry);
+        REQUIRE(scene2d::register_components(w));
+        REQUIRE(game::register_behaviour_components(w));
+        const world::Entity hero = w.create("hero");
+        w.add<scene2d::Transform2D>(hero);
+        w.add<game::TopDownMover>(hero);
+        const world::Entity walls = w.create("walls");
+        scene2d::Transform2D* at = w.add<scene2d::Transform2D>(walls);
+        at->x = -3.0;
+        at->y = -3.0;
+        scene2d::Tilemap* map = w.add<scene2d::Tilemap>(walls);
+        map->tiles = "0,0,0,0,0,0,0";
+        map->solid = true;
+        const world::Entity elder = w.create("elder");
+        w.add<scene2d::Transform2D>(elder)->x = 4.0;
+        w.add<game::Interactable>(elder);
+        write_json(project.folder.path / "assets/maps/field.dscene", serialize::scene_to_json(w));
+        std::vector<serialize::Issue> issues;
+        std::optional<game::ProjectSettings> settings =
+            game::read_project(project.folder.path, issues);
+        REQUIRE(settings.has_value());
+        if (!settings) {
+            return;
+        }
+        settings->start_scene = "maps/field.dscene";
+        settings->width = 320;
+        settings->height = 180;
+        settings->minimap = true;
+        write_json(project.folder.path / game::project_file, game::project_to_json(*settings));
+        logic::LogicAsset rules;
+        rules.name = "map";
+        rules.rules.push_back(logic::Rule{logic::BlockId{1},
+                                          "",
+                                          "game_start",
+                                          {},
+                                          {ir::wait(2, ir::literal(reflect::Value{0.5})),
+                                           ir::do_action(3, "game", "hide_minimap", {})},
+                                          {}});
+        write_json(project.folder.path / "assets/logic/map.drules",
+                   serialize::logic_to_json(rules));
+    }
+    game::RuntimeOptions options;
+    options.headless = true;
+    const auto runtime = project.open(options);
+    REQUIRE(runtime->target() != nullptr);
+    runtime->step();
+    const game::UiTheme look;
+    const auto count = [&](render::Color c) {
+        REQUIRE(runtime->draw());
+        const std::vector<std::uint8_t> pixels = runtime->target()->read_pixels();
+        int n = 0;
+        // The minimap's corner: the top right 100 x 100.
+        for (std::size_t y = 0; y < 100; ++y) {
+            for (std::size_t x = 220; x < 320; ++x) {
+                const std::size_t i = ((y * 320) + x) * 4;
+                n += pixels[i] == c.r && pixels[i + 1] == c.g && pixels[i + 2] == c.b ? 1 : 0;
+            }
+        }
+        return n;
+    };
+    CHECK(count(look.highlight) >= 16); // the player, 4 x 4
+    CHECK(count(look.text) >= 4);       // the elder
+    CHECK(count(look.border) > 7 * 4);  // the wall's seven tiles, and the frame
+    for (int i = 0; i < 40; ++i) {
+        runtime->step();
+    }
+    CHECK(count(look.highlight) == 0); // hidden by logic
+}

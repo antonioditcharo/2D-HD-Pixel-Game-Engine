@@ -159,6 +159,12 @@ void register_save_types(reflect::Registry& registry) {
     game.event<std::string>("timer_ended", {"name"})
         .text("When a timer ends ({name})")
         .tooltip("A timer started by logic counted down to 0.");
+    game.action<&SaveObject::show_minimap>("show_minimap")
+        .text("Show the minimap")
+        .tooltip("The small map of the tiles around the player, top right.");
+    game.action<&SaveObject::hide_minimap>("hide_minimap")
+        .text("Hide the minimap")
+        .tooltip("In a cut scene, or where the player should not see the way.");
     game.action<&SaveObject::send_message>("send_message", {"name"})
         .text("Send the message {name}")
         .tooltip("Every Rule on When a message is sent hears it, with its name: one part of the "

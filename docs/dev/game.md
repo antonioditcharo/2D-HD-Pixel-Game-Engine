@@ -457,6 +457,16 @@ as a `description`, are for the creator), or else the name logic gave. They are 
 `achievements.json` beside the save slots, so loading an old save, or starting a new game,
 keeps them.
 
+### The minimap
+
+With **Minimap** ticked (the Project view's *Menus and messages*; `minimap`), a small map
+shows in the top-right corner: the tiles of every visible tilemap within 20 tiles of the
+player, two pixels each (those of solid maps as walls, in the look's border colour; the
+rest as ground, in its hint colour), people and things to talk to (Interactables) as dots,
+and the player in the middle in the highlight colour. It is not drawn over menus, shops or
+battles. Logic shows and hides it (*Show the minimap*, *Hide the minimap* on the game
+object), as for a cut scene or a maze.
+
 ### Quests and the journal
 
 The **quests** object (`QuestObject`, [`quests.h`](../../engine/game/include/engine/game/quests.h))
